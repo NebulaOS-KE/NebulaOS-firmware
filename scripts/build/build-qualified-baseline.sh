@@ -84,7 +84,12 @@ stage "06 verify"                                   sh "$SCRIPT_DIR/06-verify.sh
 # contains not-yet-qualified changes. Collapsing them would silently turn every
 # candidate into a failed reproduction, or worse, turn a real reproduction
 # failure into a pass.
-if [ "${NEBULAOS_CANDIDATE_BUILD:-}" = "1" ]; then
+# A DEV build gets the same resolved-artifact assertions as a candidate. The
+# strict baseline-reproduction gate (post-build) answers "is this identical to
+# QUALIFIED_BASELINE_TAG", which only a --qualified reproduction build asks;
+# applied to a DEV build it fails on every legitimate change and no DEV build
+# could ever be attested.
+if [ "${NEBULAOS_CANDIDATE_BUILD:-}" = "1" ] || [ "${NEBULAOS_BUILD_MODE:-}" = "dev" ]; then
 	stage "post-build assertions (candidate)" sh "$SCRIPT_DIR/assert-baseline-config.sh" candidate-post-build
 else
 	stage "post-build assertions (qualified)" sh "$SCRIPT_DIR/assert-baseline-config.sh" post-build
