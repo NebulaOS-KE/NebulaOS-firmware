@@ -169,7 +169,7 @@ start_ustreamer() {
 	echo "S50webcam: starting ustreamer on $dev"
 	# OOM priority at birth (MEM-T07): optional media, expendable.
 	nebulaos_start_with_adj "$NEBULAOS_ADJ_USTREAMER" \
-		start-stop-daemon -S -b -m -p "$USTREAMER_PIDFILE" \
+		start-stop-daemon -S -b -m -p "$USTREAMER_PIDFILE" -N 5 \
 		-x "$USTREAMER" -- \
 		--device="$dev" --format=MJPEG --encoder=HW \
 		--resolution="$RESOLUTION" --desired-fps="$DESIRED_FPS" \

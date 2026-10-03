@@ -33,10 +33,14 @@ if [ -r "$NEBULAOS_OOM_POLICY" ]; then . "$NEBULAOS_OOM_POLICY"; else nebulaos_s
 
 start() {
 	echo "Starting klippy (using $PYTHON3)"
+	# Scheduling (SCHED-02): -N -10 is applied before exec, so every klippy
+	# thread (serialqueue, syncemitters, created later) and child inherits it;
+	# klippy stays SCHED_OTHER above best-effort CFS load (Moonraker, nginx,
+	# GuppyScreen at 0, camera +5, updates +15).
 	# OOM priority at birth (MEM-T07): klipper/MCU communication is the most
 	# protected killable process; see /etc/nebulaos-oom-policy.sh.
 	nebulaos_start_with_adj "$NEBULAOS_ADJ_KLIPPY" \
-		start-stop-daemon -S -b -m -p "$PIDFILE" \
+		start-stop-daemon -S -b -m -p "$PIDFILE" -N -10 \
 		-x "$PYTHON3" -- \
 		"$KLIPPY" "$CONFIG" -a "$APISOCK" -l "$LOGFILE"
 }
