@@ -72,13 +72,16 @@ else
 	ok "no script writes the overlay inside the upstream Buildroot checkout"
 fi
 
-# 5. the kernel fragment's CONFIG_EXTRA_FIRMWARE_DIR rewrite must target the
-#    same overlay, or CONFIG_EXTRA_FIRMWARE will point at firmware that is not
-#    there and the kernel build fails in drivers/base/firmware_loader.
-if grep -q 's#/src/board/halley5-nebulaos-overlay#\$BR2_EXT_BOARD/overlay#' "$CONFIGURE"; then
-	ok "CONFIG_EXTRA_FIRMWARE_DIR is rewritten to \$BR2_EXT_BOARD/overlay"
+# 5. the build-environment kernel fragment's CONFIG_EXTRA_FIRMWARE_DIR must
+#    target the same overlay, or CONFIG_EXTRA_FIRMWARE will point at firmware
+#    that is not there and the kernel build fails in
+#    drivers/base/firmware_loader. (Since SOT-21 stage 02 writes it into
+#    nebulaos-kernel-buildenv.config; the kernel config itself is the
+#    kernel-owned nebulaos_halley5_v30_defconfig.)
+if grep -q "printf 'CONFIG_EXTRA_FIRMWARE_DIR=\"%s\"\\\\n' \"\$BR2_EXT_BOARD/overlay/lib/firmware\"" "$CONFIGURE"; then
+	ok "CONFIG_EXTRA_FIRMWARE_DIR is written as \$BR2_EXT_BOARD/overlay/lib/firmware"
 else
-	bad "the CONFIG_EXTRA_FIRMWARE_DIR rewrite in 02-configure-buildroot.sh no longer targets \$BR2_EXT_BOARD/overlay"
+	bad "02-configure-buildroot.sh no longer writes CONFIG_EXTRA_FIRMWARE_DIR=\$BR2_EXT_BOARD/overlay/lib/firmware"
 fi
 
 printf '\nOVERLAY_PATH_PASS=%s\nOVERLAY_PATH_FAIL=%s\n' "$PASS" "$FAIL"
