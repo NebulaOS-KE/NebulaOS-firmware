@@ -68,7 +68,6 @@ fmt_hms() { # seconds -> Hh MMm SSs, readable at a glance for a multi-hour build
 }
 
 stage "fetching every pinned source"                sh "$SCRIPT_DIR/00-fetch-vendor-sources.sh"
-stage "composing all 8 accepted kernel variants"    sh "$SCRIPT_DIR/apply-qualified-baseline.sh"
 stage "pre-build assertions (source-level)"         sh "$SCRIPT_DIR/assert-baseline-config.sh" pre-build
 stage "01 kernel patches"                           sh "$SCRIPT_DIR/01-apply-kernel-patches.sh"
 stage "02 buildroot config"                         sh "$SCRIPT_DIR/02-configure-buildroot.sh"

@@ -323,22 +323,10 @@ fi
 
 echo
 echo "[ kernel payload gzip ]"
-if have scripts/build/apply-qualified-baseline.sh 'kernel-gzip-determinism-variant.sh" GZIPN1'; then
-  ok "GZIPN1 is applied by the qualified baseline"
+if have scripts/build/01-apply-kernel-patches.sh 'gzip -nv9f $(obj)/vmlinux.bin'; then
+  ok "01-apply-kernel-patches.sh checks the kernel zboot payload uses gzip -n (committed in NebulaOS-kernel)"
 else
-  bad "GZIPN1 is not wired into apply-qualified-baseline.sh"
-fi
-GZV=scripts/build/kernel-gzip-determinism-variant.sh
-if grep -qE "^WANT='[[:space:]]*gzip -nv9f " "$ROOT/$GZV"; then
-  ok "the kernel zboot payload is compressed with gzip -n (no stored name or mtime)"
-else
-  bad "the kernel gzip variant no longer enforces -n"
-fi
-# The variant must refuse to pass silently when the vendor rule has moved.
-if have "$GZV" 'FATAL: kernel-gzip-determinism: neither the expected original'; then
-  ok "the gzip variant fails loudly if the vendor rule changed (no silent no-op)"
-else
-  bad "the gzip variant can now no-op silently on an unrecognised vendor rule"
+  bad "01-apply-kernel-patches.sh no longer checks gzip -nv9f in the kernel zboot Makefile"
 fi
 
 echo

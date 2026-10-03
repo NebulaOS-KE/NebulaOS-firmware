@@ -58,4 +58,5 @@ test -f kernel/kernel-6.6/drivers/input/touchscreen/ns2009.c
 test -f kernel/kernel-6.6/module_drivers/drivers/video/fbdev/ingenic/displays/panel-openke-general-480x272.c
 grep -q "openke,bcm4343x-bt" kernel/kernel-6.6/drivers/bluetooth/hci_h5.c
 grep -q "ns2009@48" kernel/kernel-6.6/module_drivers/dts/x2000/halley5_v30.dts
+grep -qF '	gzip -nv9f $(obj)/vmlinux.bin' kernel/kernel-6.6/arch/mips/boot/zcompressed/Makefile
 echo "== kernel source verified =="
