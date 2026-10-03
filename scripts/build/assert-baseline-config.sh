@@ -260,6 +260,27 @@ post-build|candidate-post-build)
 	sed -n '/^&otg {/,/^};/p' "$DTS" | grep -q 'dr_mode = "host";' && RC=0 || RC=$?
 	check "DTS &otg dr_mode = \"host\"" "$RC"
 
+	# Memory observability and the minimized production config (MEM-CFG-01..03,
+	# CFG-01..13) and the disabled 32 MiB carve-out (MEM-T01).
+	PROFILE=$(grep -m1 '^kernel_config_profile=' "$ARTIFACT_DIR/build-manifest.txt" 2>/dev/null | cut -d= -f2)
+	for sym in VM_EVENT_COUNTERS PSI MIPS_CMDLINE_FROM_BOOTLOADER; do
+		grep -qx "CONFIG_$sym=y" "$KCONFIG" && RC=0 || RC=$?
+		check "CONFIG_$sym=y" "$RC"
+	done
+	grep -qx 'CONFIG_LOG_BUF_SHIFT=17' "$KCONFIG" && RC=0 || RC=$?
+	check "CONFIG_LOG_BUF_SHIFT=17" "$RC"
+	if [ "${PROFILE:-}" != diagnostic ]; then
+		for sym in INGENIC_MAC INGENIC_SPI INGENIC_RSA SPINLOCK_TEST PINCTRL_DUMP MAC80211 USB_CONFIGFS \
+			RFKILL_INPUT DYNAMIC_DEBUG BLK_DEBUG_FS MEDIA_ANALOG_TV_SUPPORT MIPS_CMDLINE_FROM_DTB; do
+			grep -q "^CONFIG_$sym=" "$KCONFIG" && RC=1 || RC=0
+			check "CONFIG_$sym not set (production minimization)" "$RC"
+		done
+	fi
+	grep -qx 'CONFIG_USB_VIDEO_CLASS=y' "$KCONFIG" && RC=0 || RC=$?
+	check "CONFIG_USB_VIDEO_CLASS=y (UVC camera kept by the media filter)" "$RC"
+	sed -n '/reserved_mem@6000000/,/};/p' "$DTS" | grep -q 'status = "disabled";' && RC=0 || RC=$?
+	check "DTS reserved_mem@6000000 disabled (MEM-T01)" "$RC"
+
 	# Kernel configuration profile (SOT-51). The resolved kernel must match
 	# the profile the manifest selected; a diagnostic kernel must never pass
 	# the strict (qualified) gate.
