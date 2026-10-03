@@ -37,6 +37,12 @@ V4L2CTL=/usr/bin/v4l2-ctl
 USTREAMER=/usr/bin/ustreamer
 POLL_INTERVAL=5
 SYSFS_ROOT="${SYSFS_ROOT:-/sys}"
+PROC_ROOT="${PROC_ROOT:-/proc}"
+# MEM-T15: memguard's camera shed marker, and the crash-loop backoff.
+SHED_MARKER="${SHED_MARKER:-/run/nebulaos/shed/camera}"
+BACKOFF_START=10
+BACKOFF_MAX=300
+CRASH_WINDOW=60
 
 # USB/webcam+MCU-recovery mission (2026-07-26): the real webcam (v4l2-ctl
 # --list-formats-ext on the real UVC node) advertises native MJPEG up to
@@ -218,7 +224,46 @@ stop_ustreamer() {
 # for why. Runs as the process start-stop-daemon itself tracks via
 # $PIDFILE, so `stop`/`restart`/`status` below all act on this loop, which
 # in turn owns the actual ustreamer child via $USTREAMER_PIDFILE.
+uptime_s() {
+	read -r _up _ < "$PROC_ROOT/uptime" 2>/dev/null || _up=0
+	echo "${_up%%.*}"
+}
+
+ustreamer_alive() {
+	[ -f "$USTREAMER_PIDFILE" ] || return 1
+	_pid=$(cat "$USTREAMER_PIDFILE" 2>/dev/null)
+	[ -n "$_pid" ] && [ -d "$PROC_ROOT/$_pid" ]
+}
+
 supervise_tick() {
+	now=$(uptime_s)
+	# MEM-T15: under memory pressure memguard asks for the camera to go away;
+	# stop ustreamer and start nothing while the marker exists.
+	if [ -e "$SHED_MARKER" ]; then
+		if [ -f "$USTREAMER_PIDFILE" ]; then
+			echo "S50webcam: memory shed - stopping ustreamer"
+			stop_ustreamer
+		fi
+		started_at=
+		return 0
+	fi
+	# MEM-T15: a ustreamer that died on its own (crash, OOM kill) within
+	# CRASH_WINDOW of starting backs off 10, 20, 40 ... 300 s before the
+	# next start; 300 s of continuous running resets the backoff.
+	if [ -n "${started_at:-}" ]; then
+		if ustreamer_alive; then
+			[ $((now - started_at)) -ge "$BACKOFF_MAX" ] && backoff=0
+		else
+			if [ $((now - started_at)) -lt "$CRASH_WINDOW" ]; then
+				if [ "${backoff:-0}" -eq 0 ]; then backoff=$BACKOFF_START; else backoff=$((backoff * 2)); fi
+				[ "$backoff" -gt "$BACKOFF_MAX" ] && backoff=$BACKOFF_MAX
+				hold_until=$((now + backoff))
+				echo "S50webcam: ustreamer exited after $((now - started_at)) s - backing off ${backoff} s"
+			fi
+			started_at=
+			rm -f "$USTREAMER_PIDFILE"
+		fi
+	fi
 	# CAM-01: while ustreamer serves a node that is still present, do not
 	# re-open it for discovery.
 	if [ -n "$last_dev" ] && ustreamer_running_on "$last_dev" && uvc_node_still_present "$last_dev"; then
@@ -232,7 +277,12 @@ supervise_tick() {
 			# device went away and a (possibly renumbered) one came
 			# back - clean up any stale instance before restarting.
 			stop_ustreamer
+			started_at=
+			if [ "$now" -lt "${hold_until:-0}" ]; then
+				return 0
+			fi
 			start_ustreamer "$dev"
+			started_at=$now
 		fi
 	else
 		# No webcam right now - if something is still running (e.g.
@@ -241,6 +291,7 @@ supervise_tick() {
 		if [ -f "$USTREAMER_PIDFILE" ]; then
 			echo "S50webcam: webcam no longer present, stopping ustreamer"
 			stop_ustreamer
+			started_at=
 		fi
 	fi
 }

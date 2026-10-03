@@ -27,6 +27,12 @@ NEBULAOS_OOM_POLICY="$REPO_ROOT/scripts/build/overlay/etc/nebulaos-oom-policy.sh
 . "$TARGET"
 SYSFS_ROOT="$WORK/sys"
 USTREAMER_PIDFILE="$WORK/ustreamer.pid"
+PROC_ROOT="$WORK/proc"
+SHED_MARKER="$WORK/shed-camera"
+mkdir -p "$PROC_ROOT"
+NOW=1000
+settime() { NOW=$1; echo "$1.00 0.00" > "$PROC_ROOT/uptime"; }
+settime 1000
 
 uvc_node() { # name index driver
 	d="$SYSFS_ROOT/class/video4linux/$1"
@@ -39,8 +45,9 @@ DISCOVER=0 STARTS=0 RUNNING=""
 discover_uvc_device() { echo x >> "$WORK/discover.calls"; [ -n "${DEV_PRESENT:-}" ] && echo "$DEV_PRESENT"; }
 dcount() { DISCOVER=$(cat "$WORK/discover.calls" 2>/dev/null | wc -l); DISCOVER=$((DISCOVER + 0)); }
 ustreamer_running_on() { [ -n "$RUNNING" ] && [ "$RUNNING" = "$1" ]; }
-start_ustreamer() { STARTS=$((STARTS + 1)); RUNNING=$1; : > "$USTREAMER_PIDFILE"; }
-stop_ustreamer() { RUNNING=""; rm -f "$USTREAMER_PIDFILE"; }
+start_ustreamer() { STARTS=$((STARTS + 1)); RUNNING=$1; echo 4242 > "$USTREAMER_PIDFILE"; mkdir -p "$PROC_ROOT/4242"; }
+stop_ustreamer() { RUNNING=""; rm -f "$USTREAMER_PIDFILE"; rm -rf "$PROC_ROOT/4242"; }
+crash() { RUNNING=""; rm -rf "$PROC_ROOT/4242"; }   # process gone, pidfile left behind
 
 uvc_node video0 0 uvcvideo
 uvc_node video1 1 uvcvideo
@@ -73,6 +80,37 @@ supervise_tick
 expect "renumbered node restarts ustreamer" "$RUNNING" /dev/video2
 supervise_tick
 dcount; expect "steady again: no further discovery" "$DISCOVER" 3
+
+# --- MEM-T15: memory shed marker ---------------------------------------------
+: > "$SHED_MARKER"
+supervise_tick
+expect "shed marker stops ustreamer" "${RUNNING:-none}" none
+S0=$STARTS
+supervise_tick; supervise_tick
+expect "nothing starts while the marker exists" "$STARTS" "$S0"
+rm -f "$SHED_MARKER"
+supervise_tick
+expect "marker removed: ustreamer back on the next tick" "$RUNNING" /dev/video2
+
+# --- MEM-T15: crash-loop backoff 10, 20, 40 ... 300 ----------------------------
+backoff=0 hold_until=0
+seq=""
+t=2000
+settime $t; stop_ustreamer; started_at=; supervise_tick     # fresh start at t
+for i in 1 2 3 4 5 6 7; do
+	t=$((t + 5)); settime $t; crash; supervise_tick          # dies 5 s after start
+	seq="$seq $backoff"
+	S0=$STARTS
+	settime $((t + backoff - 1)); supervise_tick
+	[ "$STARTS" = "$S0" ] || fail "restarted before the backoff expired (step $i)"
+	t=$((t + backoff)); settime $t; supervise_tick           # restart once it expires
+	[ "$STARTS" -gt "$S0" ] || fail "no restart after the backoff (step $i)"
+done
+expect "backoff sequence" "$seq" " 10 20 40 80 160 300 300"
+t=$((t + 300)); settime $t; supervise_tick
+expect "300 s of continuous running resets the backoff" "$backoff" 0
+t=$((t + 120)); settime $t; crash; supervise_tick
+expect "a crash after the window does not back off" "$backoff" 0
 
 echo "webcam-supervisor-discovery-tests: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
