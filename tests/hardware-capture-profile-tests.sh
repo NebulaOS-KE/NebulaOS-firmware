@@ -63,6 +63,11 @@ check("CAPTURE_PROFILES" in op, "op_capture refuses names outside the table")
 # --- TOOL-02 exercise ---------------------------------------------------------
 for name in c.EXERCISE_ONLY:
     check(name in c.EXERCISE_PROFILES, "exercise %s is implemented" % name)
+# The image's BusyBox has no FEATURE_DATE_NANO: `date +%s%N` aborts shell arithmetic.
+for name, (body, undo, timeout) in c.EXERCISE_PROFILES.items():
+    check("%N" not in body and "%N" not in undo, "exercise %s does not rely on date %%N" % name)
+for name, (body, needs_diag, probe, timeout) in c.CAPTURE_PROFILES.items():
+    check("%N" not in body, "capture %s does not rely on date %%N" % name)
 for name, (body, undo, timeout) in c.EXERCISE_PROFILES.items():
     s, t = c.exercise_script(name)
     check("trap nebulaos_undo EXIT" in s and undo in s, "%s has a trap-run undo block" % name)

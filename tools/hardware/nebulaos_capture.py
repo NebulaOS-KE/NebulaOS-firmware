@@ -219,6 +219,11 @@ def capture_script(name):
 EXERCISE_REFUSED = ("G28", "G1 ", "M104", "M140", "SET_HEATER", "FIRMWARE_RESTART",
                     "flash", "dd ", "mkfs", "swapoff -a", "reboot")
 
+# Milliseconds since boot. The image's BusyBox is built without
+# FEATURE_DATE_NANO, so `date +%s%N` yields a literal "%N" and the shell
+# arithmetic on it aborts the profile; /proc/uptime has 10 ms resolution.
+_NOW_MS = "$(awk '{printf \"%d\", $1 * 1000}' /proc/uptime)"
+
 _STORAGE_DEV = ("S=; for i in /sys/bus/usb/devices/*:*; do "
                 "[ \"$(basename \"$(readlink $i/driver 2>/dev/null)\")\" = usb-storage ] && { S=${i%:*}; break; }; done; "
                 "[ -n \"$S\" ] || { echo NO_USB_STORAGE; exit 3; }; P=$S/power; "
@@ -237,16 +242,16 @@ EXERCISE_PROFILES = {
         "echo 2000 > $P/autosuspend_delay_ms; echo auto > $P/control; sleep 15; "
         "echo \"runtime_status=$(cat $P/runtime_status)\"; sync; echo 3 > /proc/sys/vm/drop_caches; "
         "B=$(ls /sys/$(readlink -f $S | sed 's#^/sys/##')/*/host*/target*/*/block 2>/dev/null | head -1); "
-        "t0=$(date +%s%N); head -c 65536 /dev/${B:-sda} > /dev/null; t1=$(date +%s%N); "
-        "echo \"resume_read_ms=$(( (t1 - t0) / 1000000 ))\"; dmesg | tail -20 | grep -iE 'usb|sd ' ",
+        "t0=" + _NOW_MS + "; head -c 65536 /dev/${B:-sda} > /dev/null; t1=" + _NOW_MS + "; "
+        "echo \"resume_read_ms=$(( t1 - t0 ))\"; dmesg | tail -20 | grep -iE 'usb|sd ' ",
         "[ -n \"${P:-}\" ] && { echo ${D0:-2000} > $P/autosuspend_delay_ms; echo ${C0:-on} > $P/control; }",
         90),
     # HWDP-DWC-6: first-frame latency after an idle pause.
     "camera-resume": (
-        "curl -s -o /dev/null --max-time 5 localhost:8080/pause; sleep 30; t0=$(date +%s%N); "
+        "curl -s -o /dev/null --max-time 5 localhost:8080/pause; sleep 30; t0=" + _NOW_MS + "; "
         "curl -s -o /dev/null --max-time 5 localhost:8080/resume; "
         "i=0; until curl -sf -o /dev/null --max-time 2 localhost:8080/snapshot || [ $i -ge 60 ]; do i=$((i+1)); done; "
-        "t1=$(date +%s%N); echo \"first_frame_ms=$(( (t1 - t0) / 1000000 ))\"",
+        "t1=" + _NOW_MS + "; echo \"first_frame_ms=$(( t1 - t0 )) attempts=$i\"",
         "curl -s -o /dev/null --max-time 5 localhost:8080/resume",
         120),
     # HWDP-MEM-3/6/8: memory ramps while the printer is idle-connected (no print).
