@@ -248,6 +248,18 @@ post-build|candidate-post-build)
 	grep -qx 'CONFIG_NEBULAOS_IRQ_THREAD_PRIO="uart1=60,mmc0=45,s-mmc0=45,mmc1=30,s-mmc1=30,13500000.otg=25,dwc2_hsotg:\*=25,\*=10"' "$KCONFIG" && RC=0 || RC=$?
 	check "CONFIG_NEBULAOS_IRQ_THREAD_PRIO table (uart1 60, mmc0 45, mmc1 30, DWC2 25, rest 10)" "$RC"
 
+	# DWC2 host-only, single threaded IRQ with the idle-SOF filter (DWC-01..06).
+	grep -qx 'CONFIG_USB_DWC2_HOST=y' "$KCONFIG" && RC=0 || RC=$?
+	check "CONFIG_USB_DWC2_HOST=y (host-only DWC2)" "$RC"
+	grep -qx 'CONFIG_USB_DWC2_EXT_VBUS_DETECT=y' "$KCONFIG" && RC=0 || RC=$?
+	check "CONFIG_USB_DWC2_EXT_VBUS_DETECT=y (host session valid override)" "$RC"
+	grep -qx 'CONFIG_USB_DWC2_SOF_FILTER=y' "$KCONFIG" && RC=0 || RC=$?
+	check "CONFIG_USB_DWC2_SOF_FILTER=y" "$RC"
+	grep -qE '^CONFIG_(USB_GADGET|USB_DWC2_DUAL_ROLE|USB_OTG)=y$' "$KCONFIG" && RC=1 || RC=0
+	check "no USB gadget / DWC2 dual-role / OTG stack" "$RC"
+	sed -n '/^&otg {/,/^};/p' "$DTS" | grep -q 'dr_mode = "host";' && RC=0 || RC=$?
+	check "DTS &otg dr_mode = \"host\"" "$RC"
+
 	# Kernel configuration profile (SOT-51). The resolved kernel must match
 	# the profile the manifest selected; a diagnostic kernel must never pass
 	# the strict (qualified) gate.
