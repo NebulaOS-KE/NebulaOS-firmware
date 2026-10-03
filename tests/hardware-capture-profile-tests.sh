@@ -85,6 +85,15 @@ for line in ("", "yes", "EXERCISE_CONFIRM=memexercise", "EXERCISE_CONFIRM=sof-fi
     except agent.AgentRefusal:
         check(True, "unconfirmed exercise refused (%r)" % line)
 sys.stdin = sys.__stdin__
+# The command-line confirmation must name the same profile; the stdin path is not consulted.
+sys.stdin = io.StringIO("EXERCISE_CONFIRM=sof-filter-ab\n")
+for given in ("", "yes", "EXERCISE_CONFIRM=memexercise", "EXERCISE_CONFIRM=sof-filter-ab "):
+    ns = types.SimpleNamespace(device="p1", control_commit="a" * 40, profile="sof-filter-ab", confirm=given)
+    try:
+        agent.op_exercise(ns); check(False, "wrong argument confirmation refused (%r)" % given)
+    except agent.AgentRefusal:
+        check(True, "wrong argument confirmation refused (%r)" % given)
+sys.stdin = sys.__stdin__
 print("capture-profile python checks: %d passed, %d failed" % (passed, failed))
 sys.exit(1 if failed else 0)
 PYEOF
@@ -111,6 +120,14 @@ for bad in "kernel;reboot" "kernel reboot" "../x" "-x" "KERNEL" ""; do
 done
 out=$(run exercise sof-filter-ab)
 case "$out" in *"AGENT_ARGS=--device p1 --control-commit $SHA exercise sof-filter-ab"*) echo "PASS: launcher passes an exercise name";; *) echo "FAIL: launcher did not pass exercise: $out"; FAIL=1;; esac
+out=$(run exercise sof-filter-ab EXERCISE_CONFIRM=sof-filter-ab)
+case "$out" in *"AGENT_ARGS=--device p1 --control-commit $SHA exercise sof-filter-ab EXERCISE_CONFIRM=sof-filter-ab"*) echo "PASS: launcher passes a confirmed exercise";; *) echo "FAIL: launcher did not pass confirmed exercise: $out"; FAIL=1;; esac
+for bad in "EXERCISE_CONFIRM=memexercise" "yes" "EXERCISE_CONFIRM="; do
+	out=$(run exercise sof-filter-ab "$bad")
+	case "$out" in *AGENT_ARGS*) echo "FAIL: launcher accepted exercise confirmation '$bad'"; FAIL=1;; *) echo "PASS: launcher refuses exercise confirmation '$bad'";; esac
+done
+out=$(run capture kernel EXERCISE_CONFIRM=kernel)
+case "$out" in *AGENT_ARGS*) echo "FAIL: launcher accepted a confirmation word on capture"; FAIL=1;; *) echo "PASS: capture takes no confirmation word";; esac
 out=$(run exercise "x;reboot")
 case "$out" in *AGENT_ARGS*) echo "FAIL: launcher accepted exercise 'x;reboot'"; FAIL=1;; *) echo "PASS: launcher refuses exercise 'x;reboot'";; esac
 out=$(run capture a b)

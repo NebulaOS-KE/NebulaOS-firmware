@@ -268,7 +268,7 @@ if agent==HW_AGENT:
                 "It reaches a printer only through its launcher, which composes every device\n"
                 "command in reviewed control code against an enrolled device profile:\n\n"
                 "  tools/run-nebulaos-hardware.sh --device <id> --control <40-hex C> <operation>\n\n"
-                "Operations: inspect status diagnose restart verify install.")
+                "Operations: inspect status diagnose capture exercise restart verify install.")
 
 # one plain command: no chaining, redirection, substitution or expansion
 bad=set(";&|<>(){}$\n\r"); bad.add(chr(96))
@@ -394,6 +394,8 @@ if sandbox_off:
         #   --device <id> --control <40-hex C> inspect
         #   --device <id> --control <40-hex C> status
         #   --device <id> --control <40-hex C> diagnose
+        #   --device <id> --control <40-hex C> capture  <profile>
+        #   --device <id> --control <40-hex C> exercise <profile> EXERCISE_CONFIRM=<profile>
         #   --device <id> --control <40-hex C> restart <service>
         #   --device <id> --control <40-hex C> verify  <40-hex X> <64-hex> <64-hex>
         #   --device <id> --control <40-hex C> install <40-hex X> <64-hex> <64-hex>
@@ -427,8 +429,20 @@ if sandbox_off:
         HW_READONLY=("inspect","status","diagnose")
         HW_KEYED=("verify","install")
         HW_SERVICES=("klipper","moonraker","guppyscreen","webcam","nginx")
+        # capture/exercise take a profile NAME, never a command: lowercase
+        # letters, digits and '-', not starting with '-'. The agent refuses
+        # names outside its fixed tables. An exercise changes device state
+        # reversibly (self-undoing), so it must state its confirmation as the
+        # literal third word EXERCISE_CONFIRM=<the same profile>; a lone
+        # invocation cannot pipe it on stdin.
+        def is_profile(x):
+            return 0<len(x)<=64 and x[0]!="-" and \
+                   all(c in "abcdefghijklmnopqrstuvwxyz0123456789-" for c in x)
         ok_args = (len(a)==1 and a[0] in HW_READONLY) or \
                   (len(a)==2 and a[0]=="restart" and a[1] in HW_SERVICES) or \
+                  (len(a)==2 and a[0]=="capture" and is_profile(a[1])) or \
+                  (len(a)==3 and a[0]=="exercise" and is_profile(a[1])
+                   and a[2]=="EXERCISE_CONFIRM="+a[1]) or \
                   (len(a)==4 and a[0] in HW_KEYED
                    and is_sha(a[1]) and is_sha256(a[2]) and is_sha256(a[3]))
         if not ok_args:
@@ -436,6 +450,8 @@ if sandbox_off:
                 "  --device <id> --control <40-hex C> inspect\n"
                 "  --device <id> --control <40-hex C> status\n"
                 "  --device <id> --control <40-hex C> diagnose\n"
+                "  --device <id> --control <40-hex C> capture  <profile>\n"
+                "  --device <id> --control <40-hex C> exercise <profile> EXERCISE_CONFIRM=<profile>\n"
                 "  --device <id> --control <40-hex C> restart klipper|moonraker|guppyscreen|webcam|nginx\n"
                 "  --device <id> --control <40-hex C> verify  <40-hex X> <64-hex> <64-hex>\n"
                 "  --device <id> --control <40-hex C> install <40-hex X> <64-hex> <64-hex>\n\n"

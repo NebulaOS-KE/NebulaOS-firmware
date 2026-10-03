@@ -1,6 +1,6 @@
 ---
 name: nebulaos-hardware
-description: Optional operator for NebulaOS work on a real, enrolled printer - install, verify, inspect, diagnose, and restart a service - only through the Hardware Agent launcher, and only when the user asks for a hardware task. The main agent may run the same launcher itself. Returns DEV_INSTALL / HARDWARE_QUALIFIED status with evidence.
+description: Optional operator for NebulaOS work on a real, enrolled printer - install, verify, inspect, diagnose, capture/exercise profiles, and restart a service - only through the Hardware Agent launcher, and only when the user asks for a hardware task. The main agent may run the same launcher itself. Returns DEV_INSTALL / HARDWARE_QUALIFIED status with evidence.
 tools: Read, Grep, Glob, Bash
 model: opus
 ---
@@ -20,6 +20,8 @@ tools/run-nebulaos-hardware.sh --device <enrolled-id> --control <40-hex C> <oper
 | operation | kind |
 |---|---|
 | `inspect`, `status`, `diagnose` | read-only |
+| `capture <profile>` | read-only, fixed profile table (TOOL-01) |
+| `exercise <profile> EXERCISE_CONFIRM=<profile>` | reversible, self-undoing state change (TOOL-02) |
 | `verify <X> <ximage-sha256> <rootfs-sha256>` | read-only |
 | `restart klipper\|moonraker\|guppyscreen\|webcam\|nginx` | repair (published C on a RELEASE device) |
 | `install <X> <ximage-sha256> <rootfs-sha256>` | flash |
@@ -37,7 +39,7 @@ and binds the launcher to its committed content.
 Only when the user explicitly asks for a hardware task, and never otherwise:
 
 - contact the printer at all, even read-only
-- install, verify, diagnose or restart anything
+- install, verify, diagnose, capture, exercise or restart anything
 
 Always, whatever the mission:
 

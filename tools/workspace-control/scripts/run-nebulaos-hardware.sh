@@ -30,7 +30,8 @@
 #   run-nebulaos-hardware.sh --device <id> --control <C> status
 #   run-nebulaos-hardware.sh --device <id> --control <C> diagnose
 #   run-nebulaos-hardware.sh --device <id> --control <C> capture <profile>
-#   run-nebulaos-hardware.sh --device <id> --control <C> exercise <profile>   (confirm on stdin)
+#   run-nebulaos-hardware.sh --device <id> --control <C> exercise <profile> [EXERCISE_CONFIRM=<profile>]
+#                                          (without the confirmation word, confirm on stdin)
 #   run-nebulaos-hardware.sh --device <id> --control <C> restart <service>
 #   run-nebulaos-hardware.sh --device <id> --control <C> verify  <X> <ximage-sha256> <rootfs-sha256>
 #   run-nebulaos-hardware.sh --device <id> --control <C> install <X> <ximage-sha256> <rootfs-sha256>
@@ -134,9 +135,16 @@ case "$OP" in
       *) die "unknown service '$2'. Restartable: klipper moonraker guppyscreen webcam nginx" ;;
     esac ;;
   capture|exercise)
-    # A profile NAME from the agent's fixed read-only table (TOOL-01); the
-    # agent refuses names it does not know. Never a command.
-    [ "$#" -eq 2 ] || die "'$OP' requires exactly one profile name"
+    # A profile NAME from the agent's fixed tables (TOOL-01/02); the agent
+    # refuses names it does not know. Never a command. An exercise may carry
+    # its confirmation as a third word, EXERCISE_CONFIRM=<the same profile>,
+    # so an authorised unattended session can run it; without that word the
+    # agent asks on stdin.
+    case "$OP:$#" in
+      capture:2|exercise:2) ;;
+      exercise:3) [ "$3" = "EXERCISE_CONFIRM=$2" ] || die "exercise confirmation must be EXERCISE_CONFIRM=$2" ;;
+      *) die "'$OP' requires exactly one profile name" ;;
+    esac
     case "$2" in
       ""|-*|*[!a-z0-9-]*) die "unknown $OP profile '$2'" ;;
     esac ;;

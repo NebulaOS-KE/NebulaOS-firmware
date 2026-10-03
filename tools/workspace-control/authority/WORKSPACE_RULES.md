@@ -182,6 +182,8 @@ tools/run-nebulaos-hardware.sh --device <id> --control <40-hex C> <operation>
 | operation | kind |
 |---|---|
 | `inspect`, `status`, `diagnose`, `verify` | read-only |
+| `capture <profile>` | read-only, fixed profile table (TOOL-01) |
+| `exercise <profile> EXERCISE_CONFIRM=<profile>` | reversible, self-undoing; refuses motion/heat/flash/reboot text (TOOL-02) |
 | `restart <klipper\|moonraker\|guppyscreen\|webcam\|nginx>` | repair |
 | `install <X> <ximage-sha256> <rootfs-sha256>` | flash |
 

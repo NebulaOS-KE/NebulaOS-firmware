@@ -435,9 +435,9 @@ def op_capture(args):
 def op_exercise(args):
     """TOOL-02: one reversible, allow-listed device state change used by a
     hardware decision point (USB power control, the SOF filter switch, a
-    camera pause/resume, a memory ramp). Requires the operator to confirm on
-    stdin with EXERCISE_CONFIRM=<profile>; refused while the confirmation is
-    missing, so it cannot run by accident from a pipeline."""
+    camera pause/resume, a memory ramp). Requires EXERCISE_CONFIRM=<profile>,
+    as the confirm argument or on stdin; refused while it is missing or names
+    another profile, so it cannot run by accident."""
     import time
     if args.profile not in device.captures.EXERCISE_PROFILES:
         raise AgentRefusal("unknown exercise profile %r" % args.profile)
@@ -446,10 +446,17 @@ def op_exercise(args):
     except device.captures.CaptureError as exc:
         raise AgentRefusal(str(exc))
     want = "EXERCISE_CONFIRM=%s" % args.profile
-    say("This changes device state reversibly. Type %s to continue:" % want)
-    line = sys.stdin.readline().strip()
-    if line != want:
-        raise AgentRefusal("exercise not confirmed (expected %s on stdin)" % want)
+    given = getattr(args, "confirm", None)
+    if given is not None:
+        # Stated on the command line by an authorised unattended session; the
+        # launcher and the PreToolUse hook require the same exact word.
+        if given != want:
+            raise AgentRefusal("exercise not confirmed (expected %s)" % want)
+    else:
+        say("This changes device state reversibly. Type %s to continue:" % want)
+        line = sys.stdin.readline().strip()
+        if line != want:
+            raise AgentRefusal("exercise not confirmed (expected %s on stdin)" % want)
     profile, _, _ = prove_preconditions(
         args.device, None, None, None, args.control_commit, destructive=False)
     session, which, address = _connect_matching(profile, (device.OS_NEBULAOS,))
@@ -651,7 +658,9 @@ def main(argv):
     sub.add_parser("status")
     sub.add_parser("diagnose")
     sub.add_parser("capture").add_argument("profile")
-    sub.add_parser("exercise").add_argument("profile")
+    p = sub.add_parser("exercise")
+    p.add_argument("profile")
+    p.add_argument("confirm", nargs="?", default=None)
     sub.add_parser("restart").add_argument("service")
     for name in ("verify", "install"):
         p = sub.add_parser(name)

@@ -527,6 +527,17 @@ run_case hw DENY nebulaos-hardware 1 "restart with an extra argument" "$HWRUN $D
 run_case hw DENY nebulaos-hardware 1 "diagnose with an argument"     "$HWRUN $DEV diagnose all" "$R"
 run_case hw DENY ""                1 "main agent, restart an unlisted service" "$HWRUN $DEV restart sshd" "$R"
 echo
+echo "[ capture/exercise grammar - must DENY ]"
+run_case hw DENY "" 1 "capture without a profile"            "$HWRUN $DEV capture" "$R"
+run_case hw DENY "" 1 "capture with two profiles"            "$HWRUN $DEV capture kernel usb" "$R"
+run_case hw DENY "" 1 "capture an uppercase profile"         "$HWRUN $DEV capture KERNEL" "$R"
+run_case hw DENY "" 1 "capture a path"                       "$HWRUN $DEV capture ../kernel" "$R"
+run_case hw DENY "" 1 "capture an option-like profile"       "$HWRUN $DEV capture -x" "$R"
+run_case hw DENY "" 1 "exercise without confirmation"        "$HWRUN $DEV exercise camera-resume" "$R"
+run_case hw DENY "" 1 "exercise confirming another profile"  "$HWRUN $DEV exercise memexercise EXERCISE_CONFIRM=camera-resume" "$R"
+run_case hw DENY "" 1 "exercise with a bare yes"             "$HWRUN $DEV exercise camera-resume yes" "$R"
+run_case hw DENY "" 1 "exercise with an extra word"          "$HWRUN $DEV exercise camera-resume EXERCISE_CONFIRM=camera-resume now" "$R"
+echo
 
 # The main agent may run every hardware operation, install included (the
 # human asks for a flash; the launcher and agent enforce device safety). The
@@ -560,6 +571,9 @@ run_case hw ALLOW nebulaos-hardware 1 "hardware agent, restart moonraker" "$HWRU
 run_case hw ALLOW "" 1 "main agent, diagnose" "$HWRUN $DEV diagnose"
 run_case hw ALLOW "" 1 "main agent, inspect" "$HWRUN $OK_ARGS"
 run_case hw ALLOW "" 1 "main agent, verify" "$HWRUN $OK_KEYED"
+run_case hw ALLOW "" 1 "main agent, capture" "$HWRUN $DEV capture usb-topology"
+run_case hw ALLOW nebulaos-hardware 1 "hardware agent, capture" "$HWRUN $DEV capture dwc2-hw"
+run_case hw ALLOW "" 1 "main agent, confirmed exercise" "$HWRUN $DEV exercise camera-resume EXERCISE_CONFIRM=camera-resume"
 for svc in klipper moonraker guppyscreen webcam nginx; do
   run_case hw ALLOW "" 1 "main agent, restart $svc" "$HWRUN $DEV restart $svc"
 done
