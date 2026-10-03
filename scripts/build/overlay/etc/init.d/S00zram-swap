@@ -20,11 +20,10 @@
 
 ZRAM_DEV=/dev/zram0
 ZRAM_SYSFS=/sys/block/zram0
-# Starting point for qualification (docs/NEBULAOS_MEMORY_RESILIENCE.md
-# sec 4 records the comparison against 96MiB/128MiB/larger and the
-# measured result this value is based on) - NOT interpreted as physical
-# RAM permanently reserved: zram only consumes real memory for the
-# compressed pages actually stored, up to this logical ceiling.
+# Logical (uncompressed) capacity: an initial value, recalibrated on hardware
+# from the measured compression ratio (HWDP-MEM-3: 88/128/160 MiB). It is not
+# RAM reserved up front - zram only holds the compressed pages actually stored,
+# and mem_limit below caps that real footprint.
 ZRAM_SIZE_BYTES=$((128 * 1024 * 1024))
 ZRAM_COMP=lz4
 ZRAM_PRIORITY=100
@@ -33,30 +32,8 @@ log() {
 	echo "S00zram-swap: $1"
 }
 
-apply_sysctl_policy() {
-	# Conservative starting values (docs/NEBULAOS_MEMORY_RESILIENCE.md sec 6)
-	# - not copied from a desktop/server tuning guide. Applied regardless
-	# of which swap backend ends up active, since both benefit equally.
-	#
-	# vm.swappiness=10: this is a PREEMPT_RT kernel driving real-time
-	# motion control - favor keeping working pages resident and only
-	# reach for swap under genuine pressure, rather than the kernel
-	# default (60) proactively swapping out rarely-used-but-still-warm
-	# pages during normal, low-pressure operation.
-	#
-	# vm.page-cluster=0: default (3) reads/writes swap in 2^3=8-page
-	# bursts, a tuning that assumes rotational-disk seek cost - wrong
-	# model for zram (RAM-speed either way) and mildly harmful for the
-	# disk swap file (larger writes than necessary to an eMMC-backed
-	# file). 0 = one page at a time, standard community guidance for
-	# zram-backed swap specifically.
-	echo 10 > /proc/sys/vm/swappiness 2>/dev/null
-	echo 0 > /proc/sys/vm/page-cluster 2>/dev/null
-}
 
 start() {
-	apply_sysctl_policy
-
 	if [ ! -e "$ZRAM_SYSFS" ]; then
 		log "WARNING: $ZRAM_SYSFS not present - kernel may be missing CONFIG_ZRAM, skipping (system continues without this resilience layer rather than failing boot)"
 		return 0
@@ -82,6 +59,13 @@ start() {
 		return 0
 	fi
 
+	# MEM-T11: cap the real (compressed) memory zram may hold at 20% of
+	# MemTotal, so a poorly-compressing workload cannot turn zram itself into
+	# the memory consumer it exists to relieve.
+	mt=$(awk '/^MemTotal:/{print $2}' /proc/meminfo)
+	lim=$((mt * 20 / 100 / 1024))
+	echo "${lim}M" > "$ZRAM_SYSFS/mem_limit" 2>/dev/null || log "ERROR: mem_limit write failed"
+
 	if ! mkswap "$ZRAM_DEV" >/dev/null 2>&1; then
 		log "ERROR: mkswap $ZRAM_DEV failed - skipping zram setup"
 		return 0
@@ -95,7 +79,11 @@ start() {
 	# comp_algorithm reads back as a list with the active one bracketed
 	# (e.g. "lzo [lz4] zstd") - extract just that for a clean log line.
 	active_comp=$(cat "$ZRAM_SYSFS/comp_algorithm" 2>/dev/null | sed -n 's/.*\[\([^]]*\)\].*/\1/p')
-	log "zram active: $ZRAM_DEV, algorithm=${active_comp:-unknown}, size=$ZRAM_SIZE_BYTES bytes, priority=$ZRAM_PRIORITY"
+	log "zram active: $ZRAM_DEV, algorithm=${active_comp:-unknown}, size=$ZRAM_SIZE_BYTES bytes, mem_limit=${lim}M, priority=$ZRAM_PRIORITY"
+	if [ "$active_comp" != "$ZRAM_COMP" ]; then
+		log "ERROR: zram algorithm is ${active_comp:-unknown}, expected $ZRAM_COMP"
+		mkdir -p /run/nebulaos && echo "${active_comp:-unknown}" > /run/nebulaos/zram-alg-mismatch
+	fi
 }
 
 case "$1" in
