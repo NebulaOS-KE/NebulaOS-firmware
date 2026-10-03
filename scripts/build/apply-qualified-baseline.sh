@@ -90,7 +90,6 @@ echo "== apply-qualified-baseline: applying every accepted baseline variant =="
 # rewrite - verified per-script during the audit, see the doc referenced
 # above). Listed here in the order the underlying missions were originally
 # accepted, for readability only.
-sh "$SCRIPT_DIR/pinctrl-ownership-fix-variant.sh" FIX1
 sh "$SCRIPT_DIR/backlight-final-controller-variant.sh" FINAL1
 sh "$SCRIPT_DIR/pwm-state-readback-variant.sh" GETSTATE1
 sh "$SCRIPT_DIR/touch-final-qualification-variant.sh" FINALQUAL1
