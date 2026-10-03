@@ -331,7 +331,7 @@ fi
 
 echo
 echo "[ root password determinism ]"
-if grep -qE '^BR2_ROOTFS_POST_BUILD_SCRIPT="board/nebulaos-post-build.sh"' "$ROOT/$BRC"; then
+if grep -qxF 'BR2_ROOTFS_POST_BUILD_SCRIPT="$(BR2_EXTERNAL_NEBULAOS_PATH)/board/nebulaos-x2000/post-build.sh"' "$ROOT/$BRC"; then
   ok "the post-build script is wired into Buildroot"
 else
   bad "BR2_ROOTFS_POST_BUILD_SCRIPT is not set to the NebulaOS post-build script"

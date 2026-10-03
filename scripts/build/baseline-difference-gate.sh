@@ -64,7 +64,7 @@ FAILED=0
 	echo ""
 
 	echo "## Tracked config/DTS artifacts (must be byte-identical)"
-	for f in kernel.config halley5_v30.dts buildroot.config halley5-nebulaos-busybox-fragment.config; do
+	for f in kernel.config halley5_v30.dtb.dts buildroot.config halley5-nebulaos-busybox-fragment.config; do
 		if [ ! -f "$ARTIFACT_DIR/$f" ]; then
 			echo "SKIP: $f not found in current build"
 			continue

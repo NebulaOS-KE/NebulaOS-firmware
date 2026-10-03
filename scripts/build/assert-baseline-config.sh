@@ -255,7 +255,7 @@ post-build|candidate-post-build)
 		else
 			echo "  == candidate differences vs last hardware-qualified baseline $BASELINE_REF (informational only - NOT a gate) =="
 			. "$SCRIPT_DIR/lib/baseline-config-compare.sh"
-			for f in kernel.config halley5_v30.dts buildroot.config; do
+			for f in kernel.config halley5_v30.dtb.dts buildroot.config; do
 				artifact_path="$ARTIFACT_DIR/$f"
 				[ -f "$artifact_path" ] || continue
 				diff_rc=0
@@ -332,7 +332,7 @@ post-build|candidate-post-build)
 	# strictly byte-identical) since nothing about it was ever found to be
 	# provenance-only.
 	. "$SCRIPT_DIR/lib/baseline-config-compare.sh"
-	for f in kernel.config halley5_v30.dts buildroot.config; do
+	for f in kernel.config halley5_v30.dtb.dts buildroot.config; do
 		artifact_path="$ARTIFACT_DIR/$f"
 		if [ ! -f "$artifact_path" ]; then
 			echo "  FAIL: $f is missing from $ARTIFACT_DIR - cannot compare"

@@ -1014,3 +1014,153 @@
 	};
 };
 /* NEBULAOS_BACKLIGHT_FINAL_CONTROLLER_VARIANT_DTS_END */
+/* NEBULAOS_ACCELEROMETER_EEPROM_BUS_ENABLE_VARIANT_DTS_BEGIN */
+&i2c2 {
+	/* Phase 1.9A host-MCU accelerometer/EEPROM bus enablement:
+	 * the physical BL24C16F EEPROM is wired here on the real Ender 3 V3
+	 * KE, physically identical hardware to i2c4/touch above. Pulled and
+	 * decoded the real stock device's own live /sys/firmware/fdt -
+	 * stock's own i2c2 node is disabled with no pinctrl (it evidently
+	 * reaches this bus through a different, proprietary path, not this
+	 * standard in-tree driver), but the i2c2-pb pinmux group already
+	 * exists unused in our own x2000-pinctrl.dtsi, exactly mirroring the
+	 * i2c4-pc fix below.
+	 *
+	 * Phase 1.9B production EEPROM owner change: the eeprom@50 child
+	 * node below is the Linux 6.6 in-tree at24/nvmem driver, NOT
+	 * [bl24c16f] (which owned this same chip directly over
+	 * i2c_mcu:rpi/i2c-chardev in Phase 1.9A and is retired from
+	 * production use as of Phase 1.9B - see machine.cfg and
+	 * nebulaos_power_loss_recovery.py). The BL24C16F is electrically
+	 * and functionally an Atmel 24C16 - same 2048 bytes, same 16-byte
+	 * write page, same 8-bit internal address split across 8 I2C slave
+	 * addresses (0x50..0x57) - so the exact, unmodified upstream
+	 * "atmel,24c16" compatible string and binding apply verbatim; no
+	 * newer "belling,bl24c16f" compatible name or kernel upgrade is
+	 * needed. Source-verified against this exact kernel's own
+	 * drivers/misc/eeprom/at24.c: CONFIG_EEPROM_AT24 depends on I2C &&
+	 * SYSFS (both already satisfied) and selects NVMEM/NVMEM_SYSFS/
+	 * REGMAP/REGMAP_I2C automatically; "pagesize"/"address-width"/
+	 * "size"/"num-addresses" are exactly the device_property_read_u32()
+	 * names this driver's own at24_probe() parses. Resulting userspace
+	 * interface: /sys/bus/i2c/devices/2-0050/eeprom (the reg = <0x50>
+	 * address below, on i2c bus 2). CONFIG_I2C_CHARDEV is dropped from
+	 * the Kconfig fragment below in this same Phase 1.9B change - at24
+	 * is a real kernel driver (binds to the i2c_client directly, no
+	 * /dev/i2c-* character device involved), and with [bl24c16f]
+	 * retired, nothing else on this board's i2c_mcu:rpi bus needs
+	 * /dev/i2c-* chardev access any more (ADXL345 is SPI, not I2C). */
+	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&i2c2_pb>;
+
+	eeprom@50 {
+		/* Physical page 0 (bytes 0..15) is reserved for stock
+		 * Creality's own PLR checkpoint-slot-pointer/enabled-state
+		 * bytes - nebulaos_plr_journal.py (NebulaOS-klipper-extensions)
+		 * never reads or writes that page, only pages 1..127. */
+		compatible = "atmel,24c16";
+		reg = <0x50>;
+		pagesize = <16>;
+		size = <2048>;
+		address-width = <8>;
+		num-addresses = <8>;
+		label = "nebulaos-plr";
+	};
+};
+
+/* Phase 1.9A host-MCU accelerometer/EEPROM bus enablement:
+ * ADXL345 (spi_bus: spidev2.0 in printer.cfg) is NOT wired to a real
+ * Ingenic hardware SPI controller on this board at all - pulled and
+ * decoded the real stock device's own live /sys/firmware/fdt and found
+ * stock reaches it through the standard mainline spi-gpio bitbang
+ * driver instead, with a generic spidev placeholder child exposing it
+ * as a plain character device (exactly what Klipper's own MCU SPI
+ * backend expects - it talks to the sensor directly, no in-kernel
+ * ADXL345 driver needed). GPIO pin assignments (gpe16/17/18/21) and the
+ * "rohm,dh2228fv" placeholder compatible string are copied verbatim
+ * from that same live dump, not guessed. Requires CONFIG_SPI_GPIO=y. */
+/ {
+	aliases {
+		/* Pins this bit-banged bus to bus number 2, exactly matching
+		 * stock's own "spi2 = /spi_gpio" alias - without this, Linux
+		 * would assign whatever bus number registration order happens
+		 * to produce, and Klipper's spi_bus: spidev2.0 (hardcoded to
+		 * this exact path) would not find the device.
+		 *
+		 * Deliberately named spi_gpio_adxl345, NOT spi_gpio: this base
+		 * board file already has an unrelated, pre-existing, disabled
+		 * "/spi_gpio" node further down (gpb 28-31, spidev1@0 - the
+		 * already-documented FACTORY_TEST_DEVICE placeholder). A node
+		 * declared here with that same bare name would silently merge
+		 * with it instead of creating a separate node (found live: our
+		 * first attempt at this had its pin numbers and status
+		 * overwritten by that later block). The alias only cares where
+		 * it points, not what the node is named, so giving this one
+		 * its own distinct name avoids the collision entirely without
+		 * touching the untouched, already-disabled factory node. */
+		spi2 = "/spi_gpio_adxl345";
+	};
+
+	spi_gpio_adxl345 {
+		status = "okay";
+		compatible = "spi-gpio";
+		#address-cells = <1>;
+		#size-cells = <0>;
+		/* This SoC's ingenic,pincfg-cells binding is 3 cells after the
+		 * phandle (pin, flags, pull-config) - found live via a dtc
+		 * "property size too small for cell size 3" warning on an
+		 * earlier attempt, which only had 2.
+		 *
+		 * Polarity fix (Phase 1.9A SPI Polarity Fix Investigation):
+		 * stock's raw live-dumped values used flags=0x01
+		 * (GPIO_ACTIVE_LOW) on ALL FOUR lines, copied verbatim into an
+		 * earlier attempt here - that produced device probe success
+		 * (spidev2.0 exists, transactions happen) but garbled reads
+		 * (ACCELEROMETER_QUERY: "Invalid adxl345 id", wrong DEVID,
+		 * changing with speed rather than a clean timeout).
+		 * Source-verified root cause: this kernel's spi-gpio.c
+		 * (drivers/spi/spi-gpio.c, the modern Linus Walleij gpiod
+		 * rewrite) calls gpiod_set_value_cansleep()/
+		 * gpiod_get_value_cansleep() for sck/mosi/miso exactly the
+		 * same way it does for cs - meaning ANY of the four declared
+		 * GPIO_ACTIVE_LOW gets transparently inverted by gpiod before
+		 * the bitbang core (spi-bitbang-txrx.h) ever sees it. The
+		 * bitbang core assumes non-inverted 1=high/0=low semantics
+		 * for the clock and data lines - stock's raw flags value was
+		 * almost certainly written for an older, non-gpiod (raw
+		 * gpio_set_value) spi-gpio implementation that likely never
+		 * consulted the active-low flag for sck/mosi/miso at all,
+		 * only for cs (the one line every spi-gpio generation has
+		 * always treated specially, since chip-select genuinely needs
+		 * "asserted" semantics). Fix: sck/mosi/miso are plain,
+		 * non-inverted output/input lines here - GPIO_ACTIVE_HIGH.
+		 * cs-gpios keeps ACTIVE_LOW, both because that matches stock's
+		 * raw value AND because the ADXL345 (like the overwhelming
+		 * majority of SPI slaves) is genuinely chip-select-active-low
+		 * in hardware. Pull-config (INGENIC_GPIO_NOBIAS) is unchanged
+		 * on all four - unrelated to this bug.
+		 *
+		 * Property names: sck-gpios/mosi-gpios/miso-gpios (not the
+		 * legacy gpio-sck/gpio-mosi/gpio-miso form used by an earlier
+		 * attempt here) - confirmed from source
+		 * (drivers/spi/spi-gpio.c's own probe:
+		 * devm_gpiod_get(dev, "sck", ...) etc, which resolves the
+		 * "<name>-gpios" convention). The legacy names still worked
+		 * (some fallback in the OF GPIO core resolved them), but the
+		 * modern names are what this driver actually asks for. */
+		sck-gpios = <&gpe 16 GPIO_ACTIVE_HIGH INGENIC_GPIO_NOBIAS>;
+		miso-gpios = <&gpe 18 GPIO_ACTIVE_HIGH INGENIC_GPIO_NOBIAS>;
+		mosi-gpios = <&gpe 17 GPIO_ACTIVE_HIGH INGENIC_GPIO_NOBIAS>;
+		cs-gpios = <&gpe 21 GPIO_ACTIVE_LOW INGENIC_GPIO_NOBIAS>;
+		num-chipselects = <1>;
+
+		spidev2: spidev@0 {
+			status = "okay";
+			compatible = "rohm,dh2228fv";
+			reg = <0>;
+			spi-max-frequency = <5000000>;
+		};
+	};
+};
+/* NEBULAOS_ACCELEROMETER_EEPROM_BUS_ENABLE_VARIANT_DTS_END */
