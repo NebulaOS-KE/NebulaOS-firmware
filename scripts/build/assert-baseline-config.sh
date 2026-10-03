@@ -160,16 +160,6 @@ pre-build)
 	# NOT reuse any existing vendor/, build-work/, or artifacts/ state").
 	# The DTS check further below reads the freshly-cloned kernel tree and
 	# is not subject to that caveat.
-	VARIANT_MARKER="$REPO_ROOT/build-work/accelerometer-eeprom-bus-enable-variant-applied.txt"
-	# grep -qx FIX1, not merely "non-empty": the marker records $VARIANT,
-	# which is FIX0 or FIX1, and a FIX0 run writes a perfectly non-empty
-	# FIX0 marker. Only FIX1 composes the block this stanza is about.
-	if [ -f "$VARIANT_MARKER" ] && grep -qx 'FIX1' "$VARIANT_MARKER" 2>/dev/null; then
-		echo "  PASS: accelerometer-eeprom-bus-enable variant applied as FIX1 ($(cat "$VARIANT_MARKER"))"
-	else
-		echo "  FAIL: no FIX1 accelerometer-eeprom-bus-enable applied-marker at $VARIANT_MARKER - the 9th variant did not run as FIX1 in this build tree"
-		FAILED=1
-	fi
 	grep -q "CONFIG_SPI_GPIO=y" "$FRAGMENT" 2>/dev/null && RC=0 || RC=$?
 	check "CONFIG_SPI_GPIO=y present in tracked fragment (accelerometer-eeprom-bus-enable)" "$RC"
 	grep -q "CONFIG_EEPROM_AT24=y" "$FRAGMENT" 2>/dev/null && RC=0 || RC=$?

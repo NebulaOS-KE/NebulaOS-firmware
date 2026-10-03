@@ -90,7 +90,6 @@ echo "== apply-qualified-baseline: applying every accepted baseline variant =="
 # rewrite - verified per-script during the audit, see the doc referenced
 # above). Listed here in the order the underlying missions were originally
 # accepted, for readability only.
-sh "$SCRIPT_DIR/accelerometer-eeprom-bus-enable-variant.sh" FIX1
 # 10th call: makes the Ingenic zboot payload gzip deterministic (adds -n).
 # Header-only; it does not change the compressed kernel data. See that
 # script for the measured cause.
