@@ -121,7 +121,51 @@ MG_LAST_SLOW= MG_LAST_SNAPSHOT=
 for t in 100 101 103 104 105 107 111; do uptime $t; mg_tick; done
 expect "slow work ran at t=100,105,111" "$CALLS" 3
 
-# --- MEM-T13 / MEM-T14 sections are appended below by those tasks -----------
+# --- MEM-T13: eMMC swap only during maintenance ---------------------------------
+SWF="$WORK/swapfile"; : > "$SWF"
+MG_SWAPFILE=$SWF MG_SWAPON="$WORK/swapon" MG_SWAPOFF="$WORK/swapoff"
+printf '#!/bin/sh\necho "swapon $*" >> %s/swap.calls\n' "$WORK" > "$WORK/swapon"
+printf '#!/bin/sh\necho "swapoff $*" >> %s/swap.calls\n' "$WORK" > "$WORK/swapoff"
+chmod +x "$WORK/swapon" "$WORK/swapoff"
+swaps() { # used_kB or "" for inactive
+	printf 'Filename\tType\tSize\tUsed\tPriority\n/dev/zram0 partition 131068 0 100\n' > "$MG_PROC/swaps"
+	[ -n "$1" ] && printf '%s file 131068 %s 10\n' "$SWF" "$1" >> "$MG_PROC/swaps"
+}
+NOW=5000 STATE=NORMAL
+# (d) maintenance and the swapfile inactive -> swapon
+rm -f "$WORK/swap.calls"; swaps ""; MAINT=1
+mg_diskswap_reconcile
+grep -q "swapon -p 10 $SWF" "$WORK/swap.calls" 2>/dev/null && pass "(d) MAINT=1 -> swapon" || fail "(d) no swapon"
+# (e) idle, used 0 -> swapoff
+rm -f "$WORK/swap.calls"; swaps 0; MAINT=0; MA=150000 ZU=0 ZL=50000000
+mg_diskswap_reconcile; wait 2>/dev/null
+grep -q "swapoff $SWF" "$WORK/swap.calls" 2>/dev/null && pass "(e) used 0 -> swapoff" || fail "(e) no swapoff"
+NOW=5005; mg_diskswap_reconcile   # reaps the finished swapoff
+# (f) used 100 MiB with MA 120 MiB -> deferred
+rm -f "$WORK/swap.calls"; swaps 102400; MA=122880 ZU=0 ZL=50000000; MG_DEFER_LOGGED=
+NOW=5010; mg_diskswap_reconcile
+[ ! -e "$WORK/swap.calls" ] && pass "(f) used 100 MiB, MA 120 MiB -> deferred" || fail "(f) swapoff not deferred"
+grep -q DISKSWAP_OFF_DEFERRED "$MG_LOG" && pass "(f) deferral logged" || fail "(f) deferral not logged"
+# never at P2+
+swaps 0; MA=150000; STATE=P2
+NOW=5015; mg_diskswap_reconcile
+[ ! -e "$WORK/swap.calls" ] && pass "no swapoff at P2" || fail "swapoff at P2"
+STATE=NORMAL
+# rollback policy
+MG_DISKSWAP_POLICY=always; NOW=5020; mg_diskswap_reconcile
+[ ! -e "$WORK/swap.calls" ] && pass "MG_DISKSWAP_POLICY=always leaves the tier alone" || fail "policy=always acted"
+MG_DISKSWAP_POLICY=maintenance
+# watchdog: a hanging swapoff is aborted after 120 s
+printf '#!/bin/sh\nexec sleep 300\n' > "$WORK/swapoff"
+swaps 0; NOW=6000; MG_SWAPOFF_HOLD=0
+mg_diskswap_reconcile
+[ -n "${MG_SWAPOFF_PID:-}" ] && pass "swapoff runs in the background" || fail "swapoff not backgrounded"
+NOW=6121; mg_diskswap_reconcile
+grep -q DISKSWAP_OFF_TIMEOUT "$MG_LOG" && pass "a swapoff over 120 s is aborted and logged" || fail "no swapoff watchdog"
+[ "$MG_SWAPOFF_HOLD" = $((6121 + 600)) ] && pass "cooldown after an aborted swapoff" || fail "no cooldown ($MG_SWAPOFF_HOLD)"
+rm -f "$MG_PROC/swaps"
+
+# --- MEM-T14 section is appended below by that task ----------------------------
 
 echo "nebulaos-memguard-tests: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

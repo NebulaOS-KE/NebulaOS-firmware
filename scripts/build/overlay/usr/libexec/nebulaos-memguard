@@ -41,6 +41,17 @@ MG_SLOW_EVERY=5
 MG_SNAPSHOT_EVERY=60
 MG_MCU_RSS_ALERT_KB=8192
 
+# MEM-T13: the eMMC swapfile (S03nebulaos-diskswap) is a maintenance-only tier.
+# maintenance (default): on only while MAINT=1, off in IDLE and PRINTING.
+# always: today's behaviour (the tier stays on) - the rollback setting.
+MG_DISKSWAP_POLICY="${MG_DISKSWAP_POLICY:-maintenance}"
+MG_SWAPFILE="${MG_SWAPFILE:-/usr/data/nebulaos/system/swapfile}"
+MG_SWAP_PRIORITY=10
+MG_SWAPOFF_TIMEOUT=120
+MG_SWAPOFF_COOLDOWN=600
+MG_SWAPON="${MG_SWAPON:-swapon}"
+MG_SWAPOFF="${MG_SWAPOFF:-swapoff}"
+
 NEBULAOS_OOM_POLICY="${NEBULAOS_OOM_POLICY:-/etc/nebulaos-oom-policy.sh}"
 # shellcheck disable=SC1090
 [ -r "$NEBULAOS_OOM_POLICY" ] && . "$NEBULAOS_OOM_POLICY"
@@ -197,9 +208,68 @@ mg_snapshot() {
 	mg_log "$_s"
 }
 
-# Hook for the pressure state machine (MEM-T14) and the disk swap policy
-# (MEM-T13); the core only tracks.
+# Hook for the pressure state machine (MEM-T14); the core only tracks.
 mg_evaluate() { :; }
+
+# Used kB of the swapfile from /proc/swaps; empty when it is not active.
+mg_swapfile_used() {
+	_used=
+	[ -r "$MG_PROC/swaps" ] || return 0
+	while read -r _f _t _sz _u _; do
+		[ "$_f" = "$MG_SWAPFILE" ] && { _used=$_u; return 0; }
+	done < "$MG_PROC/swaps"
+}
+
+# MEM-T13. Reaching the disk tier means zram is full - a thrash regime - and
+# writeback can stall any allocating task (klippy included) on the same eMMC
+# that serves virtual_sdcard. So the tier exists only during maintenance
+# (updates, seeding). Turning it off is guarded: only when the swapped pages
+# fit back comfortably (or none are used), never at P2 or above, and swapoff
+# runs in the background with a watchdog so the tracker keeps ticking.
+# PRINTING never waits for it.
+mg_diskswap_reconcile() {
+	[ "$MG_DISKSWAP_POLICY" = always ] && return 0
+	[ -e "$MG_SWAPFILE" ] || return 0
+	if [ -n "${MG_SWAPOFF_PID:-}" ]; then
+		if kill -0 "$MG_SWAPOFF_PID" 2>/dev/null; then
+			if [ $((NOW - MG_SWAPOFF_STARTED)) -ge "$MG_SWAPOFF_TIMEOUT" ]; then
+				kill "$MG_SWAPOFF_PID" 2>/dev/null
+				mg_log "DISKSWAP_OFF_TIMEOUT swapoff ran > ${MG_SWAPOFF_TIMEOUT}s - aborted, retry in ${MG_SWAPOFF_COOLDOWN}s"
+				MG_SWAPOFF_PID= MG_SWAPOFF_HOLD=$((NOW + MG_SWAPOFF_COOLDOWN))
+			fi
+			return 0
+		fi
+		wait "$MG_SWAPOFF_PID" 2>/dev/null
+		mg_log "disk swap off ($(($NOW - MG_SWAPOFF_STARTED))s)"
+		MG_SWAPOFF_PID=
+	fi
+	mg_swapfile_used
+	if [ "$MAINT" = 1 ]; then
+		if [ -z "$_used" ]; then
+			"$MG_SWAPON" -p "$MG_SWAP_PRIORITY" "$MG_SWAPFILE" 2>/dev/null \
+				&& mg_log "disk swap on (maintenance)" || mg_log "ERROR: swapon $MG_SWAPFILE failed"
+		fi
+		return 0
+	fi
+	[ -n "$_used" ] || return 0
+	[ "$NOW" -lt "${MG_SWAPOFF_HOLD:-0}" ] && return 0
+	case "$STATE" in P2 | P3 | P4 | P4_EXHAUSTED) _ok=0 ;; *) _ok=1 ;; esac
+	if [ "$_ok" = 1 ] && [ "$_used" -gt 0 ]; then
+		# the swapped pages must fit: 64 MiB headroom in MemAvailable, and
+		# zram room for them at a 2:1 compression ratio
+		if [ $((_used + 65536)) -ge "$MA" ] || [ $((ZL - ZU)) -le $((_used * 1024 / 2)) ]; then
+			_ok=0
+		fi
+	fi
+	if [ "$_ok" = 1 ]; then
+		"$MG_SWAPOFF" "$MG_SWAPFILE" 2>/dev/null &
+		MG_SWAPOFF_PID=$! MG_SWAPOFF_STARTED=$NOW
+		mg_log "disk swap off requested (used=${_used}kB)"
+	elif [ $((NOW - ${MG_DEFER_LOGGED:--1000})) -ge 60 ]; then
+		MG_DEFER_LOGGED=$NOW
+		mg_log "DISKSWAP_OFF_DEFERRED used=${_used}kB MA=${MA}kB state=$STATE print=$PRINT"
+	fi
+}
 
 mg_tick() {
 	mg_now
@@ -215,6 +285,7 @@ mg_tick() {
 		[ "$MAINT" = "$_prev_maint" ] || mg_log "maintenance-active=$MAINT"
 		mg_enforce_adj
 		mg_check_mcu_rss
+		mg_diskswap_reconcile
 	fi
 	mg_evaluate
 	mg_publish
