@@ -46,6 +46,13 @@
 
 		reserved_memory: reserved_mem@6000000{
 		      compatible = "shared-dma-pool";
+		      /* NebulaOS MEM-T01: all memory-region users (felix/helix/
+		       * ispcam0/1/rotate) are compiled out (VIDEO_INGENIC_ISP/
+		       * ROTATE/VCODEC unset); dpu uses dma_alloc_coherent from the
+		       * buddy allocator. A disabled node is skipped by
+		       * fdt_scan_reserved_mem() (drivers/of/fdt.c). Re-enable
+		       * together with any of those drivers. */
+		      status = "disabled";
 		      reg-64M = <0x03000000 0x1000000>;
 		      reg-128M = <0x06000000 0x2000000>;
 		      reg-256M = <0x0e000000 0x2000000>;
@@ -932,7 +939,9 @@
 };
 
 &otg {
-	dr_mode = "otg";
+	/* host-only product (NebulaOS DWC2 workstream, B1): the port only
+	 * ever drives the camera hub and USB storage; no gadget/OTG role. */
+	dr_mode = "host";
 	device-using-dma = <1>;
 	status = "okay";
 };

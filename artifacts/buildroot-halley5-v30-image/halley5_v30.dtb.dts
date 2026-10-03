@@ -485,7 +485,7 @@
 			clocks = <0x06 0x58>;
 			compatible = "ingenic,x2000-dwc2-hsotg";
 			device-using-dma = <0x01>;
-			dr_mode = "otg";
+			dr_mode = "host";
 			g-np-tx-fifo-size = <0x200>;
 			g-rx-fifo-size = <0x448>;
 			g-tx-fifo-size = <0x10 0x10 0x10 0x80 0x100 0x100 0x200 0x300>;
@@ -1958,6 +1958,7 @@
 			reg-128M = <0x6000000 0x2000000>;
 			reg-256M = <0xe000000 0x2000000>;
 			reg-64M = <0x3000000 0x1000000>;
+			status = "disabled";
 		};
 	};
 
