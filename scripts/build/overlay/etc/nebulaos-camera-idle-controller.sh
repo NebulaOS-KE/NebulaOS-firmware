@@ -172,8 +172,17 @@ nebulaos_camera_idle_tick() {
 				idle_samples=0
 			fi
 		fi
-		# If already paused with no viewer, nothing to do - stays paused,
-		# idle_samples stays irrelevant/reset.
+		# CAM-02: already paused with no viewer - re-assert the pause. A
+		# restarted ustreamer (S50webcam restarts it after a crash, a
+		# memory shed or a replug) always comes up unpaused, and this
+		# controller's "paused" belief would otherwise leave it streaming
+		# to nobody, keeping the camera and its USB periodic load active.
+		# /pause is idempotent on an already-paused stream. A failure is
+		# ignored: the belief stays "paused" and the next tick retries.
+		# Quiet on purpose: one call per poll interval, at most.
+		if [ "$state" = "paused" ]; then
+			nebulaos_camera_pause >/dev/null 2>&1 || true
+		fi
 	fi
 	printf '%s %s' "$state" "$idle_samples"
 }

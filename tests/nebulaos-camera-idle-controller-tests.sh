@@ -225,17 +225,17 @@ reset_curl_log
 
 # ============================================================
 # Scenario 8: ustreamer restart - a fresh ustreamer process always
-# starts unpaused; if this controller's own belief is stale ("paused")
-# with still no viewer present, it correctly does nothing (safety-
-# biased: never worse than the camera just staying active) rather than
-# either crashing or making an incorrect assumption.
+# starts unpaused. CAM-02: with a "paused" belief and still no viewer, the
+# tick re-asserts exactly one idempotent /pause, so a restarted ustreamer
+# cannot keep streaming to nobody; the state stays paused.
 # ============================================================
 result=$(nebulaos_camera_idle_tick paused 0 no)
 state=${result%% *}
-if [ "$state" = "paused" ] && ! grep -q "curl" "$FAKE_CURL_LOG" 2>/dev/null; then
+pause_calls=$(grep -c "/pause" "$FAKE_CURL_LOG" 2>/dev/null)
+if [ "$state" = "paused" ] && [ "$pause_calls" = "1" ] && ! grep -q "/resume" "$FAKE_CURL_LOG"; then
 	pass
 else
-	fail "stale-paused-belief with no viewer made an unexpected curl call or changed state incorrectly (state=$state)"
+	fail "paused+no-viewer tick should re-assert exactly one /pause and stay paused (state=$state pause_calls=$pause_calls)"
 fi
 
 # ============================================================
@@ -278,9 +278,10 @@ fi
 reset_curl_log
 
 # ============================================================
-# Scenario 11: repeated idempotent pause/resume - once paused, further
-# no-viewer ticks must not call /pause again; once active, further
-# yes-viewer ticks must not call /resume again.
+# Scenario 11: bounded re-assertion - once paused, each no-viewer tick
+# re-asserts at most one /pause (CAM-02, bounded to one per poll interval)
+# and never resumes; once active, further yes-viewer ticks must not call
+# /resume again.
 # ============================================================
 reset_curl_log
 state=paused
@@ -291,10 +292,10 @@ while [ "$i" -le 5 ]; do
 	i=$((i + 1))
 done
 pause_calls=$(grep -c "/pause" "$FAKE_CURL_LOG" 2>/dev/null)
-if [ "$state" = "paused" ] && [ "$pause_calls" = "0" ]; then
+if [ "$state" = "paused" ] && [ "$pause_calls" = "5" ] && ! grep -q "/resume" "$FAKE_CURL_LOG"; then
 	pass
 else
-	fail "repeated no-viewer ticks while already paused made $pause_calls redundant /pause calls"
+	fail "5 no-viewer ticks while paused made $pause_calls /pause calls (want exactly 5, one per tick) or resumed"
 fi
 
 reset_curl_log
