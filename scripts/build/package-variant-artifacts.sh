@@ -48,14 +48,12 @@ cp "$ARTIFACT_DIR/buildroot.config" "$PKG_DIR/buildroot.config" 2>/dev/null || t
 cp "$ARTIFACT_DIR/kernel.config" "$PKG_DIR/kernel.config" 2>/dev/null || true
 cp "$ARTIFACT_DIR/halley5_v30.dts" "$PKG_DIR/halley5_v30.dts" 2>/dev/null || true
 
-WIFI_VARIANT_MARKER="$REPO_ROOT/build-work/wifi-sdio-variant-applied.txt"
-PREEMPT_VARIANT_MARKER="$REPO_ROOT/build-work/preempt-variant-applied.txt"
+. "$REPO_ROOT/manifests/dependencies.conf"
 
 {
 	echo "package_label=$VARIANT_LABEL"
 	echo "packaged_at=$TS"
-	echo "wifi_sdio_variant=$([ -f "$WIFI_VARIANT_MARKER" ] && cat "$WIFI_VARIANT_MARKER" || echo unknown)"
-	echo "preempt_variant=$([ -f "$PREEMPT_VARIANT_MARKER" ] && cat "$PREEMPT_VARIANT_MARKER" || echo unknown)"
+	echo "kernel_pin=$KERNEL_PIN"
 	echo ""
 	echo "Files in this package:"
 	echo "  xImage - kernel image"

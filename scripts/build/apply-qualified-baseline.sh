@@ -90,7 +90,6 @@ echo "== apply-qualified-baseline: applying every accepted baseline variant =="
 # rewrite - verified per-script during the audit, see the doc referenced
 # above). Listed here in the order the underlying missions were originally
 # accepted, for readability only.
-sh "$SCRIPT_DIR/wifi-sdio-variant.sh" W3
 sh "$SCRIPT_DIR/display-vsync-variant.sh" V1
 sh "$SCRIPT_DIR/pinctrl-ownership-fix-variant.sh" FIX1
 sh "$SCRIPT_DIR/backlight-final-controller-variant.sh" FINAL1
