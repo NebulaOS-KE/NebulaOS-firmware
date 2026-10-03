@@ -171,7 +171,7 @@ CAPTURE_PROFILES = {
 }
 
 # Defined by the plan as reversible state changes: TOOL-02 `exercise`, never `capture`.
-EXERCISE_ONLY = ("camera-resume", "memexercise", "sof-filter-ab", "storage-autosuspend")
+EXERCISE_ONLY = ("camera-resume", "camera-states", "memexercise", "sof-filter-ab", "storage-autosuspend")
 
 
 class CaptureError(Exception):
@@ -254,6 +254,28 @@ EXERCISE_PROFILES = {
         "t1=" + _NOW_MS + "; echo \"first_frame_ms=$(( t1 - t0 )) attempts=$i\"",
         "curl -s -o /dev/null --max-time 5 localhost:8080/resume",
         120),
+    # BASE-01 step 2 / HWDP-DWC-3/4 baselines: IRQ 9 rate, DWC2 thread cost and
+    # the USB runtime-PM chain in each camera state the product can enter
+    # remotely - paused (/pause), ustreamer stopped (S50webcam stop) and
+    # restarted (S50webcam start). Measured inside the profile after a settle
+    # time, so the 10 s window is not smeared across a state transition.
+    "camera-states": (
+        "W=/etc/init.d/S50webcam; [ -x $W ] || { echo NO_S50WEBCAM; exit 3; }; "
+        "st(){ echo \"== state=$1 utc=$(date -u +%H:%M:%S)\"; " + _IRQ_RATE + "; "
+        "for d in usb1 1-1 1-1.1 1-1.2; do p=/sys/bus/usb/devices/$d/power; echo \"pm $d $(cat $p/control $p/runtime_status "
+        "$p/runtime_active_time $p/runtime_suspended_time 2>/dev/null | tr '\\n' ' ')\"; done; "
+        "grep -i drvvbus /sys/kernel/debug/gpio; }; "
+        "D0=$(dmesg | grep -ciE 'usb 1-.*disconnect'); "
+        "curl -s -o /dev/null --max-time 5 localhost:8080/pause; sleep 12; st paused; "
+        "curl -s -o /dev/null --max-time 5 localhost:8080/resume; sleep 5; "
+        "$W stop; sleep 12; st stopped; "
+        "$W start; sleep 20; st restarted; "
+        "i=0; until curl -sf -o /dev/null --max-time 2 localhost:8080/snapshot || [ $i -ge 30 ]; do i=$((i+1)); sleep 1; done; "
+        "echo \"snapshot_after_restart_attempts=$i\"; "
+        "echo \"usb_disconnects_during=$(( $(dmesg | grep -ciE 'usb 1-.*disconnect') - D0 ))\"",
+        "$W status 2>/dev/null | grep -q 'supervisor: RUNNING' || $W start; "
+        "curl -s -o /dev/null --max-time 5 localhost:8080/resume",
+        240),
     # HWDP-MEM-3/6/8: memory ramps while the printer is idle-connected (no print).
     # Steps of 16..96 MiB, incompressible then compressible, 60 s each, logging
     # memory state every second; stops early when memguard reaches P3.
