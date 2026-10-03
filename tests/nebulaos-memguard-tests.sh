@@ -165,7 +165,70 @@ grep -q DISKSWAP_OFF_TIMEOUT "$MG_LOG" && pass "a swapoff over 120 s is aborted 
 [ "$MG_SWAPOFF_HOLD" = $((6121 + 600)) ] && pass "cooldown after an aborted swapoff" || fail "no cooldown ($MG_SWAPOFF_HOLD)"
 rm -f "$MG_PROC/swaps"
 
-# --- MEM-T14 section is appended below by that task ----------------------------
+# --- MEM-T14: pressure levels P1..P4 ------------------------------------------
+printf '#!/bin/sh\necho "S56 $*" >> %s/svc.calls\n' "$WORK" > "$WORK/S56"
+printf '#!/bin/sh\necho "S58 $*" >> %s/svc.calls\n' "$WORK" > "$WORK/S58"
+chmod +x "$WORK/S56" "$WORK/S58"
+MG_S56="$WORK/S56" MG_S58="$WORK/S58"
+ZU=0 ZL=50000000 SOME10=0 FULL10=0 PRINT=1
+fresh() { LEVEL=0 ENTER_CNT=0 EXIT_SINCE= LAST_ESCALATE=-1000 P4_SINCE= EXHAUSTED_LOGGED=0 STATE=NORMAL; rm -f "$WORK/svc.calls" "$MG_RUN"/shed/* "$MG_RUN"/memguard/deny-maintenance; }
+run() { # seconds MA_MiB -> evaluate once per second, record level changes
+	_n=$1
+	while [ "$_n" -gt 0 ]; do
+		NOW=$((NOW + 1)); MA=$(($2 * 1024)); _old=$LEVEL
+		mg_evaluate
+		[ "$LEVEL" != "$_old" ] && TRANS="$TRANS P$LEVEL@$NOW"
+		_n=$((_n - 1))
+	done
+}
+# (g) scripted MA series enters P1..P4 with >= 10 s spacing
+fresh; NOW=10000; TRANS=""
+fakeproc 102 python3 -400 30000; echo 102 > "$MG_PIDDIR/moonraker.pid"
+run 20 80; run 15 50; run 15 35; run 15 28; run 15 20
+expect "(g) transitions" "$TRANS" " P1@10022 P2@10037 P3@10052 P4@10067"
+expect "(g) state P4" "$STATE" P4
+[ -e "$MG_RUN/memguard/deny-maintenance" ] && pass "(g) P1 denies maintenance" || fail "(g) no deny-maintenance"
+[ -e "$MG_RUN/shed/camera" ] && pass "(g) P2 sheds the camera (also while printing)" || fail "(g) camera not shed"
+[ -e "$MG_RUN/shed/guppyscreen" ] && grep -q 'S58 stop' "$WORK/svc.calls" && pass "(g) P3 stops GuppyScreen" || fail "(g) GuppyScreen not stopped"
+# fast drop: escalation is still one level per 10 s
+fresh; NOW=20000; TRANS=""; run 40 10
+expect "(g) a sudden drop still escalates one level per 10 s" "$TRANS" " P1@20002 P2@20012 P3@20022 P4@20032"
+# (h) recovery: each level held 60 s
+TRANS=""; run 241 100
+expect "(h) de-escalation one level per 60 s dwell" "$TRANS" " P3@20101 P2@20161 P1@20221 P0@20281"
+expect "(h) back to NORMAL" "$STATE" NORMAL
+[ ! -e "$MG_RUN/shed/camera" ] && [ ! -e "$MG_RUN/shed/guppyscreen" ] && [ ! -e "$MG_RUN/memguard/deny-maintenance" ] \
+	&& pass "(h) every marker removed" || fail "(h) markers left: $(ls "$MG_RUN/shed" "$MG_RUN/memguard")"
+grep -q 'S58 start' "$WORK/svc.calls" && pass "(h) GuppyScreen restarted on leaving P3" || fail "(h) GuppyScreen not restarted"
+# (i) P4 with Moonraker RSS 40 MiB -> no restart
+fresh; NOW=30000; fakeproc 102 python3 -400 40960; run 40 10
+grep -q 'S56' "$WORK/svc.calls" 2>/dev/null && fail "(i) Moonraker restarted at 40 MiB" || pass "(i) P4 with Moonraker at 40 MiB: no restart"
+# P4 with a bloated Moonraker -> one restart
+fresh; NOW=40000; MG_LAST_MR_RESTART=; fakeproc 102 python3 -400 80000; run 40 10; wait 2>/dev/null
+grep -q 'S56 stop' "$WORK/svc.calls" && grep -q 'S56 start' "$WORK/svc.calls" && pass "P4 with Moonraker at 78 MiB: restarted" || fail "bloated Moonraker not restarted"
+[ ! -e "$MG_RUN/shed/moonraker-restarting" ] && pass "moonraker-restarting marker removed afterwards" || fail "moonraker-restarting marker left"
+# (j) a second P4 within 1800 s -> no restart
+rm -f "$WORK/svc.calls"; LEVEL=3 ENTER_CNT=0 LAST_ESCALATE=-1000; NOW=40600; run 5 10; wait 2>/dev/null
+grep -q 'S56' "$WORK/svc.calls" 2>/dev/null && fail "(j) second restart within 1800 s" || pass "(j) second P4 within 1800 s: no restart"
+# P4_EXHAUSTED after 120 s
+fresh; NOW=50000; fakeproc 102 python3 -400 30000; run 200 10
+expect "P4 held 120 s -> P4_EXHAUSTED" "$STATE" P4_EXHAUSTED
+[ "$(grep -c 'SUPPORTED WORKLOAD EXCEEDED' "$MG_LOG")" = 1 ] && pass "exhaustion logged once" || fail "exhaustion log count wrong"
+# (k) PSI-only escalation
+fresh; NOW=60000; TRANS=""; FULL10=25; run 40 200; FULL10=0
+expect "(k) PSI full avg10 25 alone reaches P4" "$STATE" P4
+# zram nearly full alone reaches P2 but no further
+fresh; NOW=70000; ZU=46000000; run 60 200; ZU=0
+expect "zram >= 90% of mem_limit alone -> P2" "$STATE" P2
+# tracker-only mode
+fresh; NOW=80000; MG_ACTIONS=0; run 40 10; MG_ACTIONS=1
+[ ! -e "$MG_RUN/shed/camera" ] && [ ! -e "$WORK/svc.calls" ] && pass "MG_ACTIONS=0: tracks without acting" || fail "MG_ACTIONS=0 acted"
+expect "MG_ACTIONS=0 still reports the level" "$STATE" P4
+# a restarted memguard clears a previous instance's sheds
+fresh; : > "$MG_RUN/shed/guppyscreen"; : > "$MG_RUN/shed/camera"
+mg_reset_markers
+[ ! -e "$MG_RUN/shed/guppyscreen" ] && [ ! -e "$MG_RUN/shed/camera" ] && grep -q 'S58 start' "$WORK/svc.calls" \
+	&& pass "restart clears stale sheds and restarts GuppyScreen" || fail "stale sheds not cleared"
 
 echo "nebulaos-memguard-tests: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

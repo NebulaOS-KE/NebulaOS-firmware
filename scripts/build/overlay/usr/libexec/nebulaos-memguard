@@ -41,6 +41,21 @@ MG_SLOW_EVERY=5
 MG_SNAPSHOT_EVERY=60
 MG_MCU_RSS_ALERT_KB=8192
 
+# MEM-T14: pressure levels. Thresholds in MiB of MemAvailable; HWDP-MEM-8
+# recalibrates them without code edits. MG_ACTIONS=0 is tracker-only mode.
+MG_ACTIONS="${MG_ACTIONS:-1}"
+MG_P1_ENTER_MB=56 MG_P1_EXIT_MB=72
+MG_P2_ENTER_MB=40 MG_P2_EXIT_MB=56
+MG_P3_ENTER_MB=30 MG_P3_EXIT_MB=46
+MG_P4_ENTER_MB=22 MG_P4_EXIT_MB=38
+MG_ESCALATE_SPACING=10
+MG_EXIT_DWELL=60
+MG_P4_EXHAUSTED_AFTER=120
+MG_MOONRAKER_RESTART_RSS_KB=65536
+MG_MOONRAKER_RESTART_SPACING=1800
+MG_S56="${MG_S56:-/etc/init.d/S56moonraker}"
+MG_S58="${MG_S58:-/etc/init.d/S58guppyscreen}"
+
 # MEM-T13: the eMMC swapfile (S03nebulaos-diskswap) is a maintenance-only tier.
 # maintenance (default): on only while MAINT=1, off in IDLE and PRINTING.
 # always: today's behaviour (the tier stays on) - the rollback setting.
@@ -57,6 +72,7 @@ NEBULAOS_OOM_POLICY="${NEBULAOS_OOM_POLICY:-/etc/nebulaos-oom-policy.sh}"
 [ -r "$NEBULAOS_OOM_POLICY" ] && . "$NEBULAOS_OOM_POLICY"
 
 MA=0 ZU=0 ZL=0 SOME10=0 FULL10=0 PRINT=0 MAINT=0 STATE=NORMAL NOW=0
+LEVEL=0 ENTER_CNT=0 EXIT_SINCE= LAST_ESCALATE=-1000 P4_SINCE= EXHAUSTED_LOGGED=0
 
 mg_log() {
 	_line="$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null) $*"
@@ -208,8 +224,140 @@ mg_snapshot() {
 	mg_log "$_s"
 }
 
-# Hook for the pressure state machine (MEM-T14); the core only tracks.
-mg_evaluate() { :; }
+# MEM-T14 conditions. "zram nearly full" only counts when a limit is set.
+mg_enter_cond() { # level
+	_ma=$((MA / 1024))
+	case "$1" in
+	1) [ "$_ma" -lt "$MG_P1_ENTER_MB" ] || [ "$SOME10" -ge 10 ] ;;
+	2) [ "$_ma" -lt "$MG_P2_ENTER_MB" ] || [ "$FULL10" -ge 5 ] || { [ "$ZL" -gt 0 ] && [ $((ZU * 10)) -ge $((ZL * 9)) ]; } ;;
+	3) [ "$_ma" -lt "$MG_P3_ENTER_MB" ] || [ "$FULL10" -ge 10 ] ;;
+	4) [ "$_ma" -lt "$MG_P4_ENTER_MB" ] || [ "$FULL10" -ge 20 ] ;;
+	*) return 1 ;;
+	esac
+}
+
+mg_exit_cond() { # level
+	_ma=$((MA / 1024))
+	case "$1" in
+	1) [ "$_ma" -gt "$MG_P1_EXIT_MB" ] && [ "$SOME10" -lt 5 ] ;;
+	2) [ "$_ma" -gt "$MG_P2_EXIT_MB" ] && [ "$FULL10" -lt 1 ] && { [ "$ZL" -eq 0 ] || [ $((ZU * 4)) -lt $((ZL * 3)) ]; } ;;
+	3) [ "$_ma" -gt "$MG_P3_EXIT_MB" ] && [ "$FULL10" -lt 1 ] ;;
+	4) [ "$_ma" -gt "$MG_P4_EXIT_MB" ] && [ "$FULL10" -lt 1 ] ;;
+	*) return 1 ;;
+	esac
+}
+
+# P4: restart Moonraker only if it is clearly bloated (2x its measured idle
+# RSS) and memguard has not restarted it in the last 30 min. klippy keeps
+# printing from virtual_sdcard; the git wrapper keeps the refresh after the
+# restart network-free. Runs in the background so the tracker keeps ticking.
+mg_p4_action() {
+	mg_pid_of moonraker.pid
+	[ -n "$_p" ] || return 0
+	mg_rss_kb "$_p"
+	if [ "$_rss" -lt "$MG_MOONRAKER_RESTART_RSS_KB" ]; then
+		mg_log "P4: Moonraker RSS ${_rss} kB below ${MG_MOONRAKER_RESTART_RSS_KB} kB - no action"
+		return 0
+	fi
+	if [ $((NOW - ${MG_LAST_MR_RESTART:--100000})) -lt "$MG_MOONRAKER_RESTART_SPACING" ]; then
+		mg_log "P4: Moonraker restarted by memguard less than ${MG_MOONRAKER_RESTART_SPACING}s ago - no action"
+		return 0
+	fi
+	MG_LAST_MR_RESTART=$NOW
+	mg_log "P4: restarting Moonraker (RSS ${_rss} kB)"
+	(
+		: > "$MG_RUN/shed/moonraker-restarting"
+		"$MG_S56" stop >/dev/null 2>&1
+		_i=0
+		while [ "$_i" -lt 20 ] && [ -d "$MG_PROC/$_p" ]; do sleep 1; _i=$((_i + 1)); done
+		"$MG_S56" start >/dev/null 2>&1
+		rm -f "$MG_RUN/shed/moonraker-restarting"
+	) &
+}
+
+mg_enter() { # new level
+	mg_log "enter P$1 (MA=${MA}kB ZU=$ZU ZL=$ZL SOME10=$SOME10 FULL10=$FULL10 print=$PRINT)"
+	[ "$MG_ACTIONS" = 1 ] || return 0
+	case "$1" in
+	1) : > "$MG_RUN/memguard/deny-maintenance" ;;
+	2) : > "$MG_RUN/shed/camera" ;;
+	3) : > "$MG_RUN/shed/guppyscreen"; "$MG_S58" stop >/dev/null 2>&1 ;;
+	4) mg_p4_action ;;
+	esac
+}
+
+mg_exit() { # level being left
+	mg_log "leave P$1 (MA=${MA}kB)"
+	[ "$MG_ACTIONS" = 1 ] || return 0
+	case "$1" in
+	1) rm -f "$MG_RUN/memguard/deny-maintenance" ;;
+	2) rm -f "$MG_RUN/shed/camera" ;;
+	3) rm -f "$MG_RUN/shed/guppyscreen"; "$MG_S58" start >/dev/null 2>&1 ;;
+	esac
+}
+
+# MEM-T14 state machine: escalate one level at a time, only after a higher
+# level's condition held for 2 consecutive samples and at least 10 s after
+# the previous escalation; de-escalate one level per 60 s of continuous exit
+# condition. klippy and klipper_mcu are never acted on; every action is
+# marker-guarded and idempotent.
+mg_target_level() {
+	_t=4
+	while [ "$_t" -gt 0 ]; do
+		mg_enter_cond "$_t" && return 0
+		_t=$((_t - 1))
+	done
+}
+
+mg_evaluate() {
+	# Step toward the highest level whose entry condition holds: zram filling
+	# up or PSI "full" stalls can call for P2+ while MemAvailable alone would
+	# not even reach P1.
+	mg_target_level
+	_next=$((LEVEL + 1))
+	if [ "$LEVEL" -lt 4 ] && [ "$_t" -gt "$LEVEL" ]; then
+		ENTER_CNT=$((ENTER_CNT + 1))
+		if [ "$ENTER_CNT" -ge 2 ] && [ $((NOW - LAST_ESCALATE)) -ge "$MG_ESCALATE_SPACING" ]; then
+			LEVEL=$_next ENTER_CNT=0 LAST_ESCALATE=$NOW EXIT_SINCE=
+			[ "$LEVEL" = 4 ] && P4_SINCE=$NOW EXHAUSTED_LOGGED=0
+			mg_enter "$LEVEL"
+		fi
+	else
+		ENTER_CNT=0
+	fi
+	if [ "$LEVEL" -gt 0 ] && mg_exit_cond "$LEVEL"; then
+		[ -n "$EXIT_SINCE" ] || EXIT_SINCE=$NOW
+		if [ $((NOW - EXIT_SINCE)) -ge "$MG_EXIT_DWELL" ]; then
+			mg_exit "$LEVEL"
+			LEVEL=$((LEVEL - 1)) EXIT_SINCE=$NOW
+			[ "$LEVEL" -eq 3 ] && P4_SINCE=
+		fi
+	elif [ "$LEVEL" -gt 0 ]; then
+		EXIT_SINCE=
+	fi
+	if [ "$LEVEL" = 4 ] && [ $((NOW - ${P4_SINCE:-$NOW})) -ge "$MG_P4_EXHAUSTED_AFTER" ]; then
+		STATE=P4_EXHAUSTED
+		if [ "$EXHAUSTED_LOGGED" = 0 ]; then
+			EXHAUSTED_LOGGED=1
+			mg_log "SUPPORTED WORKLOAD EXCEEDED: P4 for ${MG_P4_EXHAUSTED_AFTER}s; the kernel OOM killer now chooses by the D4 table"
+		fi
+	elif [ "$LEVEL" = 0 ]; then
+		STATE=NORMAL
+	else
+		STATE=P$LEVEL
+	fi
+}
+
+# A restarted memguard starts at NORMAL: clear what a previous instance left,
+# restarting GuppyScreen if it had shed it.
+mg_reset_markers() {
+	rm -f "$MG_RUN/memguard/deny-maintenance" "$MG_RUN/shed/camera" "$MG_RUN/shed/moonraker-restarting"
+	if [ -e "$MG_RUN/shed/guppyscreen" ]; then
+		rm -f "$MG_RUN/shed/guppyscreen"
+		[ "$MG_ACTIONS" = 1 ] && "$MG_S58" start >/dev/null 2>&1
+		mg_log "cleared a GuppyScreen shed left by a previous instance"
+	fi
+}
 
 # Used kB of the swapfile from /proc/swaps; empty when it is not active.
 mg_swapfile_used() {
@@ -296,8 +444,9 @@ mg_tick() {
 }
 
 mg_loop() {
-	mkdir -p "$MG_RUN/memguard"
-	mg_log "started (pid $$)"
+	mkdir -p "$MG_RUN/memguard" "$MG_RUN/shed"
+	mg_reset_markers
+	mg_log "started (pid $$) actions=$MG_ACTIONS diskswap=$MG_DISKSWAP_POLICY"
 	while :; do
 		mg_tick
 		sleep "$MG_TICK"
