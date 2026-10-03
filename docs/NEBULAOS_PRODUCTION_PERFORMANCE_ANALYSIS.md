@@ -72,7 +72,7 @@ absence of any userspace consumer) — not absence-during-one-snapshot.
 | CPU | 2 cores, MIPS (XBurst2/Ingenic X2000), BogoMIPS 2393.70/core | `/proc/cpuinfo` |
 | CPU governor / DVFS | **None compiled in at all** — no `/sys/devices/system/cpu/cpu*/cpufreq/` exists; confirmed via kernel config that `CONFIG_CPU_FREQ` is not set, despite the device-tree defining a real 8-point OPP table (200MHz-1.2GHz) that can never bind to any driver | Live `/sys` absence + kernel-config-agent finding |
 | Total RAM | 212,776 kB (~208 MiB) | `/proc/meminfo` |
-| Swap | Two-tier: zram0 (128 MiB, priority 100, `lzo-rle` active at runtime) + disk swapfile (128 MiB, priority 10, fallback) at `/usr/data/nebulaos/system/swapfile`; 0 kB in use at measurement time | `/proc/swaps`, `/sys/block/zram0/*` |
+| Swap | Two-tier: zram0 (128 MiB, priority 100, `lz4` active at runtime — measured `lzo lzo-rle [lz4]` on ke-dev 2026-10-03, HWDP-MEM-2; an earlier `lzo-rle` reading here was a documentation error) + disk swapfile (128 MiB, priority 10, fallback) at `/usr/data/nebulaos/system/swapfile`; 0 kB in use at measurement time | `/proc/swaps`, `/sys/block/zram0/*` |
 | Rootfs squashfs | 99.89 MiB, **gzip**, 128 KiB block size, 808 fragments, duplicates removed, xattrs/inodes/ids all compressed | `unsquashfs -s` on the real built `rootfs.squashfs` in this checkout |
 | Kernel image | `xImage`, 6.64 MB, **uncompressed** u-boot legacy uImage | `file` on the real built `xImage` |
 | Partition capacity margin | Both rootfs A/B slots are 250 MiB each; only 99.89 MiB is used — **~150 MiB headroom** per slot before any repartition would be needed | `/proc/partitions` |
@@ -597,7 +597,7 @@ detail this pass.
 
 | Item | Value |
 |---|---|
-| zram | 128 MiB, priority 100 (preferred), `lzo-rle` active at runtime (compile-time default is LZ4 per the kernel fragment — the live system overrides this at runtime via `/sys/block/zram0/comp_algorithm`, not a bug, just two different knobs: compile-time default vs. runtime selection) |
+| zram | 128 MiB, priority 100 (preferred), `lz4` active at runtime (measured `lzo lzo-rle [lz4]` on ke-dev 2026-10-03, HWDP-MEM-2; S00zram-swap asserts lz4. The earlier `lzo-rle` claim here was a documentation error, not a runtime override) |
 | Disk swapfile | 128 MiB, priority 10 (fallback), at `/usr/data/nebulaos/system/swapfile` |
 | Swap in use at measurement | 0 kB (SwapFree == SwapTotal) — no memory pressure at idle |
 | sysctl policy | `vm.swappiness=10`, `vm.page-cluster=0` — already deliberately tuned (documented rationale: favor keeping pages resident, avoid page-cluster's disk-seek-oriented multi-page I/O bursts, reasoned specifically for this motion-control system, not copied from a generic guide) |
