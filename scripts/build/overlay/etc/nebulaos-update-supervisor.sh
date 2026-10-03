@@ -202,7 +202,14 @@ write_state() {
 
 # Read-only query, never combined with a restart in the same step - a
 # printing/paused state means "wait", not "skip validation".
+# Markers published by nebulaos-memguard (MEM-T12/T14). Absent means normal.
+NEBULAOS_RUN_DIR="${NEBULAOS_RUN_DIR:-/run/nebulaos}"
+
 print_is_active() {
+	# MEM-T16: memguard's print state is sticky across a dead or restarting
+	# Moonraker; trust it first, so an unreachable Moonraker never reads as
+	# "not printing".
+	[ -e "$NEBULAOS_RUN_DIR/print-active" ] && return 0
 	stats=$(wget -q -O - --timeout=5 "$MOONRAKER_URL/printer/objects/query?print_stats=state" 2>/dev/null)
 	case "$stats" in
 		*'"state":"printing"'*|*'"state":"paused"'*) return 0 ;;
@@ -265,6 +272,11 @@ restart_component() {
 	# $1=component
 	info=$(component_info "$1")
 	init_script=$(echo "$info" | cut -d'|' -f2)
+	# MEM-T16: under memory pressure memguard denies maintenance; defer.
+	if [ -e "$NEBULAOS_RUN_DIR/memguard/deny-maintenance" ]; then
+		log "$1: restart deferred - memguard reports memory pressure"
+		return 1
+	fi
 	wait_for_print_idle || return 1
 	log "$1: restarting via $init_script"
 	safe_stop_start "$1"
@@ -1038,6 +1050,8 @@ validate_component() {
 # independent liveness check with no git dependency at all, specifically
 # to close that gap.
 ensure_moonraker_alive() {
+	# MEM-T16: memguard is restarting Moonraker itself (P4); do not race it.
+	[ -e "$NEBULAOS_RUN_DIR/shed/moonraker-restarting" ] && return 0
 	if [ -e "$LOCKDIR/moonraker.lock" ]; then
 		# A validation/rollback for moonraker is already in flight and will
 		# handle its own restart - restarting it out from under that logic
