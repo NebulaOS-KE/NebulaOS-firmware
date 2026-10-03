@@ -1,0 +1,49 @@
+#!/bin/sh
+#
+# NebulaOS git wrapper (MEM-T08). First on Moonraker's PATH (S56moonraker), so
+# update_manager's git runs through it; nothing else uses this directory.
+#   - every git it runs starts at oom_score_adj 800: index-pack is the heaviest
+#     transient on this system and must be the first OOM victim;
+#   - while a print is active, a network fetch is a no-op success (the repo
+#     stays valid with its last known refs) and pull/clone are refused;
+#   - under memory pressure (memguard P1+) fetch/pull/clone are refused.
+# /usr/bin/git itself is untouched.
+
+NEBULAOS_GIT_REAL="${NEBULAOS_GIT_REAL:-/usr/bin/git}"
+NEBULAOS_RUN_DIR="${NEBULAOS_RUN_DIR:-/run/nebulaos}"
+
+echo 800 > /proc/self/oom_score_adj 2>/dev/null
+
+# The subcommand is the first argument that is not an option or the value of a
+# global option that takes one (git -C <path> -c <k=v> fetch ...).
+sub=""
+skip=""
+for a in "$@"; do
+	if [ -n "$skip" ]; then
+		skip=""
+		continue
+	fi
+	case "$a" in
+	-C | -c | --git-dir | --work-tree | --namespace | --super-prefix | --config-env) skip=1 ;;
+	-*) ;;
+	*) sub="$a"; break ;;
+	esac
+done
+
+case "$sub" in
+fetch | pull | clone)
+	if [ -e "$NEBULAOS_RUN_DIR/print-active" ]; then
+		if [ "$sub" = fetch ]; then
+			logger -t nebulaos-git "print active: fetch skipped (no-op success): $*" 2>/dev/null
+			exit 0
+		fi
+		logger -t nebulaos-git "print active: $sub refused" 2>/dev/null
+		exit 1
+	fi
+	if [ -e "$NEBULAOS_RUN_DIR/memguard/deny-maintenance" ]; then
+		logger -t nebulaos-git "memory pressure: $sub refused" 2>/dev/null
+		exit 1
+	fi
+	;;
+esac
+exec "$NEBULAOS_GIT_REAL" "$@"

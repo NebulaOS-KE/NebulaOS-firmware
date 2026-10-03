@@ -117,6 +117,10 @@ prepare_tmpdir() {
 
 start_daemon() {
 	prepare_tmpdir
+	# MEM-T08: Moonraker's git (update_manager) resolves through PATH; the
+	# NebulaOS wrapper sets its OOM priority and keeps network git out of a
+	# running print and out of memory pressure.
+	export PATH="/usr/libexec/nebulaos/bin:$PATH"
 	echo "Starting moonraker (using $PYTHON3)"
 	# OOM priority at birth (MEM-T07): Moonraker coordinates updates and
 	# rollback - protected, but below Klipper.
