@@ -33,12 +33,12 @@ echo "--- plr_tombstone.py ---"
 if [ -f "$TOOL" ]; then
     pass "plr_tombstone.py exists"
     if command -v python3 >/dev/null 2>&1; then
-        if python3 -m py_compile "$TOOL" 2>/tmp/plr-tombstone-pycompile-err.txt; then
+        if python3 -m py_compile "$TOOL" 2>"${TMPDIR:-/tmp}/plr-tombstone-pycompile-err.txt"; then
             pass "plr_tombstone.py is syntactically valid Python"
         else
-            fail "plr_tombstone.py has a syntax error: $(cat /tmp/plr-tombstone-pycompile-err.txt)"
+            fail "plr_tombstone.py has a syntax error: $(cat "${TMPDIR:-/tmp}/plr-tombstone-pycompile-err.txt")"
         fi
-        rm -f /tmp/plr-tombstone-pycompile-err.txt
+        rm -f "${TMPDIR:-/tmp}/plr-tombstone-pycompile-err.txt"
     else
         echo "SKIP: python3 not available to syntax-check plr_tombstone.py"
     fi

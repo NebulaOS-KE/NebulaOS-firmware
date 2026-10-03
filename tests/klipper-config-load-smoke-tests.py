@@ -57,6 +57,7 @@ KLIPPER_EXTENSIONS_SRC.
 Usage: python3 tests/klipper-config-load-smoke-tests.py
 """
 
+import errno
 import json
 import os
 import pathlib
@@ -226,7 +227,11 @@ def stage_etc_nebulaos_klipper():
         )
         for f in sorted(NEBULAOS_ETC_KLIPPER_SRC.glob("*.cfg")):
             shutil.copy2(f, NEBULAOS_ETC_KLIPPER / f.name)
-    except PermissionError as exc:
+    except OSError as exc:
+        # EACCES/EPERM as a normal user, EROFS inside a sandbox that mounts /etc
+        # read-only: either way the real /etc cannot be staged here.
+        if exc.errno not in (errno.EACCES, errno.EPERM, errno.EROFS):
+            raise
         skip(f"no permission to stage the real /etc/nebulaos/klipper/*.cfg files "
              f"({exc}) - Klipper's own configfile.py resolves printer.cfg's "
              "absolute includes directly against this process's real "
