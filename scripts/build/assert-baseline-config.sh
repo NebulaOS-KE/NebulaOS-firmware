@@ -242,6 +242,12 @@ post-build|candidate-post-build)
 	grep -q 'spi_gpio_adxl345 {' "$DTS" && RC=0 || RC=$?
 	check "spi_gpio_adxl345 DT node present in resolved DTS" "$RC"
 
+	# RT priority hierarchy (IRQ-04): the kernel applies these itself.
+	grep -qx 'CONFIG_NEBULAOS_KTIMERS_PRIO=50' "$KCONFIG" && RC=0 || RC=$?
+	check "CONFIG_NEBULAOS_KTIMERS_PRIO=50 (ktimers above klipper_mcu)" "$RC"
+	grep -qx 'CONFIG_NEBULAOS_IRQ_THREAD_PRIO="uart1=60,mmc0=45,s-mmc0=45,mmc1=30,s-mmc1=30,13500000.otg=25,dwc2_hsotg:\*=25,\*=10"' "$KCONFIG" && RC=0 || RC=$?
+	check "CONFIG_NEBULAOS_IRQ_THREAD_PRIO table (uart1 60, mmc0 45, mmc1 30, DWC2 25, rest 10)" "$RC"
+
 	# Kernel configuration profile (SOT-51). The resolved kernel must match
 	# the profile the manifest selected; a diagnostic kernel must never pass
 	# the strict (qualified) gate.
