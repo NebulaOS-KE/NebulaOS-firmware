@@ -388,7 +388,7 @@ find "$OVERLAY/opt/moonraker" -name "__pycache__" -exec rm -rf {} + 2>/dev/null 
 # only, the failure that was observed. It was never filesystem-specific: tmpfs
 # defines no .lock file_operation at all, so it uses the generic
 # posix_lock_file() path like everything else. See FIRMWARE.md sec 23.
-# halley5-nebulaos-fragment.config now sets CONFIG_FILE_LOCKING=y and
+# nebulaos_halley5_v30_defconfig (NebulaOS-kernel) sets CONFIG_FILE_LOCKING=y and
 # 06-verify.sh asserts it on every build, so the mechanism this patch works
 # around cannot occur in the shipping kernel configuration.
 #

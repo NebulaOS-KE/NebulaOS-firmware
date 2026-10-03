@@ -1,7 +1,7 @@
 #!/bin/sh
 # Stages regulatory.db/regulatory.db.p7s under scripts/build/overlay/lib/firmware/
 # so CONFIG_EXTRA_FIRMWARE can bake them directly into the kernel image (see
-# artifacts/buildroot-halley5-v30-image/halley5-nebulaos-fragment.config) -
+# NebulaOS-kernel nebulaos_halley5_v30_defconfig) -
 # cfg80211 requests these before the SquashFS rootfs is mounted, so having
 # them correctly packaged in the rootfs alone (via Buildroot's own
 # BR2_PACKAGE_WIRELESS_REGDB, already enabled) isn't sufficient; see

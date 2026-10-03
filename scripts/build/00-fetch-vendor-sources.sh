@@ -56,7 +56,7 @@ sh "$SCRIPT_DIR/../firmware/fetch-wireless-regdb.sh"
 # directly from Infineon's own upstream repo and hash-verified inside that
 # script itself (WIFI_FIRMWARE_BIN_SHA256/WIFI_FIRMWARE_CLM_SHA256 above).
 # Required to compile the kernel (CONFIG_EXTRA_FIRMWARE embeds both - see
-# artifacts/buildroot-halley5-v30-image/halley5-nebulaos-fragment.config),
+# NebulaOS-kernel nebulaos_halley5_v30_defconfig),
 # not just to boot. See docs/NEBULAOS_WIFI_125_ENGINEERING_TEST.md for the
 # full qualification history behind this pin.
 sh "$SCRIPT_DIR/../firmware/fetch-cyw43430-wifi-firmware.sh"

@@ -285,7 +285,7 @@ check_artifact_sha256 scripts/build/overlay/lib/firmware/regulatory.db.p7s \
 	bcd81aed039ea6b9b6f3726fbf26911a0caf4a5d894210e0fa2effb384d6b326
 
 # ns2009, the display panel, brcmfmac and the RNG are all built statically
-# into vmlinux (=y, not =m) - see halley5-nebulaos-fragment.config's own
+# into vmlinux (=y, not =m) - see the retired halley5-nebulaos-fragment.config's (firmware history before SOT-21) own
 # comments for why each one was switched. A built-in driver produces no
 # separate .ko file under /lib/modules at all, so these are checked against
 # the actual built kernel .config instead of debugfs'd out of rootfs.ext2 -

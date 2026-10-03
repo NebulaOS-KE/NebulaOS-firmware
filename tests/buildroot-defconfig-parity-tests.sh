@@ -155,7 +155,7 @@ assert_val BR2_TARGET_ROOTFS_SQUASHFS4_ZSTD y
 
 # ---- kernel image ----------------------------------------------------------
 assert_val BR2_LINUX_KERNEL y
-assert_val BR2_LINUX_KERNEL_DEFCONFIG '"x2000_halley5_v30_linux"'
+assert_val BR2_LINUX_KERNEL_DEFCONFIG '"nebulaos_halley5_v30"'
 assert_val BR2_LINUX_KERNEL_IMAGE_TARGET_NAME '"xImage"'
 assert_val BR2_LINUX_KERNEL_LZO y
 
@@ -166,7 +166,7 @@ assert_val BR2_LINUX_KERNEL_LZO y
 X='$(BR2_EXTERNAL_NEBULAOS_PATH)/board/nebulaos-x2000'
 assert_val BR2_ROOTFS_OVERLAY "\"$X/overlay\""
 assert_val BR2_ROOTFS_POST_BUILD_SCRIPT "\"$X/post-build.sh\""
-assert_val BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES "\"$X/halley5-nebulaos-fragment.config\""
+assert_val BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES "\"$X/nebulaos-kernel-buildenv.config\""
 assert_val BR2_PACKAGE_BUSYBOX_CONFIG_FRAGMENT_FILES "\"$X/halley5-nebulaos-busybox-fragment.config\""
 # Deliberately dropped by the migration - asserted so their removal is a tested
 # fact rather than an edit that can regress.

@@ -43,7 +43,7 @@ mkdir -p "$PKG_DIR"
 cp "$ARTIFACT_DIR/xImage" "$PKG_DIR/xImage"
 cp "$ARTIFACT_DIR/rootfs.squashfs" "$PKG_DIR/rootfs.squashfs"
 cp "$ARTIFACT_DIR/build-manifest.txt" "$PKG_DIR/build-manifest.txt"
-cp "$ARTIFACT_DIR/halley5-nebulaos-fragment.config" "$PKG_DIR/halley5-nebulaos-fragment.config" 2>/dev/null || true
+cp "$ARTIFACT_DIR/kernel.defconfig" "$PKG_DIR/kernel.defconfig" 2>/dev/null || true
 cp "$ARTIFACT_DIR/buildroot.config" "$PKG_DIR/buildroot.config" 2>/dev/null || true
 cp "$ARTIFACT_DIR/kernel.config" "$PKG_DIR/kernel.config" 2>/dev/null || true
 cp "$ARTIFACT_DIR/halley5_v30.dts" "$PKG_DIR/halley5_v30.dts" 2>/dev/null || true
@@ -62,7 +62,7 @@ cp "$ARTIFACT_DIR/halley5_v30.dts" "$PKG_DIR/halley5_v30.dts" 2>/dev/null || tru
 	echo "    hashes for every vendored source, this project's own source of"
 	echo "    truth for provenance (see docs/NEBULAOS_RELEASE_ARTIFACT_"
 	echo "    PROVENANCE.md and the reproducibility work in Phase A2)"
-	echo "  halley5-nebulaos-fragment.config, buildroot.config, kernel.config,"
+	echo "  kernel.defconfig, buildroot.config, kernel.config,"
 	echo "    halley5_v30.dts - the exact configuration that produced this"
 	echo "    package, for later diffing against any other variant"
 	echo ""

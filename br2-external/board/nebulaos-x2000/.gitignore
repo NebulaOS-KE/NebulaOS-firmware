@@ -4,7 +4,7 @@
 #   overlay/                          <- scripts/build/overlay/ plus build-time
 #                                        payloads added by 04-cross-compile
 #   post-build.sh                     <- scripts/build/nebulaos-post-build.sh
-#   halley5-nebulaos-fragment.config  <- artifacts/buildroot-halley5-v30-image/
+#   nebulaos-kernel-buildenv.config   <- generated: CONFIG_EXTRA_FIRMWARE_DIR only
 #   halley5-nebulaos-busybox-fragment.config
 #
 # The TRACKED sources of truth stay where they are. In particular the two
@@ -14,5 +14,5 @@
 # those gates matching a real file.
 overlay/
 post-build.sh
-halley5-nebulaos-fragment.config
+nebulaos-kernel-buildenv.config
 halley5-nebulaos-busybox-fragment.config

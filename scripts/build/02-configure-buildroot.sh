@@ -121,23 +121,15 @@ mkdir -p "$BR2_EXT_BOARD"
 # BR2_TARGET_GENERIC_ROOT_PASSWD nor the overlay can do it.
 cp "$SCRIPT_DIR/nebulaos-post-build.sh" "$BR2_EXT_BOARD/post-build.sh"
 chmod 755 "$BR2_EXT_BOARD/post-build.sh"
-cp "$ARTIFACTS/halley5-nebulaos-fragment.config" "$BR2_EXT_BOARD/halley5-nebulaos-fragment.config"
 cp "$ARTIFACTS/halley5-nebulaos-busybox-fragment.config" "$BR2_EXT_BOARD/halley5-nebulaos-busybox-fragment.config"
-# Phase 11 (2026-08-15): CONFIG_EXTRA_FIRMWARE_DIR in the tracked fragment
-# is a literal "/src/board/halley5-nebulaos-overlay/lib/firmware" - valid
-# only under the old nested pellcorp/k1-bash-build container, which always
-# mounted this project at the fixed path /src regardless of the host
-# checkout location. Now that the pipeline runs natively (real host paths
-# throughout, no fixed mount point), that path doesn't exist and the kernel
-# build fails outright once it reaches drivers/base/firmware_loader. Fixing
-# up the *copy* here (not the tracked artifacts/ file, which stays as the
-# real historical record of what the old container-based build actually
-# used, and which assert-baseline-config.sh/baseline-difference-gate.sh
-# diff verbatim against the accepted baseline tag) to point at where the
-# overlay's firmware actually lands post-copy below: real host path, so it
-# works from any checkout location.
-sed -i "s#/src/board/halley5-nebulaos-overlay#$BR2_EXT_BOARD/overlay#" \
-	"$BR2_EXT_BOARD/halley5-nebulaos-fragment.config"
+# The kernel configuration is owned by NebulaOS-kernel
+# (arch/mips/configs/nebulaos_halley5_v30_defconfig, selected through
+# BR2_LINUX_KERNEL_DEFCONFIG). The only kernel setting the firmware build
+# supplies is the one that depends on where this build runs: the directory
+# CONFIG_EXTRA_FIRMWARE embeds the Wi-Fi firmware and regulatory database from,
+# which is the overlay populated below.
+printf 'CONFIG_EXTRA_FIRMWARE_DIR="%s"\n' "$BR2_EXT_BOARD/overlay/lib/firmware" \
+	> "$BR2_EXT_BOARD/nebulaos-kernel-buildenv.config"
 # local.mk is Buildroot's own package-override file
 # (BR2_PACKAGE_OVERRIDE_FILE defaults to "$(CONFIG_DIR)/local.mk"). The
 # Makefile `-include`s it at line 547, immediately BEFORE
