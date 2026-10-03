@@ -1,0 +1,35 @@
+#!/bin/sh
+#
+# nebulaos-memguard: memory-pressure supervisor (MEM-T12). Starts after
+# S45nebulaos-cleanup and before S50webcam, so its markers are honoured from
+# the first ustreamer start. Runs at oom_score_adj -900: the shedder must
+# outlive what it sheds. Nothing depends on it for safety - absent markers
+# mean "normal".
+
+DAEMON=/usr/libexec/nebulaos-memguard
+PIDFILE=/var/run/nebulaos-memguard.pid
+
+# OOM priority policy (MEM-T07); without it, services still start, unadjusted.
+NEBULAOS_OOM_POLICY="${NEBULAOS_OOM_POLICY:-/etc/nebulaos-oom-policy.sh}"
+if [ -r "$NEBULAOS_OOM_POLICY" ]; then . "$NEBULAOS_OOM_POLICY"; else nebulaos_start_with_adj() { shift; "$@"; }; fi
+
+start() {
+	echo "Starting nebulaos-memguard"
+	mkdir -p /run/nebulaos/memguard /run/nebulaos/shed
+	nebulaos_start_with_adj "$NEBULAOS_ADJ_MEMGUARD" \
+		start-stop-daemon -S -b -m -p "$PIDFILE" \
+		-x /bin/sh -- "$DAEMON"
+}
+
+stop() {
+	echo "Stopping nebulaos-memguard"
+	start-stop-daemon -K -p "$PIDFILE" && rm -f "$PIDFILE"
+}
+
+case "$1" in
+	start) start ;;
+	stop) stop ;;
+	restart) stop; sleep 1; start ;;
+	*) echo "Usage: $0 {start|stop|restart}"; exit 1 ;;
+esac
+exit 0

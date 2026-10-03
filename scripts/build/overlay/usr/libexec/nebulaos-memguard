@@ -1,0 +1,238 @@
+#!/bin/sh
+#
+# nebulaos-memguard - bounded memory-pressure supervisor (MEM-T12).
+#
+# Keeps the printer-critical processes (klipper_mcu, klippy) away from the
+# kernel OOM killer: optional work is refused or shed first, and the global
+# OOM killer is the last resort, not the control mechanism.
+#
+# This file is the core: it tracks memory state and print/maintenance state,
+# publishes markers under /run/nebulaos for other components, enforces the OOM
+# priority table (/etc/nebulaos-oom-policy.sh) every 5 s as a backstop to the
+# birth-time values, and logs. klippy and klipper_mcu are never acted on.
+#
+# BusyBox ash. /proc and /sys files are read with the `read` builtin, so the
+# 1 s tick forks nothing; only the 5 s Moonraker queries fork (wget).
+#
+# Signals (1 s tick unless noted):
+#   MA      MemAvailable, kB                         /proc/meminfo
+#   ZU ZL   zram mem_used_total, mem_limit, bytes    /sys/block/zram0/mm_stat 3,4
+#   SOME10 FULL10  PSI memory avg10 (integer %; 0 without CONFIG_PSI)
+#   PRINT   Moonraker print_stats.state printing|paused (5 s; a failed query
+#           keeps the previous value - a dead Moonraker never reads "idle")
+#   MAINT   update lock present, or Moonraker update_manager busy (5 s)
+#
+# Markers (/run/nebulaos):
+#   print-active, maintenance-active, memguard/state
+#
+# Test seam: NEBULAOS_MEMGUARD_NO_AUTORUN=1 sources the functions without
+# running; MG_PROC/MG_SYS/MG_RUN/MG_LOCKS/MG_LOG redirect every path.
+
+MG_PROC="${MG_PROC:-/proc}"
+MG_SYS="${MG_SYS:-/sys}"
+MG_RUN="${MG_RUN:-/run/nebulaos}"
+MG_PIDDIR="${MG_PIDDIR:-/var/run}"
+MG_LOCKS="${MG_LOCKS:-/usr/data/nebulaos/updates/locks}"
+MG_LOG="${MG_LOG:-/usr/data/nebulaos/logs/memguard.log}"
+MG_LOG_MAX=262144
+MG_MOONRAKER="${MG_MOONRAKER:-http://127.0.0.1:7125}"
+MG_TICK="${MG_TICK:-1}"
+MG_SLOW_EVERY=5
+MG_SNAPSHOT_EVERY=60
+MG_MCU_RSS_ALERT_KB=8192
+
+NEBULAOS_OOM_POLICY="${NEBULAOS_OOM_POLICY:-/etc/nebulaos-oom-policy.sh}"
+# shellcheck disable=SC1090
+[ -r "$NEBULAOS_OOM_POLICY" ] && . "$NEBULAOS_OOM_POLICY"
+
+MA=0 ZU=0 ZL=0 SOME10=0 FULL10=0 PRINT=0 MAINT=0 STATE=NORMAL NOW=0
+
+mg_log() {
+	_line="$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null) $*"
+	logger -t memguard "$*" 2>/dev/null
+	[ -n "$MG_LOG" ] || return 0
+	if [ ! -d "${MG_LOG%/*}" ]; then
+		mkdir -p "${MG_LOG%/*}" 2>/dev/null || return 0
+	fi
+	echo "$_line" >> "$MG_LOG" 2>/dev/null || return 0
+	_sz=$(wc -c < "$MG_LOG" 2>/dev/null)
+	[ "${_sz:-0}" -gt "$MG_LOG_MAX" ] && mv -f "$MG_LOG" "$MG_LOG.1" 2>/dev/null
+	return 0
+}
+
+mg_now() {
+	read -r _up _ < "$MG_PROC/uptime" 2>/dev/null || _up=0
+	NOW=${_up%%.*}
+}
+
+mg_read_meminfo() {
+	MA=0
+	while read -r _k _v _; do
+		case "$_k" in MemAvailable:) MA=$_v; return 0 ;; esac
+	done < "$MG_PROC/meminfo"
+}
+
+mg_read_zram() {
+	ZU=0 ZL=0
+	[ -r "$MG_SYS/block/zram0/mm_stat" ] || return 0
+	read -r _ _ ZU ZL _ < "$MG_SYS/block/zram0/mm_stat" 2>/dev/null || { ZU=0 ZL=0; }
+}
+
+# avg10 as an integer percentage, from "some avg10=1.23 ..." / "full avg10=..."
+mg_read_psi() {
+	SOME10=0 FULL10=0
+	[ -r "$MG_PROC/pressure/memory" ] || return 0
+	while read -r _kind _a10 _; do
+		_v=${_a10#avg10=}
+		_v=${_v%%.*}
+		case "$_kind" in some) SOME10=$_v ;; full) FULL10=$_v ;; esac
+	done < "$MG_PROC/pressure/memory"
+}
+
+# Overridden by the tests.
+mg_http() {
+	wget -q -T 2 -O - "$MG_MOONRAKER$1" 2>/dev/null
+}
+
+mg_poll_print_state() {
+	_r=$(mg_http "/printer/objects/query?print_stats=state") || return 0
+	case "$_r" in
+	*'"state":"printing"'* | *'"state": "printing"'* | *'"state":"paused"'* | *'"state": "paused"'*) PRINT=1 ;;
+	*'"state"'*) PRINT=0 ;;
+	*) ;;  # no usable answer: keep the previous value (sticky)
+	esac
+}
+
+mg_poll_maint_state() {
+	MAINT=0
+	for _l in "$MG_LOCKS"/* "$MG_LOCKS"/.[!.]*; do
+		[ -e "$_l" ] && { MAINT=1; return 0; }
+	done
+	[ "$PRINT" = 1 ] && return 0
+	_r=$(mg_http "/machine/update/status") || return 0
+	case "$_r" in *'"busy":true'* | *'"busy": true'*) MAINT=1 ;; esac
+}
+
+mg_marker() { # name 0|1
+	if [ "$2" = 1 ]; then
+		[ -e "$MG_RUN/$1" ] || : > "$MG_RUN/$1"
+	else
+		rm -f "$MG_RUN/$1"
+	fi
+}
+
+mg_publish() {
+	mg_marker print-active "$PRINT"
+	mg_marker maintenance-active "$MAINT"
+	echo "$STATE" > "$MG_RUN/memguard/state.tmp" && mv -f "$MG_RUN/memguard/state.tmp" "$MG_RUN/memguard/state"
+}
+
+mg_pid_of() { # pidfile basename -> pid (empty if absent or dead)
+	_p=
+	[ -r "$MG_PIDDIR/$1" ] || return 0
+	read -r _p < "$MG_PIDDIR/$1" || { _p=; return 0; }
+	[ -d "$MG_PROC/$_p" ] || _p=
+}
+
+mg_set_adj() { # pid value
+	read -r _cur < "$MG_PROC/$1/oom_score_adj" 2>/dev/null || return 0
+	[ "$_cur" = "$2" ] && return 0
+	echo "$2" > "$MG_PROC/$1/oom_score_adj" 2>/dev/null \
+		&& mg_log "adj $1 ($(cat "$MG_PROC/$1/comm" 2>/dev/null)) $_cur -> $2"
+}
+
+# D4 table: pidfile members are re-asserted; nginx/dropbear by comm (workers
+# and per-connection children); any other process with a negative adj that
+# is not protected gets NEBULAOS_ADJ_UNLISTED. udevd keeps its own -1000.
+mg_enforce_adj() {
+	_protected=" "
+	for _e in klipper_mcu.pid:$NEBULAOS_ADJ_KLIPPER_MCU klippy.pid:$NEBULAOS_ADJ_KLIPPY \
+		nebulaos-memguard.pid:$NEBULAOS_ADJ_MEMGUARD wpa_supplicant-wlan0.pid:$NEBULAOS_ADJ_WPA_SUPPLICANT \
+		moonraker.pid:$NEBULAOS_ADJ_MOONRAKER guppyscreen.pid:$NEBULAOS_ADJ_GUPPYSCREEN \
+		ustreamer.pid:$NEBULAOS_ADJ_USTREAMER nebulaos-update-supervisor.pid:$NEBULAOS_ADJ_UPDATE_SUPERVISOR; do
+		mg_pid_of "${_e%%:*}"
+		[ -n "$_p" ] || continue
+		_protected="$_protected$_p "
+		mg_set_adj "$_p" "${_e#*:}"
+	done
+	for _d in "$MG_PROC"/[0-9]*; do
+		_pid=${_d##*/}
+		case "$_protected" in *" $_pid "*) continue ;; esac
+		read -r _comm < "$_d/comm" 2>/dev/null || continue
+		case "$_comm" in
+		nginx) mg_set_adj "$_pid" "$NEBULAOS_ADJ_NGINX"; continue ;;
+		dropbear) mg_set_adj "$_pid" "$NEBULAOS_ADJ_DROPBEAR"; continue ;;
+		udevd | systemd-udevd) continue ;;
+		esac
+		read -r _adj < "$_d/oom_score_adj" 2>/dev/null || continue
+		[ "$_adj" -lt 0 ] 2>/dev/null && mg_set_adj "$_pid" "$NEBULAOS_ADJ_UNLISTED"
+	done
+}
+
+mg_rss_kb() { # pid -> _rss (kB, 0 if unknown)
+	_rss=0
+	while read -r _k _v _; do
+		case "$_k" in VmRSS:) _rss=$_v; return 0 ;; esac
+	done < "$MG_PROC/$1/status" 2>/dev/null
+}
+
+mg_check_mcu_rss() {
+	mg_pid_of klipper_mcu.pid
+	[ -n "$_p" ] || return 0
+	mg_rss_kb "$_p"
+	if [ "$_rss" -gt "$MG_MCU_RSS_ALERT_KB" ]; then
+		[ "${MG_MCU_ALERTED:-0}" = 1 ] || mg_log "ALERT klipper_mcu VmRSS ${_rss} kB > ${MG_MCU_RSS_ALERT_KB} kB (leak?)"
+		MG_MCU_ALERTED=1
+	fi
+}
+
+mg_snapshot() {
+	_s="snapshot MA=${MA}kB ZU=$ZU ZL=$ZL SOME10=$SOME10 FULL10=$FULL10 PRINT=$PRINT MAINT=$MAINT state=$STATE"
+	for _e in klippy.pid moonraker.pid guppyscreen.pid ustreamer.pid; do
+		mg_pid_of "$_e"
+		[ -n "$_p" ] || continue
+		mg_rss_kb "$_p"
+		_s="$_s ${_e%.pid}=${_rss}kB"
+	done
+	mg_log "$_s"
+}
+
+# Hook for the pressure state machine (MEM-T14) and the disk swap policy
+# (MEM-T13); the core only tracks.
+mg_evaluate() { :; }
+
+mg_tick() {
+	mg_now
+	mg_read_meminfo
+	mg_read_zram
+	mg_read_psi
+	if [ $((NOW - ${MG_LAST_SLOW:--1000})) -ge "$MG_SLOW_EVERY" ]; then
+		MG_LAST_SLOW=$NOW
+		_prev_print=$PRINT _prev_maint=$MAINT
+		mg_poll_print_state
+		mg_poll_maint_state
+		[ "$PRINT" = "$_prev_print" ] || mg_log "print-active=$PRINT"
+		[ "$MAINT" = "$_prev_maint" ] || mg_log "maintenance-active=$MAINT"
+		mg_enforce_adj
+		mg_check_mcu_rss
+	fi
+	mg_evaluate
+	mg_publish
+	if [ $((NOW - ${MG_LAST_SNAPSHOT:--1000})) -ge "$MG_SNAPSHOT_EVERY" ]; then
+		MG_LAST_SNAPSHOT=$NOW
+		mg_snapshot
+	fi
+}
+
+mg_loop() {
+	mkdir -p "$MG_RUN/memguard"
+	mg_log "started (pid $$)"
+	while :; do
+		mg_tick
+		sleep "$MG_TICK"
+	done
+}
+
+if [ -z "${NEBULAOS_MEMGUARD_NO_AUTORUN:-}" ]; then
+	mg_loop
+fi

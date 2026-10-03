@@ -14,10 +14,21 @@
 NEBULAOS_ADJ_KLIPPER_MCU=-1000
 NEBULAOS_ADJ_KLIPPY=-900
 NEBULAOS_ADJ_MEMGUARD=-900
+NEBULAOS_ADJ_WPA_SUPPLICANT=-600
 NEBULAOS_ADJ_MOONRAKER=-400
+NEBULAOS_ADJ_NGINX=-300
+NEBULAOS_ADJ_DROPBEAR=-300
 NEBULAOS_ADJ_GUPPYSCREEN=0
 NEBULAOS_ADJ_USTREAMER=300
 NEBULAOS_ADJ_UPDATE_SUPERVISOR=500
+# Any other process found with a negative adj (an inherited value, e.g. a
+# Moonraker or klippy subprocess) is reset to this by the memguard scan.
+NEBULAOS_ADJ_UNLISTED=500
+# Forked klippy children (input shaper, mathutil): set in-child by the
+# nebulaos_memory klippy extension.
+NEBULAOS_ADJ_KLIPPY_CHILD=300
+# git, via the Moonraker PATH wrapper: the heaviest transient (index-pack).
+NEBULAOS_ADJ_GIT=800
 
 # nebulaos_start_with_adj <adj> <command...>: run command with oom_score_adj set
 # before it starts.
