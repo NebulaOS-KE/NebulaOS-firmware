@@ -51,18 +51,27 @@ New init script, runs after `S02nebulaos-namespace` (needs `/usr/data/nebulaos` 
 
 Both init scripts' logic (ownership checks, ordering, idempotency) follow the same patterns already established and live-tested in `S04nebulaos-namespace`/`S05nebulaos-activate` (BusyBox `ls -ldn`+`awk` for numeric ownership, not `stat`, per that earlier live finding).
 
-### 3.3 OOM priority table (applied via `oom_score_adj` after each daemon starts)
+### 3.3 OOM priority table (applied at process birth)
+
+The values live in one place, `/etc/nebulaos-oom-policy.sh` (MEM-T07), and each
+init script starts its daemon through `nebulaos_start_with_adj`, which writes
+the value to a subshell's own `/proc/self/oom_score_adj` and then execs
+`start-stop-daemon`, so the daemon and all its children are born with it. The
+earlier pattern wrote `/proc/$(cat pidfile)/oom_score_adj` after
+`start-stop-daemon -b` returned, which raced the fork and, with a stale pidfile,
+could adjust an unrelated process. `stop()` now removes the pidfile.
 
 | Tier | Process | `oom_score_adj` | Reasoning |
 |---|---|---|---|
-| Most protected | Klipper (`S55klipper`) | **-700** | MCU/motion-control communication; deliberately not -1000 per this mission's own instruction — the kernel must retain a sensible victim if memory is truly exhausted, not be forced to pick the one process that must never die |
-| Strongly protected | *(rollback/activation supervisor — not yet a persistent daemon; applies once Phase 8's rollback orchestration runs as one)* | not yet applicable | recorded here as a placeholder for Phase 8 |
+| Never a victim | host MCU `klipper_mcu` (`S54nebulaos-host-mcu`) | **-1000** | a few MiB, mlocked, printer-critical timing |
+| Most protected (killable) | Klipper (`S55klipper`), `nebulaos-memguard` | **-900** | MCU/motion-control communication; not -1000, so the kernel always retains a sensible victim if memory is truly exhausted |
 | Moderately protected | Moonraker (`S56moonraker`) | **-400** | coordinates updates/rollback, must outlive GuppyScreen/webcam/update-helpers under pressure, but is less critical than Klipper itself |
-| Normal/expendable | GuppyScreen (`S58guppyscreen`) | **0** | explicit kernel-default value, written anyway so the full table is auditable in one place rather than "whatever the kernel happened to default to" |
+| Normal/expendable | GuppyScreen (`S58guppyscreen`) | **0** | explicit kernel-default value, so the full table is auditable in one place |
 | More expendable | webcam/ustreamer (`S50webcam`) | **300** | optional media, never printer-critical |
-| Most expendable | Factory-seed/update helpers (`S04nebulaos-factory-seed`, applied to the script's own shell so git/cp children inherit it) | **500** | exactly the tier that should be picked first — real git processes were the ones OOM-killed in the original incident; this makes that outcome intentional/designed rather than accidental |
+| Most expendable | update supervisor (`S59`), factory-seed/update helpers (`S04nebulaos-factory-seed`) | **500** | real git processes were the ones OOM-killed in the original incident; this makes that outcome intentional |
 
-Applied directly after `start-stop-daemon` returns, reading the daemon's own PID back from its pidfile (`echo <value> > /proc/$PID/oom_score_adj`) — survives normal service restarts since each restart re-applies it in the same `start()` function.
+nginx, dropbear and wpa_supplicant use Buildroot-owned init scripts; their
+values are enforced by `nebulaos-memguard`'s periodic adj scan (MEM-T12).
 
 ### 3.4 Maintenance safety gate
 

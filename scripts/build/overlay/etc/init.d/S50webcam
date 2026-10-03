@@ -160,10 +160,16 @@ ustreamer_running_on() {
 	tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | grep -q -- "--device=$dev "
 }
 
+# OOM priority policy (MEM-T07); without it, services still start, unadjusted.
+NEBULAOS_OOM_POLICY="${NEBULAOS_OOM_POLICY:-/etc/nebulaos-oom-policy.sh}"
+if [ -r "$NEBULAOS_OOM_POLICY" ]; then . "$NEBULAOS_OOM_POLICY"; else nebulaos_start_with_adj() { shift; "$@"; }; fi
+
 start_ustreamer() {
 	dev="$1"
 	echo "S50webcam: starting ustreamer on $dev"
-	start-stop-daemon -S -b -m -p "$USTREAMER_PIDFILE" \
+	# OOM priority at birth (MEM-T07): optional media, expendable.
+	nebulaos_start_with_adj "$NEBULAOS_ADJ_USTREAMER" \
+		start-stop-daemon -S -b -m -p "$USTREAMER_PIDFILE" \
 		-x "$USTREAMER" -- \
 		--device="$dev" --format=MJPEG --encoder=HW \
 		--resolution="$RESOLUTION" --desired-fps="$DESIRED_FPS" \
@@ -186,11 +192,6 @@ start_ustreamer() {
 	# together address every machine-side contributor found; residual
 	# jitter beyond these three is attributed to real-time WiFi signal
 	# conditions, out of this mission's scope).
-	# NebulaOS Memory Resilience Gate: webcam streaming is "more
-	# expendable" - optional media, never printer-critical - so it should
-	# be picked as an OOM victim well before Klipper/Moonraker/GuppyScreen
-	# (docs/NEBULAOS_MEMORY_RESILIENCE.md sec 7).
-	[ -f "$USTREAMER_PIDFILE" ] && echo 300 > "/proc/$(cat "$USTREAMER_PIDFILE")/oom_score_adj" 2>/dev/null
 }
 
 stop_ustreamer() {

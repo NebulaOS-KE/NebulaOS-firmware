@@ -23,6 +23,10 @@ KLIPPER_HOST_MCU=/usr/bin/klipper_mcu
 SOCKET=/tmp/klipper_host_mcu
 PID_FILE=/var/run/klipper_mcu.pid
 
+# OOM priority policy (MEM-T07); without it, services still start, unadjusted.
+NEBULAOS_OOM_POLICY="${NEBULAOS_OOM_POLICY:-/etc/nebulaos-oom-policy.sh}"
+if [ -r "$NEBULAOS_OOM_POLICY" ]; then . "$NEBULAOS_OOM_POLICY"; else nebulaos_start_with_adj() { shift; "$@"; }; fi
+
 mcu_host_start() {
 	[ -x "$KLIPPER_HOST_MCU" ] || {
 		echo "S54nebulaos-host-mcu: $KLIPPER_HOST_MCU not present, skipping"
@@ -39,7 +43,10 @@ mcu_host_start() {
 	# explicitly means a future change to either side (this script's
 	# $SOCKET, or machine.cfg's serial:) fails loudly instead of silently
 	# drifting apart from an upstream default nobody is actually pinning.
-	start-stop-daemon -S -q -b -m -p "$PID_FILE" \
+	# OOM priority at birth (MEM-T07): the host MCU process is tiny and
+	# printer-critical; never an OOM victim.
+	nebulaos_start_with_adj "$NEBULAOS_ADJ_KLIPPER_MCU" \
+		start-stop-daemon -S -q -b -m -p "$PID_FILE" \
 		--exec "$KLIPPER_HOST_MCU" -- -r -I "$SOCKET"
 }
 
@@ -54,7 +61,7 @@ mcu_host_stop() {
 		sleep 1
 		set +e
 	fi
-	start-stop-daemon -K -q -p "$PID_FILE"
+	start-stop-daemon -K -q -p "$PID_FILE" && rm -f "$PID_FILE"
 }
 
 case "$1" in

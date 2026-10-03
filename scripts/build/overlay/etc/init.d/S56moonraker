@@ -86,6 +86,10 @@ MOONRAKER_INFO_URL="${MOONRAKER_INFO_URL:-http://127.0.0.1:7125/server/info}"
 MOONRAKER_INFO_POLL_TIMEOUT="${MOONRAKER_INFO_POLL_TIMEOUT:-30}"
 MOONRAKER_INFO_POLL_INTERVAL="${MOONRAKER_INFO_POLL_INTERVAL:-1}"
 
+# OOM priority policy (MEM-T07); without it, services still start, unadjusted.
+NEBULAOS_OOM_POLICY="${NEBULAOS_OOM_POLICY:-/etc/nebulaos-oom-policy.sh}"
+if [ -r "$NEBULAOS_OOM_POLICY" ]; then . "$NEBULAOS_OOM_POLICY"; else nebulaos_start_with_adj() { shift; "$@"; }; fi
+
 log() {
 	echo "S56moonraker: $1"
 }
@@ -114,21 +118,18 @@ prepare_tmpdir() {
 start_daemon() {
 	prepare_tmpdir
 	echo "Starting moonraker (using $PYTHON3)"
-	start-stop-daemon -S -b -m -p "$PIDFILE" \
+	# OOM priority at birth (MEM-T07): Moonraker coordinates updates and
+	# rollback - protected, but below Klipper.
+	nebulaos_start_with_adj "$NEBULAOS_ADJ_MOONRAKER" \
+		start-stop-daemon -S -b -m -p "$PIDFILE" \
 		-x "$PYTHON3" -- \
 		"$MOONRAKER" -d "$DATAPATH" -c "$CONFIG" -l "$LOGFILE" \
 		-u "$UNIXSOCKET"
-	# NebulaOS Memory Resilience Gate: moderately protected - Moonraker
-	# coordinates updates/rollback and must survive memory pressure
-	# preferentially over GuppyScreen/webcam/update-helper processes, but
-	# less critically than Klipper itself (docs/NEBULAOS_MEMORY_RESILIENCE.md
-	# sec 7).
-	[ -f "$PIDFILE" ] && echo -400 > "/proc/$(cat "$PIDFILE")/oom_score_adj" 2>/dev/null
 }
 
 stop() {
 	echo "Stopping moonraker"
-	start-stop-daemon -K -p "$PIDFILE"
+	start-stop-daemon -K -p "$PIDFILE" && rm -f "$PIDFILE"
 }
 
 # Waits for Moonraker's HTTP API to answer at all (it takes a few seconds

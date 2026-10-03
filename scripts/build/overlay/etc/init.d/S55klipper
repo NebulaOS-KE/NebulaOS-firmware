@@ -27,24 +27,23 @@ PIDFILE=/var/run/klippy.pid
 PYTHON3=/usr/bin/python3
 [ -x /usr/data/nebulaos/envs/klipper/bin/python3 ] && PYTHON3=/usr/data/nebulaos/envs/klipper/bin/python3
 
+# OOM priority policy (MEM-T07); without it, services still start, unadjusted.
+NEBULAOS_OOM_POLICY="${NEBULAOS_OOM_POLICY:-/etc/nebulaos-oom-policy.sh}"
+if [ -r "$NEBULAOS_OOM_POLICY" ]; then . "$NEBULAOS_OOM_POLICY"; else nebulaos_start_with_adj() { shift; "$@"; }; fi
+
 start() {
 	echo "Starting klippy (using $PYTHON3)"
-	start-stop-daemon -S -b -m -p "$PIDFILE" \
+	# OOM priority at birth (MEM-T07): klipper/MCU communication is the most
+	# protected killable process; see /etc/nebulaos-oom-policy.sh.
+	nebulaos_start_with_adj "$NEBULAOS_ADJ_KLIPPY" \
+		start-stop-daemon -S -b -m -p "$PIDFILE" \
 		-x "$PYTHON3" -- \
 		"$KLIPPY" "$CONFIG" -a "$APISOCK" -l "$LOGFILE"
-	# NebulaOS Memory Resilience Gate: Klipper/MCU communication is the
-	# most protected process on this system - -700, not -1000 (this
-	# mission's own explicit instruction: never indiscriminately assign
-	# -1000; the kernel must retain a sensible OOM victim if memory is
-	# truly exhausted, not be forced to pick the one process that must
-	# never die). See docs/NEBULAOS_MEMORY_RESILIENCE.md sec 7 for the
-	# full priority table and reasoning.
-	[ -f "$PIDFILE" ] && echo -700 > "/proc/$(cat "$PIDFILE")/oom_score_adj" 2>/dev/null
 }
 
 stop() {
 	echo "Stopping klippy"
-	start-stop-daemon -K -p "$PIDFILE"
+	start-stop-daemon -K -p "$PIDFILE" && rm -f "$PIDFILE"
 }
 
 case "$1" in

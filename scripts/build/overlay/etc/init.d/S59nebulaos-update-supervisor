@@ -15,16 +15,21 @@
 SUPERVISOR=/etc/nebulaos-update-supervisor.sh
 PIDFILE=/var/run/nebulaos-update-supervisor.pid
 
+# OOM priority policy (MEM-T07); without it, services still start, unadjusted.
+NEBULAOS_OOM_POLICY="${NEBULAOS_OOM_POLICY:-/etc/nebulaos-oom-policy.sh}"
+if [ -r "$NEBULAOS_OOM_POLICY" ]; then . "$NEBULAOS_OOM_POLICY"; else nebulaos_start_with_adj() { shift; "$@"; }; fi
+
 start() {
 	echo "Starting nebulaos-update-supervisor"
-	start-stop-daemon -S -b -m -p "$PIDFILE" \
+	# OOM priority at birth (MEM-T07): update work is expendable.
+	nebulaos_start_with_adj "$NEBULAOS_ADJ_UPDATE_SUPERVISOR" \
+		start-stop-daemon -S -b -m -p "$PIDFILE" \
 		-x /bin/sh -- "$SUPERVISOR" loop
-	[ -f "$PIDFILE" ] && echo 500 > "/proc/$(cat "$PIDFILE")/oom_score_adj" 2>/dev/null
 }
 
 stop() {
 	echo "Stopping nebulaos-update-supervisor"
-	start-stop-daemon -K -p "$PIDFILE"
+	start-stop-daemon -K -p "$PIDFILE" && rm -f "$PIDFILE"
 }
 
 case "$1" in

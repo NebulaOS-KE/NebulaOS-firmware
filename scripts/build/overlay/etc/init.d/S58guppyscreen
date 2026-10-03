@@ -14,20 +14,21 @@
 GUPPY_DIR=/opt/guppyscreen
 PIDFILE=/var/run/guppyscreen.pid
 
+# OOM priority policy (MEM-T07); without it, services still start, unadjusted.
+NEBULAOS_OOM_POLICY="${NEBULAOS_OOM_POLICY:-/etc/nebulaos-oom-policy.sh}"
+if [ -r "$NEBULAOS_OOM_POLICY" ]; then . "$NEBULAOS_OOM_POLICY"; else nebulaos_start_with_adj() { shift; "$@"; }; fi
+
 start() {
 	echo "Starting guppyscreen"
-	start-stop-daemon -S -b -m -p "$PIDFILE" \
+	# OOM priority at birth (MEM-T07): expendable UI tier, explicit 0.
+	nebulaos_start_with_adj "$NEBULAOS_ADJ_GUPPYSCREEN" \
+		start-stop-daemon -S -b -m -p "$PIDFILE" \
 		-x "$GUPPY_DIR/guppyscreen"
-	# NebulaOS Memory Resilience Gate: normal/expendable tier - explicit
-	# 0 (kernel default) rather than left implicit, so the full priority
-	# table is auditable in one place (docs/NEBULAOS_MEMORY_RESILIENCE.md
-	# sec 7) rather than "whatever the kernel happened to default to."
-	[ -f "$PIDFILE" ] && echo 0 > "/proc/$(cat "$PIDFILE")/oom_score_adj" 2>/dev/null
 }
 
 stop() {
 	echo "Stopping guppyscreen"
-	start-stop-daemon -K -p "$PIDFILE"
+	start-stop-daemon -K -p "$PIDFILE" && rm -f "$PIDFILE"
 }
 
 case "$1" in
