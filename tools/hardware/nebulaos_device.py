@@ -39,6 +39,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import nebulaos_capture as captures  # noqa: E402
 import nebulaos_marker as marker  # noqa: E402
 import nebulaos_target as targets  # noqa: E402
 
@@ -222,6 +223,11 @@ class DeviceSession(abc.ABC):
     @abc.abstractmethod
     def diagnose(self):
         """-> text. A fixed, bounded, read-only report composed by this module."""
+
+    @abc.abstractmethod
+    def capture(self, profile):
+        """-> text. One read-only capture profile, by NAME, from the fixed table
+        in nebulaos_capture (TOOL-01). Never a script or a path."""
 
     @abc.abstractmethod
     def restart_service(self, name):
@@ -635,6 +641,16 @@ class SshDeviceSession(DeviceSession):
         rc, out, err = self._run(DIAGNOSE_SCRIPT, timeout=90)
         if rc != 0 and not out:
             raise DeviceError("diagnose failed (rc=%d): %s" % (rc, err.strip()[:300]))
+        return out
+
+    def capture(self, profile):
+        try:
+            script, timeout = captures.capture_script(profile)
+        except captures.CaptureError as exc:
+            raise DeviceError(str(exc))
+        rc, out, err = self._run(script, timeout=timeout + 60)
+        if rc != 0 and not out:
+            raise DeviceError("capture %s failed (rc=%d): %s" % (profile, rc, err.strip()[:300]))
         return out
 
     def restart_service(self, name):

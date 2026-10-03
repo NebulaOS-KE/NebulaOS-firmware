@@ -322,6 +322,13 @@ class SimSession(device.DeviceSession):
         return "===== processes =====\n" + "\n".join(
             "%s %s" % kv for kv in sorted(self.printer.services.items())) + "\n"
 
+    def capture(self, profile):
+        self._t()
+        if profile not in device.captures.CAPTURE_PROFILES:
+            raise device.DeviceError("unknown capture profile %r" % profile)
+        self.printer.captures = getattr(self.printer, "captures", []) + [profile]
+        return "CAPTURE_PROFILE=%s\nsimulated\nEND_UTC=x\n" % profile
+
     def restart_service(self, name):
         # The same decisions, in the same order, as device.restart_script().
         self._t()

@@ -26,6 +26,7 @@ HOST=(
   tools/attest/nebulaos-attest.py
   tools/emmc/nebulaos_layout.py
   tools/hardware/nebulaos_agent.py
+  tools/hardware/nebulaos_capture.py
   tools/hardware/nebulaos_control.py
   tools/hardware/nebulaos_device.py
   tools/hardware/nebulaos_evidence.py
@@ -35,6 +36,11 @@ HOST=(
   tools/hardware/nebulaos_profile.py
   tools/hardware/nebulaos_target.py
   tools/hardware/nebulaos_verify.py
+  tools/hwcap/adxl_overflows.py
+  tools/hwcap/kduty.py
+  tools/hwcap/ptyrtt.py
+  tools/hwcap/schedsnap.py
+  tools/hwcap/timerlat.py
 )
 
 OUT=tools/hardware/CONTROL_MANIFEST

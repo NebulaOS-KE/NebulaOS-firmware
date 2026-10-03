@@ -405,6 +405,33 @@ def op_diagnose(args):
         session.close()
 
 
+def op_capture(args):
+    """TOOL-01: one read-only capture profile on the enrolled NebulaOS printer.
+    Same identity proofs as diagnose; the output is also kept locally under
+    the agent's state directory."""
+    import time
+    profile, _, _ = prove_preconditions(
+        args.device, None, None, None, args.control_commit, destructive=False)
+    if args.profile not in device.captures.CAPTURE_PROFILES:
+        raise AgentRefusal("unknown capture profile %r (exercise profiles are not captures)" % args.profile)
+    session, which, address = _connect_matching(profile, (device.OS_NEBULAOS,))
+    try:
+        say("CAPTURE_TARGET=%s@%s" % (which, address))
+        say("DEVICE_IDENTITY_MATCHES_PROFILE=YES")
+        text = session.capture(args.profile)
+    finally:
+        session.close()
+    d = os.path.join(journal.state_home(), "captures", args.device)
+    os.makedirs(d, mode=0o700, exist_ok=True)
+    path = os.path.join(d, "%s-%s.txt" % (args.profile, time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())))
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    say(text)
+    say("CAPTURE_FILE=%s" % path)
+    say("RUN_NEBULAOS_HARDWARE=CAPTURE_COMPLETE")
+    return 0
+
+
 def control_is_published(control_commit):
     """The seam tests replace. Repairs require a PUBLISHED control commit."""
     return evidence.product_is_published(FW_ROOT, control_commit)
@@ -585,6 +612,7 @@ def main(argv):
     sub.add_parser("inspect")
     sub.add_parser("status")
     sub.add_parser("diagnose")
+    sub.add_parser("capture").add_argument("profile")
     sub.add_parser("restart").add_argument("service")
     for name in ("verify", "install"):
         p = sub.add_parser(name)
@@ -594,6 +622,7 @@ def main(argv):
 
     args = parser.parse_args(argv)
     handler = {"inspect": op_inspect, "status": op_status, "diagnose": op_diagnose,
+               "capture": op_capture,
                "restart": op_restart, "verify": op_verify, "install": op_install}[args.op]
     try:
         return handler(args)
