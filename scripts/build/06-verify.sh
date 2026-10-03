@@ -570,8 +570,16 @@ echo "=== kernel modules (still loadable, not built-in) ==="
 # real pin conflict with the NS2009 touch controller i2c4 bus, so it could
 # never actually attach regardless). These modules are now expected
 # ABSENT, not present - inverted from the check this section used before.
-check_absent /lib/modules/6.6.18-rt23/kernel/drivers/bluetooth/hci_uart.ko
-check_absent /lib/modules/6.6.18-rt23/kernel/drivers/bluetooth/btbcm.ko
+# The module directory is named after the built kernel release (it was
+# hardcoded as 6.6.18-rt23, which would pass vacuously on any other kernel).
+KREL=$(cat "$REPO_ROOT/vendor/buildroot-x2000/output/build/linux-custom/include/config/kernel.release" 2>/dev/null)
+if [ -n "$KREL" ]; then
+	echo "OK   kernel release $KREL"
+	check_absent "/lib/modules/$KREL/kernel/drivers/bluetooth/hci_uart.ko"
+	check_absent "/lib/modules/$KREL/kernel/drivers/bluetooth/btbcm.ko"
+else
+	echo "MISS kernel release unknown (include/config/kernel.release not found)"
+fi
 
 echo "=== WiFi firmware (FIRMWARE.md sec 53 - proprietary, not committed, staged by fetch-cyw43430-wifi-firmware.sh) ==="
 check /lib/firmware/brcm/brcmfmac43430-sdio.bin
