@@ -25,6 +25,8 @@ artifacts/release/
 artifacts/buildroot-halley5-v30-image/rootfs.ext2
 artifacts/buildroot-halley5-v30-image/rootfs.squashfs
 artifacts/buildroot-halley5-v30-image/xImage
+artifacts/buildroot-halley5-v30-image/halley5_v30.dtb
+artifacts/buildroot-halley5-v30-image/System.map
 # Stale pre-v30 board target, same reasoning.
 artifacts/buildroot-halley5-image/rootfs.ext2
 artifacts/buildroot-halley5-image/uImage

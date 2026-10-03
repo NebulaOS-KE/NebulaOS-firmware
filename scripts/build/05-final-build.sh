@@ -64,6 +64,17 @@ cp "$BUILDROOT_DIR/output/images/rootfs.squashfs" "$REPO_ROOT/artifacts/buildroo
 cp "$BUILDROOT_DIR/.config" "$REPO_ROOT/artifacts/buildroot-halley5-v30-image/buildroot.config"
 cp "$BUILDROOT_DIR/output/build/linux-custom/.config" "$REPO_ROOT/artifacts/buildroot-halley5-v30-image/kernel.config"
 cp "$KERNEL_MOUNT/module_drivers/dts/x2000/halley5_v30.dts" "$REPO_ROOT/artifacts/buildroot-halley5-v30-image/halley5_v30.dts"
+# Kernel identity (SOT-00): the minimal defconfig of the resolved kernel
+# config, the compiled board DTB (plus its dtc decompilation, which is
+# text and diffable) and System.map. Together with kernel.config these prove
+# from the artifacts alone that two builds produced the same kernel.
+KBUILD_DIR="$BUILDROOT_DIR/output/build/linux-custom"
+( cd "$BUILDROOT_DIR" && make linux-savedefconfig )
+cp "$KBUILD_DIR/defconfig" "$REPO_ROOT/artifacts/buildroot-halley5-v30-image/kernel.defconfig"
+cp "$KBUILD_DIR/module_drivers/dts/x2000/halley5_v30.dtb" "$REPO_ROOT/artifacts/buildroot-halley5-v30-image/halley5_v30.dtb"
+"$BUILDROOT_DIR/output/host/bin/dtc" -I dtb -O dts -s "$REPO_ROOT/artifacts/buildroot-halley5-v30-image/halley5_v30.dtb" \
+	> "$REPO_ROOT/artifacts/buildroot-halley5-v30-image/halley5_v30.dtb.dts" 2>/dev/null
+cp "$KBUILD_DIR/System.map" "$REPO_ROOT/artifacts/buildroot-halley5-v30-image/System.map"
 
 FINGERPRINT_AFTER=$(source_fingerprint)
 if [ "$FINGERPRINT_BEFORE" != "$FINGERPRINT_AFTER" ]; then
@@ -182,6 +193,9 @@ artifact_sha256() {
 	artifact_sha256 kernel_config_sha256 "$ARTIFACT_DIR/kernel.config"
 	artifact_sha256 buildroot_config_sha256 "$ARTIFACT_DIR/buildroot.config"
 	artifact_sha256 device_tree_sha256 "$ARTIFACT_DIR/halley5_v30.dts"
+	artifact_sha256 kernel_defconfig_sha256 "$ARTIFACT_DIR/kernel.defconfig"
+	artifact_sha256 dtb_sha256 "$ARTIFACT_DIR/halley5_v30.dtb"
+	artifact_sha256 system_map_sha256 "$ARTIFACT_DIR/System.map"
 	artifact_sha256 xImage_sha256 "$ARTIFACT_DIR/xImage"
 	echo "xImage_size=$(wc -c < "$ARTIFACT_DIR/xImage")"
 	artifact_sha256 rootfs_squashfs_sha256 "$ARTIFACT_DIR/rootfs.squashfs"
