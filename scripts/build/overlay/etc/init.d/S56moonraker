@@ -90,7 +90,29 @@ log() {
 	echo "S56moonraker: $1"
 }
 
+# MEM-T04: Moonraker's upload and other temporary files go to eMMC-backed
+# /opt/printer_data instead of the RAM-backed /tmp. Python's tempfile
+# honours TMPDIR, so a 200 MB G-code upload no longer costs 200 MB of RAM.
+# Leftovers from a previous run are cleared, but never while a Moonraker
+# instance is still alive (a restart's stop does not wait for the exit).
+# An unwritable directory falls back to /tmp, which MEM-T02 bounds.
+MOONRAKER_TMPDIR="${MOONRAKER_TMPDIR:-/opt/printer_data/.nebulaos-tmp/moonraker}"
+prepare_tmpdir() {
+	mkdir -p "$MOONRAKER_TMPDIR" 2>/dev/null
+	if ! ( : > "$MOONRAKER_TMPDIR/.w" ) 2>/dev/null; then
+		log "WARNING: $MOONRAKER_TMPDIR not writable - Moonraker temp falls back to RAM /tmp (bounded by MEM-T02)"
+		return 0
+	fi
+	rm -f "$MOONRAKER_TMPDIR/.w"
+	_pid=$(cat "$PIDFILE" 2>/dev/null)
+	if [ -z "$_pid" ] || [ ! -d "/proc/$_pid" ]; then
+		find "$MOONRAKER_TMPDIR" -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null
+	fi
+	export TMPDIR="$MOONRAKER_TMPDIR"
+}
+
 start_daemon() {
+	prepare_tmpdir
 	echo "Starting moonraker (using $PYTHON3)"
 	start-stop-daemon -S -b -m -p "$PIDFILE" \
 		-x "$PYTHON3" -- \
