@@ -254,6 +254,17 @@ done
 
 echo "== generating .config from nebulaos_x2000_defconfig =="
 ( cd "$BUILDROOT_DIR" && make BR2_EXTERNAL="$BR2_EXT" nebulaos_x2000_defconfig )
+# Kernel configuration profile (SOT-51): production uses the kernel-owned
+# defconfig plus the build-environment fragment; diagnostic also merges the
+# kernel-owned diagnostic delta. Selected only by the committed manifest.
+case "$KERNEL_CONFIG_PROFILE" in
+	production) FRAGS='$(BR2_EXTERNAL_NEBULAOS_PATH)/board/nebulaos-x2000/nebulaos-kernel-buildenv.config' ;;
+	diagnostic) FRAGS="\$(BR2_EXTERNAL_NEBULAOS_PATH)/board/nebulaos-x2000/nebulaos-kernel-buildenv.config $KERNEL_SRCDIR/arch/mips/configs/nebulaos_halley5_v30_diagnostic.config" ;;
+	*) echo "FATAL: KERNEL_CONFIG_PROFILE must be production|diagnostic (got '$KERNEL_CONFIG_PROFILE')" >&2; exit 1 ;;
+esac
+sed -i "s#^BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES=.*#BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES=\"$FRAGS\"#" "$BUILDROOT_DIR/.config"
+echo "== kernel config profile: $KERNEL_CONFIG_PROFILE =="
+
 echo "== normalizing .config (resolves any derived Kconfig selects) =="
 ( cd "$BUILDROOT_DIR" && make BR2_EXTERNAL="$BR2_EXT" olddefconfig )
 

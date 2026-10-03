@@ -242,6 +242,35 @@ post-build|candidate-post-build)
 	grep -q 'spi_gpio_adxl345 {' "$DTS" && RC=0 || RC=$?
 	check "spi_gpio_adxl345 DT node present in resolved DTS" "$RC"
 
+	# Kernel configuration profile (SOT-51). The resolved kernel must match
+	# the profile the manifest selected; a diagnostic kernel must never pass
+	# the strict (qualified) gate.
+	PROFILE=$(grep -m1 '^kernel_config_profile=' "$ARTIFACT_DIR/build-manifest.txt" 2>/dev/null | cut -d= -f2)
+	echo "  KERNEL_CONFIG_PROFILE=${PROFILE:-unknown}"
+	case "$PROFILE" in
+	production)
+		grep -qx '# CONFIG_FTRACE is not set' "$KCONFIG" && RC=0 || RC=$?
+		check "production kernel: CONFIG_FTRACE not set" "$RC"
+		grep -qx 'CONFIG_LOCALVERSION=""' "$KCONFIG" && RC=0 || RC=$?
+		check "production kernel: empty CONFIG_LOCALVERSION" "$RC"
+		;;
+	diagnostic)
+		DIAG="$KERNEL_DIR/kernel/kernel-6.6/arch/mips/configs/nebulaos_halley5_v30_diagnostic.config"
+		for sym in $(grep '^CONFIG_' "$DIAG"); do
+			grep -qxF "$sym" "$KCONFIG" && RC=0 || RC=$?
+			check "diagnostic kernel: $sym" "$RC"
+		done
+		if [ "$MODE" = "post-build" ]; then
+			echo "  FAIL: a diagnostic kernel can never reproduce a qualified baseline"
+			FAILED=1
+		fi
+		;;
+	*)
+		echo "  FAIL: build-manifest.txt records no valid kernel_config_profile"
+		FAILED=1
+		;;
+	esac
+
 	if [ "$MODE" = "candidate-post-build" ]; then
 		# BUILD_VERIFIED stops here - every accepted variant (1-9) is proven
 		# present in the actual resolved artifact. Deliberately does NOT run

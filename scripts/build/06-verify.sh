@@ -310,6 +310,18 @@ if [ -f "$KERNEL_CONFIG" ]; then
 	# can't see kernel config at all, so this is the only place a clean
 	# build can catch this specific regression.
 	check_builtin CONFIG_SWAP
+	# Kernel configuration profile (SOT-51); gated in assert-baseline-config.sh.
+	case "${KERNEL_CONFIG_PROFILE:-}" in
+	production)
+		grep -qx '# CONFIG_FTRACE is not set' "$KERNEL_CONFIG" && echo "OK   production kernel: CONFIG_FTRACE not set" || echo "MISS production kernel has CONFIG_FTRACE"
+		grep -qx 'CONFIG_LOCALVERSION=""' "$KERNEL_CONFIG" && echo "OK   production kernel: empty LOCALVERSION" || echo "MISS production kernel LOCALVERSION is not empty"
+		;;
+	diagnostic)
+		for sym in $(grep '^CONFIG_' "$REPO_ROOT/vendor/x2000_kernel_6.6/kernel/kernel-6.6/arch/mips/configs/nebulaos_halley5_v30_diagnostic.config"); do
+			grep -qxF "$sym" "$KERNEL_CONFIG" && echo "OK   diagnostic kernel: $sym" || echo "MISS diagnostic kernel lacks $sym"
+		done
+		;;
+	esac
 	check_builtin CONFIG_ZRAM
 	check_builtin CONFIG_CRYPTO_LZ4
 	# Two competing WiFi drivers were a real, previously-hit bug (FIRMWARE.md

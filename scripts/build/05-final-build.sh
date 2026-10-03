@@ -168,6 +168,7 @@ artifact_sha256() {
 	# directly from dependencies.conf (already sourced as DEPS_MANIFEST
 	# above), so this can never silently drift from the pin actually used.
 	echo "build_image_repo=${BUILD_IMAGE_REPO:-absent}"
+	echo "kernel_config_profile=${KERNEL_CONFIG_PROFILE:-absent}"
 	echo "build_image_digest=${BUILD_IMAGE_DIGEST:-absent}"
 	git_field git_commit_main ""
 	git_field git_commit_kernel vendor/x2000_kernel_6.6
