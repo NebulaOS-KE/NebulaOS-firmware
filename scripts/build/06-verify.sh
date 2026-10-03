@@ -179,13 +179,12 @@ check_vendor_pin v4l-utils "$V4L_UTILS_PIN" \
 # Remote name is "nebulaos" here, not "origin" - check_vendor_pin's URL check
 # greps all remotes, so this is remote-name-agnostic.
 #
-# bulk_dirty_expected=1: this checkout is DELIBERATELY left dirty by
-# apply-qualified-baseline.sh (8 accepted variant patches applied on top of
-# the pinned commit) by the time this verify step runs - not drift.
-# assert-baseline-config.sh (run earlier in the pipeline) is the real,
-# precise content-level check of what that dirt should contain.
+# bulk_dirty_expected=0: every NebulaOS kernel change is a commit on
+# NebulaOS-kernel and the production config is the kernel-owned
+# nebulaos_halley5_v30_defconfig, so the build modifies nothing in this
+# checkout. Any working-tree change is unexplained and a MISS. (SOT-30)
 check_vendor_pin x2000_kernel_6.6 "$KERNEL_PIN" \
-	"$KERNEL_REPO" 1
+	"$KERNEL_REPO" 0
 # GuppyScreen: added 2026-08-07 - previously not pin-checked here at all
 # (it was still a manually-copied binary with no vendor checkout to check
 # when this script was last touched). `submodule status` confirms all four

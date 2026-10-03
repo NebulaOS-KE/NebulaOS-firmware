@@ -124,6 +124,11 @@ pre-build)
 	echo "$msc1_block" | grep -q 'cap-sdio-irq;' && RC=0 || RC=$?
 	check "W3 cap-sdio-irq present in &msc1" "$RC"
 
+	# No build-time kernel mutation (SOT-30): the kernel checkout must be
+	# exactly the pinned commit. Every NebulaOS kernel change is a commit.
+	[ -z "$(git -C "$KERNEL_DIR" status --porcelain 2>/dev/null)" ] && RC=0 || RC=$?
+	check "kernel checkout unmodified" "$RC"
+
 	# The production kernel configuration is owned by NebulaOS-kernel.
 	FRAGMENT="$KERNEL_DIR/kernel/kernel-6.6/arch/mips/configs/nebulaos_halley5_v30_defconfig"
 	[ -f "$FRAGMENT" ] && RC=0 || RC=$?

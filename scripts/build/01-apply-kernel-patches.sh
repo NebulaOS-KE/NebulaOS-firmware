@@ -53,6 +53,13 @@ if [ "$ACTUAL_SHA" != "$X2000_KERNEL_6_6_PIN" ]; then
 	exit 1
 fi
 
+if [ -n "$(git status --porcelain)" ]; then
+	echo "vendor/x2000_kernel_6.6 has working-tree changes - the build must not modify the kernel checkout (every NebulaOS kernel change is a commit on NebulaOS-kernel):" >&2
+	git status --porcelain >&2
+	exit 1
+fi
+echo "PASS: kernel checkout unmodified"
+
 echo "== confirming the openke branch's real changes are present =="
 test -f kernel/kernel-6.6/drivers/input/touchscreen/ns2009.c
 test -f kernel/kernel-6.6/module_drivers/drivers/video/fbdev/ingenic/displays/panel-openke-general-480x272.c

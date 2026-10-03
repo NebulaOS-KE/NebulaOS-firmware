@@ -14,13 +14,14 @@
 #   00-fetch-vendor-sources.sh    fetch every pinned source (fails loudly on
 #                                  any unpushed/unresolvable pin - see
 #                                  manifests/dependencies.conf)
-#   apply-qualified-baseline.sh   compose all 8 accepted kernel variants
-#   assert-baseline-config.sh pre-build   fail fast if a variant's source-
-#                                  level change didn't actually land, before
-#                                  spending build time
+#   assert-baseline-config.sh pre-build   fail fast, before spending build
+#                                  time, if the pinned kernel checkout is
+#                                  modified or lacks an accepted change (every
+#                                  kernel change is a NebulaOS-kernel commit;
+#                                  nothing is applied at build time)
 #   01 -> 06                      the existing numbered pipeline, unchanged
 #   assert-baseline-config.sh post-build  prove the resolved artifact
-#                                  actually contains what was composed
+#                                  actually contains the accepted changes
 #
 # This does NOT reuse any existing vendor/, build-work/, or artifacts/
 # state - run it against a genuinely fresh clone (a dirty/reused checkout
@@ -30,7 +31,7 @@
 #
 # Usage: sh scripts/build/build-qualified-baseline.sh
 #
-# Exits non-zero if any pin fails to resolve, any variant fails to apply,
+# Exits non-zero if any pin fails to resolve,
 # either assertion fails, or any build stage fails.
 
 set -e
