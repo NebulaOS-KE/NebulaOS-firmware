@@ -36,6 +36,7 @@ USTREAMER_PIDFILE=/var/run/ustreamer.pid
 V4L2CTL=/usr/bin/v4l2-ctl
 USTREAMER=/usr/bin/ustreamer
 POLL_INTERVAL=5
+SYSFS_ROOT="${SYSFS_ROOT:-/sys}"
 
 # USB/webcam+MCU-recovery mission (2026-07-26): the real webcam (v4l2-ctl
 # --list-formats-ext on the real UVC node) advertises native MJPEG up to
@@ -150,6 +151,19 @@ discover_uvc_device() {
 	return 1
 }
 
+# CAM-01: is the node ustreamer serves still the UVC capture node? sysfs only:
+# re-running discover_uvc_device (v4l2-ctl --info/--list-formats) opens
+# /dev/video* every poll, which resumes the camera and defeats USB runtime
+# autosuspend while the stream is paused. index 0 is the capture node (the
+# metadata sibling is index 1); the driver link must still be uvcvideo.
+uvc_node_still_present() {
+	n=${1#/dev/}
+	[ -e "$SYSFS_ROOT/class/video4linux/$n" ] || return 1
+	idx=$(cat "$SYSFS_ROOT/class/video4linux/$n/index" 2>/dev/null)
+	[ "$idx" = 0 ] || return 1
+	readlink "$SYSFS_ROOT/class/video4linux/$n/device/driver" 2>/dev/null | grep -q '/uvcvideo$'
+}
+
 ustreamer_running_on() {
 	dev="$1"
 	[ -f "$USTREAMER_PIDFILE" ] || return 1
@@ -204,26 +218,37 @@ stop_ustreamer() {
 # for why. Runs as the process start-stop-daemon itself tracks via
 # $PIDFILE, so `stop`/`restart`/`status` below all act on this loop, which
 # in turn owns the actual ustreamer child via $USTREAMER_PIDFILE.
-supervise() {
-	while true; do
-		dev=$(discover_uvc_device)
-		if [ -n "$dev" ]; then
-			if ! ustreamer_running_on "$dev"; then
-				# Either nothing running yet, or the previously-served
-				# device went away and a (possibly renumbered) one came
-				# back - clean up any stale instance before restarting.
-				stop_ustreamer
-				start_ustreamer "$dev"
-			fi
-		else
-			# No webcam right now - if something is still running (e.g.
-			# device just unplugged), stop it rather than serve a dead
-			# node until the next poll notices.
-			if [ -f "$USTREAMER_PIDFILE" ]; then
-				echo "S50webcam: webcam no longer present, stopping ustreamer"
-				stop_ustreamer
-			fi
+supervise_tick() {
+	# CAM-01: while ustreamer serves a node that is still present, do not
+	# re-open it for discovery.
+	if [ -n "$last_dev" ] && ustreamer_running_on "$last_dev" && uvc_node_still_present "$last_dev"; then
+		return 0
+	fi
+	dev=$(discover_uvc_device)
+	[ -n "$dev" ] && last_dev=$dev
+	if [ -n "$dev" ]; then
+		if ! ustreamer_running_on "$dev"; then
+			# Either nothing running yet, or the previously-served
+			# device went away and a (possibly renumbered) one came
+			# back - clean up any stale instance before restarting.
+			stop_ustreamer
+			start_ustreamer "$dev"
 		fi
+	else
+		# No webcam right now - if something is still running (e.g.
+		# device just unplugged), stop it rather than serve a dead
+		# node until the next poll notices.
+		if [ -f "$USTREAMER_PIDFILE" ]; then
+			echo "S50webcam: webcam no longer present, stopping ustreamer"
+			stop_ustreamer
+		fi
+	fi
+}
+
+supervise() {
+	last_dev=
+	while true; do
+		supervise_tick
 		sleep "$POLL_INTERVAL"
 	done
 }
@@ -257,6 +282,8 @@ status() {
 		echo "ustreamer: STOPPED"
 	fi
 }
+
+[ -n "${S50WEBCAM_NO_AUTORUN:-}" ] && return 0 2>/dev/null
 
 case "$1" in
 	start)
