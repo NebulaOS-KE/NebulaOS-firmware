@@ -1,0 +1,14 @@
+# NebulaOS MEM-T06: low-memory git defaults for every git user on the
+# printer (Moonraker update_manager, the update supervisor, seeding). Same
+# keys S04nebulaos-factory-seed exports through GIT_CONFIG_*, plus the pack
+# window/limit, so index-pack and delta resolution stay within a few tens of
+# MiB on a ~208 MiB system.
+[pack]
+	threads = 1
+	windowMemory = 16m
+[core]
+	packedGitWindowSize = 1m
+	packedGitLimit = 32m
+	deltaBaseCacheLimit = 8m
+[gc]
+	auto = 0
