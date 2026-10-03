@@ -167,6 +167,13 @@ except Exception as exc:  # noqa: BLE001 - the failure text is the useful part
     bad(f"moonraker.conf does not parse: {exc}")
     cfg = configparser.ConfigParser()
 
+# MEM-T05: the image-owned include bounds uploads (they are spooled on eMMC).
+check(
+    cfg.has_section("server") and cfg.get("server", "max_upload_size", fallback=None) == "512",
+    "server.max_upload_size resolves to 512 MiB through the managed include (MEM-T05)",
+    f"server.max_upload_size is {cfg.get('server', 'max_upload_size', fallback=None)!r}, expected '512'",
+)
+
 MANAGED_INCLUDE_LINE = "[include /etc/nebulaos/moonraker/klipper-pin.conf]"
 check(
     MOONRAKER_CONF.read_text(encoding="utf-8").count(MANAGED_INCLUDE_LINE) == 1,
