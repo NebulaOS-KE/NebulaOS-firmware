@@ -230,6 +230,11 @@ class DeviceSession(abc.ABC):
         in nebulaos_capture (TOOL-01). Never a script or a path."""
 
     @abc.abstractmethod
+    def exercise(self, profile):
+        """-> text. One reversible exercise profile, by NAME, from the fixed
+        table in nebulaos_capture (TOOL-02); its undo runs from a trap."""
+
+    @abc.abstractmethod
     def restart_service(self, name):
         """Restart one service named in RESTARTABLE_SERVICES, with the update
         supervisor's semantics. -> dict with restart_result=DONE|REFUSED|FAILED
@@ -651,6 +656,16 @@ class SshDeviceSession(DeviceSession):
         rc, out, err = self._run(script, timeout=timeout + 60)
         if rc != 0 and not out:
             raise DeviceError("capture %s failed (rc=%d): %s" % (profile, rc, err.strip()[:300]))
+        return out
+
+    def exercise(self, profile):
+        try:
+            script, timeout = captures.exercise_script(profile)
+        except captures.CaptureError as exc:
+            raise DeviceError(str(exc))
+        rc, out, err = self._run(script, timeout=timeout + 60)
+        if rc != 0 and not out:
+            raise DeviceError("exercise %s failed (rc=%d): %s" % (profile, rc, err.strip()[:300]))
         return out
 
     def restart_service(self, name):

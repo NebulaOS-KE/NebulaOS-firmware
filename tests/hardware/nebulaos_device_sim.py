@@ -329,6 +329,13 @@ class SimSession(device.DeviceSession):
         self.printer.captures = getattr(self.printer, "captures", []) + [profile]
         return "CAPTURE_PROFILE=%s\nsimulated\nEND_UTC=x\n" % profile
 
+    def exercise(self, profile):
+        self._t()
+        if profile not in device.captures.EXERCISE_PROFILES:
+            raise device.DeviceError("unknown exercise profile %r" % profile)
+        self.printer.exercises = getattr(self.printer, "exercises", []) + [profile]
+        return "EXERCISE_PROFILE=%s\nsimulated\nEND_UTC=x\n" % profile
+
     def restart_service(self, name):
         # The same decisions, in the same order, as device.restart_script().
         self._t()

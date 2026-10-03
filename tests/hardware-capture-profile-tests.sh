@@ -1,6 +1,7 @@
 #!/bin/sh
 #
-# TOOL-01: the Hardware Agent's read-only `capture <profile>` operation.
+# TOOL-01/TOOL-02: the Hardware Agent's read-only `capture <profile>` and
+# reversible, confirmed `exercise <profile>` operations.
 #   - every HWCAP profile named in the production kernel plan exists (as a
 #     capture, or for state-changing ones as an exercise-only name);
 #   - profile names are a fixed lowercase table; unknown names and anything
@@ -59,6 +60,31 @@ agent = open(os.path.join(fw, "tools", "hardware", "nebulaos_agent.py")).read()
 op = agent[agent.index("def op_capture"):agent.index("def control_is_published")]
 check("destructive=False" in op and "prove_preconditions(" in op, "op_capture proves identity and is non-destructive")
 check("CAPTURE_PROFILES" in op, "op_capture refuses names outside the table")
+# --- TOOL-02 exercise ---------------------------------------------------------
+for name in c.EXERCISE_ONLY:
+    check(name in c.EXERCISE_PROFILES, "exercise %s is implemented" % name)
+for name, (body, undo, timeout) in c.EXERCISE_PROFILES.items():
+    s, t = c.exercise_script(name)
+    check("trap nebulaos_undo EXIT" in s and undo in s, "%s has a trap-run undo block" % name)
+    check("trap 'exit 130' INT TERM" in s, "%s undoes on interruption" % name)
+for word in c.EXERCISE_REFUSED:
+    saved = dict(c.EXERCISE_PROFILES)
+    c.EXERCISE_PROFILES["injected"] = ("echo x; %s" % word, "true", 10)
+    try:
+        c.exercise_script("injected"); check(False, "refused word %r rejected" % word)
+    except c.CaptureError:
+        check(True, "refused word %r rejected" % word)
+    c.EXERCISE_PROFILES.clear(); c.EXERCISE_PROFILES.update(saved)
+import io, types
+import nebulaos_agent as agent
+for line in ("", "yes", "EXERCISE_CONFIRM=memexercise", "EXERCISE_CONFIRM=sof-filter-ab extra"):
+    sys.stdin = io.StringIO(line + "\n")
+    ns = types.SimpleNamespace(device="p1", control_commit="a" * 40, profile="sof-filter-ab")
+    try:
+        agent.op_exercise(ns); check(False, "unconfirmed exercise refused (%r)" % line)
+    except agent.AgentRefusal:
+        check(True, "unconfirmed exercise refused (%r)" % line)
+sys.stdin = sys.__stdin__
 print("capture-profile python checks: %d passed, %d failed" % (passed, failed))
 sys.exit(1 if failed else 0)
 PYEOF
@@ -83,6 +109,10 @@ for bad in "kernel;reboot" "kernel reboot" "../x" "-x" "KERNEL" ""; do
 	out=$(run capture "$bad")
 	case "$out" in *AGENT_ARGS*) echo "FAIL: launcher accepted capture '$bad'"; FAIL=1;; *) echo "PASS: launcher refuses capture '$bad'";; esac
 done
+out=$(run exercise sof-filter-ab)
+case "$out" in *"AGENT_ARGS=--device p1 --control-commit $SHA exercise sof-filter-ab"*) echo "PASS: launcher passes an exercise name";; *) echo "FAIL: launcher did not pass exercise: $out"; FAIL=1;; esac
+out=$(run exercise "x;reboot")
+case "$out" in *AGENT_ARGS*) echo "FAIL: launcher accepted exercise 'x;reboot'"; FAIL=1;; *) echo "PASS: launcher refuses exercise 'x;reboot'";; esac
 out=$(run capture a b)
 case "$out" in *AGENT_ARGS*) echo "FAIL: launcher accepted two profile names"; FAIL=1;; *) echo "PASS: launcher refuses extra arguments";; esac
 

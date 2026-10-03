@@ -432,6 +432,44 @@ def op_capture(args):
     return 0
 
 
+def op_exercise(args):
+    """TOOL-02: one reversible, allow-listed device state change used by a
+    hardware decision point (USB power control, the SOF filter switch, a
+    camera pause/resume, a memory ramp). Requires the operator to confirm on
+    stdin with EXERCISE_CONFIRM=<profile>; refused while the confirmation is
+    missing, so it cannot run by accident from a pipeline."""
+    import time
+    if args.profile not in device.captures.EXERCISE_PROFILES:
+        raise AgentRefusal("unknown exercise profile %r" % args.profile)
+    try:
+        device.captures.exercise_script(args.profile)
+    except device.captures.CaptureError as exc:
+        raise AgentRefusal(str(exc))
+    want = "EXERCISE_CONFIRM=%s" % args.profile
+    say("This changes device state reversibly. Type %s to continue:" % want)
+    line = sys.stdin.readline().strip()
+    if line != want:
+        raise AgentRefusal("exercise not confirmed (expected %s on stdin)" % want)
+    profile, _, _ = prove_preconditions(
+        args.device, None, None, None, args.control_commit, destructive=False)
+    session, which, address = _connect_matching(profile, (device.OS_NEBULAOS,))
+    try:
+        say("EXERCISE_TARGET=%s@%s" % (which, address))
+        say("DEVICE_IDENTITY_MATCHES_PROFILE=YES")
+        text = session.exercise(args.profile)
+    finally:
+        session.close()
+    d = os.path.join(journal.state_home(), "captures", args.device)
+    os.makedirs(d, mode=0o700, exist_ok=True)
+    path = os.path.join(d, "exercise-%s-%s.txt" % (args.profile, time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())))
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    say(text)
+    say("EXERCISE_FILE=%s" % path)
+    say("RUN_NEBULAOS_HARDWARE=EXERCISE_COMPLETE")
+    return 0
+
+
 def control_is_published(control_commit):
     """The seam tests replace. Repairs require a PUBLISHED control commit."""
     return evidence.product_is_published(FW_ROOT, control_commit)
@@ -613,6 +651,7 @@ def main(argv):
     sub.add_parser("status")
     sub.add_parser("diagnose")
     sub.add_parser("capture").add_argument("profile")
+    sub.add_parser("exercise").add_argument("profile")
     sub.add_parser("restart").add_argument("service")
     for name in ("verify", "install"):
         p = sub.add_parser(name)
@@ -622,7 +661,7 @@ def main(argv):
 
     args = parser.parse_args(argv)
     handler = {"inspect": op_inspect, "status": op_status, "diagnose": op_diagnose,
-               "capture": op_capture,
+               "capture": op_capture, "exercise": op_exercise,
                "restart": op_restart, "verify": op_verify, "install": op_install}[args.op]
     try:
         return handler(args)

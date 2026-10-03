@@ -30,6 +30,7 @@
 #   run-nebulaos-hardware.sh --device <id> --control <C> status
 #   run-nebulaos-hardware.sh --device <id> --control <C> diagnose
 #   run-nebulaos-hardware.sh --device <id> --control <C> capture <profile>
+#   run-nebulaos-hardware.sh --device <id> --control <C> exercise <profile>   (confirm on stdin)
 #   run-nebulaos-hardware.sh --device <id> --control <C> restart <service>
 #   run-nebulaos-hardware.sh --device <id> --control <C> verify  <X> <ximage-sha256> <rootfs-sha256>
 #   run-nebulaos-hardware.sh --device <id> --control <C> install <X> <ximage-sha256> <rootfs-sha256>
@@ -132,20 +133,20 @@ case "$OP" in
       klipper|moonraker|guppyscreen|webcam|nginx) ;;
       *) die "unknown service '$2'. Restartable: klipper moonraker guppyscreen webcam nginx" ;;
     esac ;;
-  capture)
+  capture|exercise)
     # A profile NAME from the agent's fixed read-only table (TOOL-01); the
     # agent refuses names it does not know. Never a command.
-    [ "$#" -eq 2 ] || die "'capture' requires exactly one profile name"
+    [ "$#" -eq 2 ] || die "'$OP' requires exactly one profile name"
     case "$2" in
-      ""|-*|*[!a-z0-9-]*) die "unknown capture profile '$2'" ;;
+      ""|-*|*[!a-z0-9-]*) die "unknown $OP profile '$2'" ;;
     esac ;;
   verify|install)
     [ "$#" -eq 4 ] || die "'$OP' requires <source-head> <ximage-sha256> <rootfs-sha256>"
     is_hex "$2" 40 || die "source-head must be a full 40-character lowercase hex SHA"
     is_hex "$3" 64 || die "ximage-sha256 must be 64 lowercase hex characters"
     is_hex "$4" 64 || die "rootfs-sha256 must be 64 lowercase hex characters" ;;
-  *) die "unknown operation '${OP:-}'. The Hardware Agent has exactly seven:
-       inspect  status  diagnose  capture  restart  verify  install
+  *) die "unknown operation '${OP:-}'. The Hardware Agent has exactly eight:
+       inspect  status  diagnose  capture  exercise  restart  verify  install
        Motion, heating, extrusion, calibration and MCU flashing are Part 2 and have no
        operation here." ;;
 esac

@@ -204,3 +204,85 @@ def capture_script(name):
         s += "cat > \"$T/%s\" <<'NEBULAOS_PROBE_EOF'\n%s\nNEBULAOS_PROBE_EOF\n" % (probe, _probe_source(probe))
     s += "{ %s; } 2>&1 | head -c 1048576; printf '\\nEND_UTC=%%s\\n' \"$(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ)\"" % body
     return s, timeout
+
+
+# ---------------------------------------------------------------------------
+# TOOL-02: exercise profiles - reversible, allow-listed state changes.
+# ---------------------------------------------------------------------------
+# Each is (setup+body, undo, timeout). The undo block runs from an EXIT/INT/TERM
+# trap, so the device returns to its prior state even if the run is interrupted.
+# The agent additionally requires an interactive EXERCISE_CONFIRM=<profile>
+# line on stdin, and refuses any profile whose text contains a word from
+# EXERCISE_REFUSED (motion, heat, firmware restart, flashing, block writes,
+# swap teardown, reboot) - checked at run time, not only in review.
+
+EXERCISE_REFUSED = ("G28", "G1 ", "M104", "M140", "SET_HEATER", "FIRMWARE_RESTART",
+                    "flash", "dd ", "mkfs", "swapoff -a", "reboot")
+
+_STORAGE_DEV = ("S=; for i in /sys/bus/usb/devices/*:*; do "
+                "[ \"$(basename \"$(readlink $i/driver 2>/dev/null)\")\" = usb-storage ] && { S=${i%:*}; break; }; done; "
+                "[ -n \"$S\" ] || { echo NO_USB_STORAGE; exit 3; }; P=$S/power; "
+                "C0=$(cat $P/control); D0=$(cat $P/autosuspend_delay_ms)")
+
+EXERCISE_PROFILES = {
+    # HWDP-DWC-3: IRQ 9 rate and DWC2 thread cost, filter on vs off.
+    "sof-filter-ab": (
+        "F=/sys/module/dwc2/parameters/sof_filter; [ -w $F ] || { echo NO_SOF_FILTER_PARAM; exit 3; }; F0=$(cat $F); "
+        "for v in 1 0; do echo $v > $F; sleep 2; echo \"== sof_filter=$v\"; " + _IRQ_RATE + "; done",
+        "[ -n \"${F0:-}\" ] && echo $F0 > $F",
+        120),
+    # HWDP-DWC-5: does the USB drive autosuspend, and how long is the first read after?
+    "storage-autosuspend": (
+        _STORAGE_DEV + "; echo \"device=$S control=$C0 delay=$D0\"; "
+        "echo 2000 > $P/autosuspend_delay_ms; echo auto > $P/control; sleep 15; "
+        "echo \"runtime_status=$(cat $P/runtime_status)\"; sync; echo 3 > /proc/sys/vm/drop_caches; "
+        "B=$(ls /sys/$(readlink -f $S | sed 's#^/sys/##')/*/host*/target*/*/block 2>/dev/null | head -1); "
+        "t0=$(date +%s%N); head -c 65536 /dev/${B:-sda} > /dev/null; t1=$(date +%s%N); "
+        "echo \"resume_read_ms=$(( (t1 - t0) / 1000000 ))\"; dmesg | tail -20 | grep -iE 'usb|sd ' ",
+        "[ -n \"${P:-}\" ] && { echo ${D0:-2000} > $P/autosuspend_delay_ms; echo ${C0:-on} > $P/control; }",
+        90),
+    # HWDP-DWC-6: first-frame latency after an idle pause.
+    "camera-resume": (
+        "curl -s -o /dev/null --max-time 5 localhost:8080/pause; sleep 30; t0=$(date +%s%N); "
+        "curl -s -o /dev/null --max-time 5 localhost:8080/resume; "
+        "i=0; until curl -sf -o /dev/null --max-time 2 localhost:8080/snapshot || [ $i -ge 60 ]; do i=$((i+1)); done; "
+        "t1=$(date +%s%N); echo \"first_frame_ms=$(( (t1 - t0) / 1000000 ))\"",
+        "curl -s -o /dev/null --max-time 5 localhost:8080/resume",
+        120),
+    # HWDP-MEM-3/6/8: memory ramps while the printer is idle-connected (no print).
+    # Steps of 16..96 MiB, incompressible then compressible, 60 s each, logging
+    # memory state every second; stops early when memguard reaches P3.
+    # The 200 MB upload step of the plan is run from the host, not here.
+    "memexercise": (
+        "M=/run/nebulaos/memguard/state; "
+        "case \"$(wget -q -T 2 -O - 'http://127.0.0.1:7125/printer/objects/query?print_stats=state' 2>/dev/null)\" in "
+        "*printing*|*paused*) echo PRINT_ACTIVE_REFUSED; exit 3 ;; esac; "
+        "mon(){ while :; do printf '%s ' \"$(date +%s)\"; grep -E '^(MemAvailable|Shmem|SwapFree):' /proc/meminfo | tr -s ' \\n' ' '; "
+        "cat /sys/block/zram0/mm_stat 2>/dev/null | tr '\\n' ' '; head -1 /proc/pressure/memory 2>/dev/null | tr '\\n' ' '; "
+        "cat $M 2>/dev/null; sleep 1; done; }; mon & MON=$!; "
+        "for kind in urandom pattern; do for n in 16 32 48 64 96; do "
+        "case \"$(cat $M 2>/dev/null)\" in P3|P4|P4_EXHAUSTED) echo \"STOP memguard=$(cat $M)\"; break 2 ;; esac; "
+        "echo \"== $kind $n MiB\"; "
+        "python3 -c \"import os,sys,time;k=sys.argv[1];n=int(sys.argv[2]);"
+        "b=[bytearray(os.urandom(1<<20)) if k=='urandom' else bytearray((b'nebulaos compressible fill 0123456789\\\\n'*65536)[:1<<20]) for _ in range(n)];"
+        "time.sleep(60)\" $kind $n & EX=$!; wait $EX; EX=; done; done",
+        "[ -n \"${EX:-}\" ] && kill $EX 2>/dev/null; [ -n \"${MON:-}\" ] && kill $MON 2>/dev/null",
+        900),
+}
+
+
+def exercise_script(name):
+    """-> (shell text, timeout) for one exercise NAME. Raises CaptureError."""
+    if name not in EXERCISE_PROFILES:
+        raise CaptureError("unknown exercise profile %r" % name)
+    body, undo, timeout = EXERCISE_PROFILES[name]
+    for word in EXERCISE_REFUSED:
+        if word in body or word in undo:
+            raise CaptureError("exercise %s contains refused text %r" % (name, word))
+    s = ("T=/tmp/nebulaos-capture.$$; rm -rf \"$T\"; mkdir -p \"$T\" || exit 4; "
+         "nebulaos_undo(){ trap - EXIT INT TERM; %s; rm -rf \"$T\"; }; "
+         "trap nebulaos_undo EXIT; trap 'exit 130' INT TERM; "
+         "printf 'EXERCISE_PROFILE=%s\\nSTART_UTC=%%s\\n' \"$(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ)\"; "
+         % (undo, name))
+    s += "%s; printf '\\nEND_UTC=%%s\\n' \"$(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ)\"" % body
+    return s, timeout
