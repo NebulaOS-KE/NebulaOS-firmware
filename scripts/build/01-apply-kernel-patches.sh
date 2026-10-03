@@ -40,13 +40,13 @@ cd "$KERNEL_DIR"
 # reachable from - being "on" a named branch was never actually load-
 # bearing for anything this script does after this point.
 #
-# Defense in depth (2026-07-31, NEBULAOS_CAMERA_USB_RT_SOURCE_ANALYSIS.md's
-# vendor-pin audit): 00-fetch-vendor-sources.sh already enforces this exact
-# pin and fails loudly on drift, but this script shouldn't silently trust
-# that it ran first/correctly - keep the same pin constant here and verify
-# independently, so a hand-run `git pull` inside this checkout between the
-# two scripts still gets caught.
-X2000_KERNEL_6_6_PIN=295b7101d751fd888ae39e6f1746a4a940664a5f
+# Defense in depth: 00-fetch-vendor-sources.sh already enforces the pin and
+# fails loudly on drift; this script verifies it again independently, so a
+# hand-run `git pull` inside this checkout between the two scripts is still
+# caught. The pin is read from the manifest - the one place it is recorded -
+# rather than a second hardcoded copy that every pin bump would have to edit.
+. "$REPO_ROOT/manifests/dependencies.conf"
+X2000_KERNEL_6_6_PIN="${KERNEL_PIN:?KERNEL_PIN not set in manifests/dependencies.conf}"
 ACTUAL_SHA=$(git rev-parse HEAD)
 if [ "$ACTUAL_SHA" != "$X2000_KERNEL_6_6_PIN" ]; then
 	echo "vendor/x2000_kernel_6.6 HEAD is $ACTUAL_SHA, expected pinned commit $X2000_KERNEL_6_6_PIN - re-run 00-fetch-vendor-sources.sh (it will refuse to proceed and explain why)" >&2
