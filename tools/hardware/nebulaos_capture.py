@@ -92,6 +92,8 @@ _BOOT_TIMING = (
     "echo '== moonraker-log'; grep -nE 'Starting Moonraker|Klippy Connection Established|Klippy ready|Server Startup|Webcam' "
     "/opt/printer_data/logs/moonraker.log 2>/dev/null | tail -30; "
     "echo '== memguard-log'; grep -E 'started \\(pid' /usr/data/nebulaos/logs/memguard.log 2>/dev/null | tail -3; "
+    "echo '== migration-log'; tail -n 60 /usr/data/nebulaos/system/diagnostics/migration.log 2>/dev/null; "
+    "echo '== activation-log'; tail -n 60 /usr/data/nebulaos/system/diagnostics/activation.log 2>/dev/null; "
     "echo '== syslog'; head -c 60000 /var/log/messages 2>/dev/null; "
     "echo '== dmesg'; dmesg | head -c 400000")
 
