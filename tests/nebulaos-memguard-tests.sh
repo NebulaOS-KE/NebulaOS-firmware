@@ -104,6 +104,49 @@ fakeproc 101 klipper_mcu -1000 9000
 mg_check_mcu_rss
 grep -q 'ALERT klipper_mcu VmRSS 9000' "$MG_LOG" && pass "klipper_mcu RSS alert logged" || fail "no klipper_mcu RSS alert"
 
+# HWDP-MEM-5 locked-memory alert: resident Mlocked, never klippy's VmLck range
+lockinfo() { # Mlocked line content, or "" for no line
+	printf 'MemTotal:       249132 kB\nMemFree:         10000 kB\nMemAvailable:   150000 kB\nUnevictable:     31032 kB\n' > "$MG_PROC/meminfo"
+	[ -n "$1" ] && printf 'Mlocked:        %s\n' "$1" >> "$MG_PROC/meminfo"
+	printf 'SwapTotal:      131068 kB\n' >> "$MG_PROC/meminfo"
+}
+locked_alerts() { grep -c 'ALERT resident locked memory' "$MG_LOG" 2>/dev/null || true; }
+# klippy as measured on ke-dev: VmLck 128280 kB (MCL_ONFAULT range), resident ~30 MiB
+printf 'Name:\tpython3\nVmLck:\t128280 kB\nVmRSS:\t30368 kB\n' > "$MG_PROC/100/status"
+MG_LOCKED_ALERTED=0
+lockinfo "31032 kB"; mg_read_meminfo; mg_check_locked
+expect "Mlocked parsed after MemAvailable" "$MLOCKED" 31032
+expect "MemAvailable still parsed with Mlocked present" "$MA" 150000
+expect "large VmLck + normal resident locked -> no alert" "$(locked_alerts)" 0
+lockinfo "70000 kB"; mg_read_meminfo; mg_check_locked
+expect "resident locked above 64 MiB -> alert" "$(locked_alerts)" 1
+mg_check_locked
+expect "alert logged once while still high" "$(locked_alerts)" 1
+lockinfo "60000 kB"; mg_read_meminfo; mg_check_locked
+expect "inside the re-arm margin -> still latched" "$MG_LOCKED_ALERTED" 1
+lockinfo "50000 kB"; mg_read_meminfo; mg_check_locked
+expect "below the re-arm margin -> re-armed" "$MG_LOCKED_ALERTED" 0
+lockinfo "70000 kB"; mg_read_meminfo; mg_check_locked
+expect "re-armed alert fires again" "$(locked_alerts)" 2
+lockinfo ""; MG_LOCKED_ALERTED=0; mg_read_meminfo; mg_check_locked; rc=$?
+expect "no Mlocked line -> unknown" "$MLOCKED" ""
+expect "no Mlocked line -> check returns 0" "$rc" 0
+expect "no Mlocked line -> no alert" "$(locked_alerts)" 2
+expect "no Mlocked line -> MemAvailable still parsed" "$MA" 150000
+lockinfo "abc kB"; mg_read_meminfo; mg_check_locked; rc=$?
+expect "malformed Mlocked -> check returns 0" "$rc" 0
+expect "malformed Mlocked -> no alert" "$(locked_alerts)" 2
+lockinfo "-5 kB"; mg_read_meminfo; mg_check_locked; rc=$?
+expect "negative Mlocked -> no alert, rc 0" "$rc:$(locked_alerts)" "0:2"
+( MG_PROC="$WORK/noproc"; mg_read_meminfo 2>/dev/null; mg_check_locked ); rc=$?
+expect "unreadable meminfo -> no crash" "$rc" 0
+# the check reads no per-process file: it must not depend on /proc/<pid> at all
+mv "$MG_PROC/100" "$MG_PROC/100.hidden"
+lockinfo "70000 kB"; MG_LOCKED_ALERTED=0; mg_read_meminfo; mg_check_locked
+expect "alert without any /proc/<pid> access" "$(locked_alerts)" 3
+mv "$MG_PROC/100.hidden" "$MG_PROC/100"
+meminfo 150000
+
 # --- (c) absent PSI reads as zero; present PSI parses ---------------------------
 mg_read_psi; expect "absent PSI: SOME10=0" "$SOME10" 0; expect "absent PSI: FULL10=0" "$FULL10" 0
 mkdir -p "$MG_PROC/pressure"

@@ -40,6 +40,8 @@ MG_TICK="${MG_TICK:-1}"
 MG_SLOW_EVERY=5
 MG_SNAPSHOT_EVERY=60
 MG_MCU_RSS_ALERT_KB=8192
+MG_LOCKED_ALERT_KB=65536
+MG_LOCKED_REARM_KB=8192
 
 # MEM-T14: pressure levels. Thresholds in MiB of MemAvailable; HWDP-MEM-8
 # recalibrates them without code edits. MG_ACTIONS=0 is tracker-only mode.
@@ -93,9 +95,12 @@ mg_now() {
 }
 
 mg_read_meminfo() {
-	MA=0
+	MA=0 MLOCKED=
 	while read -r _k _v _; do
-		case "$_k" in MemAvailable:) MA=$_v; return 0 ;; esac
+		case "$_k" in
+		MemAvailable:) MA=$_v ;;
+		Mlocked:) MLOCKED=$_v; return 0 ;;
+		esac
 	done < "$MG_PROC/meminfo"
 }
 
@@ -213,8 +218,25 @@ mg_check_mcu_rss() {
 	fi
 }
 
+# HWDP-MEM-5 alert on klippy's mlock growth. klippy locks with
+# mlockall(MCL_CURRENT|MCL_FUTURE|MCL_ONFAULT), so its VmLck is the whole
+# locked virtual range (~128 MiB measured) while only faulted-in pages are
+# resident (~30 MiB). The resident figure is /proc/meminfo Mlocked (klippy
+# plus klipper_mcu's ~2 MiB); per-process smaps is not built
+# (PROC_PAGE_MONITOR off). Read from the meminfo pass this tick already did:
+# no extra file, nothing that can block. Unknown or malformed -> no alert.
+mg_check_locked() {
+	case "${MLOCKED:-}" in ""|*[!0-9]*) return 0 ;; esac
+	if [ "$MLOCKED" -gt "$MG_LOCKED_ALERT_KB" ]; then
+		[ "${MG_LOCKED_ALERTED:-0}" = 1 ] || mg_log "ALERT resident locked memory Mlocked ${MLOCKED} kB > ${MG_LOCKED_ALERT_KB} kB (klippy mlock growth?)"
+		MG_LOCKED_ALERTED=1
+	elif [ "$MLOCKED" -lt $((MG_LOCKED_ALERT_KB - MG_LOCKED_REARM_KB)) ]; then
+		MG_LOCKED_ALERTED=0
+	fi
+}
+
 mg_snapshot() {
-	_s="snapshot MA=${MA}kB ZU=$ZU ZL=$ZL SOME10=$SOME10 FULL10=$FULL10 PRINT=$PRINT MAINT=$MAINT state=$STATE"
+	_s="snapshot MA=${MA}kB ML=${MLOCKED:-?}kB ZU=$ZU ZL=$ZL SOME10=$SOME10 FULL10=$FULL10 PRINT=$PRINT MAINT=$MAINT state=$STATE"
 	for _e in klippy.pid moonraker.pid guppyscreen.pid ustreamer.pid; do
 		mg_pid_of "$_e"
 		[ -n "$_p" ] || continue
@@ -433,6 +455,7 @@ mg_tick() {
 		[ "$MAINT" = "$_prev_maint" ] || mg_log "maintenance-active=$MAINT"
 		mg_enforce_adj
 		mg_check_mcu_rss
+		mg_check_locked
 		mg_diskswap_reconcile
 	fi
 	mg_evaluate
