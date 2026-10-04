@@ -71,6 +71,36 @@ _IRQ_RATE = ("a=$(awk '$1==\"9:\"{print $2+$3}' /proc/interrupts); sleep 10; b=$
              "echo \"$c $(awk '{print $14, $15}' $p/stat) $(grep -E 'nr_switches|^policy|^prio' $p/sched 2>/dev/null | tr -s ' \\n' ' ')\";; esac; done; "
              "cat /sys/kernel/debug/usb/13500000.otg/sof_filter 2>/dev/null")
 
+_BOOT_TIMING = (
+    "echo '== uptime'; cat /proc/uptime; echo \"now_epoch=$(date +%s)\"; date; "
+    "echo \"boot_id=$(cat /proc/sys/kernel/random/boot_id)\"; "
+    "echo '== boot-timing-log'; cat /var/run/nebulaos-boot-timing.log 2>/dev/null || echo NO_BOOT_TIMING_LOG; "
+    "echo '== cmdline'; cat /proc/cmdline; echo '== mounts'; cat /proc/mounts; "
+    "echo '== proc-start (field22 ticks, USER_HZ=100)'; "
+    "for p in /proc/[0-9]*; do s=$(cat $p/stat 2>/dev/null) || continue; r=${s##*) }; set -- $r; "
+    "c=$(tr '\\0' ' ' < $p/cmdline 2>/dev/null | cut -c1-120); [ -n \"$c\" ] || c=\"[$(cat $p/comm 2>/dev/null)]\"; "
+    "echo \"${20} ${p#/proc/} $c\"; done | sort -n | head -400; "
+    "echo '== services'; for f in /var/run/*.pid; do pid=$(cat $f 2>/dev/null); "
+    "if [ -n \"$pid\" ] && [ -d /proc/$pid ]; then st=alive; else st=dead; fi; echo \"$(basename $f) $pid $st\"; done; "
+    "echo '== mcu-guard'; cat /run/nebulaos-mcu-guard.state 2>/dev/null; "
+    "echo '== camera-idle'; cat /var/run/nebulaos-camera-idle-state 2>/dev/null; echo; "
+    "echo '== moonraker'; curl -s --max-time 5 http://127.0.0.1:7125/server/info; echo; "
+    "curl -s --max-time 5 'http://127.0.0.1:7125/printer/objects/query?webhooks'; echo; "
+    "echo '== wifi'; iw dev wlan0 link 2>/dev/null | head -8; "
+    "echo '== klippy-log'; grep -nE 'Start printer at|Starting Klippy|Loaded MCU|Configured MCU|Klipper state|Git version' "
+    + KLIPPY_LOG + " 2>/dev/null | tail -30; "
+    "echo '== moonraker-log'; grep -nE 'Starting Moonraker|Klippy Connection Established|Klippy ready|Server Startup|Webcam' "
+    "/opt/printer_data/logs/moonraker.log 2>/dev/null | tail -30; "
+    "echo '== memguard-log'; grep -E 'started \\(pid' /usr/data/nebulaos/logs/memguard.log 2>/dev/null | tail -3; "
+    "echo '== syslog'; head -c 60000 /var/log/messages 2>/dev/null; "
+    "echo '== dmesg'; dmesg | head -c 400000")
+
+_PRESSURE = (
+    "snap(){ echo \"== t=$(cut -d' ' -f1 /proc/uptime)\"; for f in cpu memory io; do echo \"$f: $(tr '\\n' ' ' < /proc/pressure/$f 2>/dev/null)\"; done; "
+    "grep -E '^(cpu[0-9]* |ctxt|procs_running|procs_blocked)' /proc/stat; "
+    "grep -E '^(pgfault|pgmajfault|pswpin|pswpout|allocstall_normal|oom_kill) ' /proc/vmstat; cat /proc/loadavg; }; "
+    "snap; sleep 10; snap")
+
 # name -> (body, needs_diag, probe or None, timeout seconds)
 CAPTURE_PROFILES = {
     # --- TOOL-01 base list ---------------------------------------------------
@@ -168,10 +198,19 @@ CAPTURE_PROFILES = {
                       "for i in 1 2 3 4 5; do hackbench -g 8 -l 2000 | grep Time; done; cyclictest -m -S -p 90 -i 1000 -l 60000 -q",
                       True, None, 600),
     "rt-console": ("echo t > /proc/sysrq-trigger; dmesg | tail -5", True, None, 60),
+    # Boot forensics: everything that dates this boot on the device's own
+    # monotonic clock. Process start times are /proc/<pid>/stat field 22 in
+    # USER_HZ (100) ticks since boot; wall-clock logs convert through
+    # now_epoch - uptime.
+    "boot-timing": (_BOOT_TIMING, False, None, 120),
+    # CPU/memory/IO pressure and scheduler counters over 10 s.
+    "pressure": (_PRESSURE, False, None, 60),
 }
 
 # Defined by the plan as reversible state changes: TOOL-02 `exercise`, never `capture`.
-EXERCISE_ONLY = ("camera-resume", "camera-states", "memexercise", "sof-filter-ab", "storage-autosuspend")
+EXERCISE_ONLY = ("camera-resume", "camera-states", "memexercise", "sof-filter-ab", "storage-autosuspend",
+                 "cpu-load", "camera-viewer", "wifi-load", "usb-storage-io", "ktimers-ab", "ttyflip-ab",
+                 "memexercise-sw100")
 
 
 class CaptureError(Exception):
@@ -298,6 +337,90 @@ EXERCISE_PROFILES = {
 }
 
 
+# --- Final-qualification synthetic loads and runtime A/Bs (2026-10-04) -------
+# Each load runs for LOAD_SECONDS so several can overlap one measurement
+# window; each is bounded and its undo kills what it started.
+LOAD_SECONDS = 420
+_NOW_S = "$(cut -d. -f1 /proc/uptime)"
+_STAT_PID = "s=$(cat /proc/$k/stat 2>/dev/null); r=${s##*) }; set -- $r"   # ${38}=rt_priority ${39}=policy
+
+EXERCISE_PROFILES.update({
+    # L3: one busy loop per CPU at nice 0 (klippy runs at nice -10; RT threads unaffected).
+    "cpu-load": (
+        "N=$(nproc); P=; i=0; while [ $i -lt $N ]; do sh -c 'while :; do :; done' & P=\"$P $!\"; i=$((i + 1)); done; "
+        "echo \"cpu_hogs=$N nice=0 seconds=%d\"; sleep %d; "
+        "echo \"pressure_cpu=$(head -1 /proc/pressure/cpu 2>/dev/null)\"" % (LOAD_SECONDS, LOAD_SECONDS),
+        "[ -n \"${P:-}\" ] && kill $P 2>/dev/null",
+        LOAD_SECONDS + 120),
+    # L1a: a local 1080p30 MJPEG viewer, so ustreamer encodes and the camera streams; samples ustreamer /state.
+    "camera-viewer": (
+        "curl -s --max-time %d -o /dev/null -w 'stream_bytes=%%{size_download} stream_Bps=%%{speed_download} http=%%{http_code}\\n' "
+        "http://127.0.0.1:8080/stream & C=$!; i=0; while [ $i -lt %d ]; do sleep 30; i=$((i + 30)); "
+        "echo \"t=$i state=$(curl -s --max-time 3 http://127.0.0.1:8080/state | tr -d ' \\n' | cut -c1-400)\"; done; "
+        "wait $C; C=" % (LOAD_SECONDS, LOAD_SECONDS - 30),
+        "[ -n \"${C:-}\" ] && kill $C 2>/dev/null",
+        LOAD_SECONDS + 120),
+    # L1b: sustained bidirectional Wi-Fi traffic to the default gateway (4 x 100 pkt/s x 1400 B).
+    "wifi-load": (
+        "GW=$(ip route 2>/dev/null | awk '/^default/{print $3; exit}'); [ -n \"$GW\" ] || { echo NO_GATEWAY; exit 3; }; "
+        "echo \"gateway=$GW\"; P=; for i in 1 2 3 4; do ping -q -s 1400 -i 0.01 -w %d \"$GW\" > $T/ping$i.txt 2>&1 & P=\"$P $!\"; done; "
+        "wait; P=; cat $T/ping*.txt | grep -E 'transmitted|round-trip'; "
+        "grep -E 'wlan0' /proc/net/dev" % LOAD_SECONDS,
+        "[ -n \"${P:-}\" ] && kill $P 2>/dev/null",
+        LOAD_SECONDS + 120),
+    # L2: USB stick. Raw sequential read of the block device, and - only on a
+    # read-write mounted stick - a 32 MiB temporary file written, read back and
+    # deleted, in cycles for LOAD_SECONDS. User files are never touched.
+    "usb-storage-io": (
+        _STORAGE_DEV + "; B=$(ls /sys/$(readlink -f $S | sed 's#^/sys/##')/*/host*/target*/*/block 2>/dev/null | head -1); "
+        "[ -n \"$B\" ] || { echo NO_BLOCK_DEVICE; exit 3; }; "
+        "M=$(awk -v b=\"/dev/$B\" 'index($1,b)==1 && $4 ~ /^rw/ {print $2; exit}' /proc/mounts); "
+        "echo \"device=$S block=$B mount=${M:-none}\"; end=$((" + _NOW_S + " + " + str(LOAD_SECONDS) + ")); n=0; "
+        "while [ " + _NOW_S + " -lt $end ]; do n=$((n + 1)); sync; echo 3 > /proc/sys/vm/drop_caches; "
+        "t0=" + _NOW_MS + "; head -c 67108864 /dev/$B > /dev/null; t1=" + _NOW_MS + "; echo \"cycle=$n raw_read_64MiB_ms=$((t1 - t0))\"; "
+        "if [ -n \"$M\" ]; then F=\"$M/.nebulaos-qual-io.$$\"; t0=" + _NOW_MS + "; head -c 33554432 /dev/zero > \"$F\"; sync; "
+        "t1=" + _NOW_MS + "; echo 3 > /proc/sys/vm/drop_caches; cat \"$F\" > /dev/null; t2=" + _NOW_MS + "; rm -f \"$F\"; F=; "
+        "echo \"cycle=$n write_32MiB_ms=$((t1 - t0)) read_32MiB_ms=$((t2 - t1))\"; fi; done; "
+        "dmesg | tail -30 | grep -iE 'usb|sd |I/O error|reset'",
+        "[ -n \"${F:-}\" ] && rm -f \"$F\"",
+        LOAD_SECONDS + 180),
+    # HWDP-SCHED-1 attribution: timer latency at the shipped ktimers priority
+    # (FIFO 50, IRQ-03) vs the pre-IRQ-03 reference (FIFO 1), 180 s each.
+    # SCHED-01F, the documented fallback, applies FIFO 50 from userspace and so
+    # is identical at runtime; FIFO 1 is the "before" the rule compares with.
+    "ktimers-ab": (
+        "K=; for p in /proc/[0-9]*; do case \"$(cat $p/comm 2>/dev/null)\" in ktimers/*) K=\"$K ${p#/proc/}\";; esac; done; "
+        "[ -n \"$K\" ] || { echo NO_KTIMERS; exit 3; }; O=; for k in $K; do " + _STAT_PID + "; O=\"$O $k:${38}\"; done; "
+        "echo \"ktimers_original=$O\"; "
+        "echo '== arm A: ktimers as shipped'; python3 $T/timerlat.py --prio 49 --period-us 1250 --seconds 180 --out $T/a.json; "
+        "for k in $K; do chrt -f -p 1 $k; done; "
+        "for k in $K; do " + _STAT_PID + "; echo \"ktimers $k now FIFO ${38}\"; done; "
+        "echo '== arm B: ktimers FIFO 1 (pre-IRQ-03 reference)'; python3 $T/timerlat.py --prio 49 --period-us 1250 --seconds 180 --out $T/b.json",
+        "for e in ${O:-}; do chrt -f -p ${e#*:} ${e%%:*}; done; "
+        "for e in ${O:-}; do k=${e%%:*}; " + _STAT_PID + "; echo \"ktimers $k restored FIFO ${38}\"; done",
+        600),
+    # HWDP-SCHED-3: pty round trip with tty_flip at its shipped nice -20 vs
+    # nice 0 (the policy-only fallback = system_unbound_wq priority), 180 s each.
+    "ttyflip-ab": (
+        "W=/sys/devices/virtual/workqueue/tty_flip/nice; [ -w $W ] || { echo NO_TTY_FLIP_WQ; exit 3; }; N0=$(cat $W); "
+        "echo \"tty_flip_nice_original=$N0\"; "
+        "echo '== arm A: tty_flip as shipped'; nice -n -10 python3 $T/ptyrtt.py --period-ms 10 --bytes 16 --seconds 180 --out $T/a.json; "
+        "echo 0 > $W; echo \"tty_flip_nice_now=$(cat $W)\"; "
+        "echo '== arm B: tty_flip nice 0 (policy-only fallback)'; nice -n -10 python3 $T/ptyrtt.py --period-ms 10 --bytes 16 --seconds 180 --out $T/b.json",
+        "[ -n \"${N0:-}\" ] && echo $N0 > $W; echo \"tty_flip_nice_restored=$(cat $W 2>/dev/null)\"",
+        600),
+})
+# HWDP-MEM-6: the same memory ramp at swappiness 100 (MEM-T11 ships 60).
+EXERCISE_PROFILES["memexercise-sw100"] = (
+    "S0=$(cat /proc/sys/vm/swappiness); echo 100 > /proc/sys/vm/swappiness; "
+    "echo \"swappiness=$(cat /proc/sys/vm/swappiness) (was $S0)\"; " + EXERCISE_PROFILES["memexercise"][0],
+    EXERCISE_PROFILES["memexercise"][1] + "; [ -n \"${S0:-}\" ] && echo $S0 > /proc/sys/vm/swappiness",
+    EXERCISE_PROFILES["memexercise"][2])
+
+# Exercises that embed a tracked hwcap probe, the same way captures do.
+EXERCISE_PROBES = {"ktimers-ab": ("timerlat.py",), "ttyflip-ab": ("ptyrtt.py",)}
+
+
 def exercise_script(name):
     """-> (shell text, timeout) for one exercise NAME. Raises CaptureError."""
     if name not in EXERCISE_PROFILES:
@@ -311,5 +434,7 @@ def exercise_script(name):
          "trap nebulaos_undo EXIT; trap 'exit 130' INT TERM; "
          "printf 'EXERCISE_PROFILE=%s\\nSTART_UTC=%%s\\n' \"$(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ)\"; "
          % (undo, name))
+    for probe in EXERCISE_PROBES.get(name, ()):
+        s += "cat > \"$T/%s\" <<'NEBULAOS_PROBE_EOF'\n%s\nNEBULAOS_PROBE_EOF\n" % (probe, _probe_source(probe))
     s += "%s; printf '\\nEND_UTC=%%s\\n' \"$(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ)\"" % body
     return s, timeout
