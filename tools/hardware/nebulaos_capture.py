@@ -27,8 +27,11 @@ import os
 FW_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 HWCAP_DIR = os.path.join(FW_ROOT, "tools", "hwcap")
 
-PROBES = ("schedsnap.py", "timerlat.py", "ptyrtt.py", "kduty.py", "adxl_overflows.py", "qualmcu.py",
-          "klipper-dict-board.json", "klipper-dict-host.json")
+PROBES = ("schedsnap.py", "timerlat.py", "ptyrtt.py", "kduty.py", "adxl_overflows.py", "qualmcu.py")
+# Pinned data files embedded compressed (dropbear refuses a command longer than
+# MAX_CMD_LEN = 9000 bytes, so a whole profile must stay under SCRIPT_LIMIT).
+DATA_FILES = ("klipper-dict-board.json",)
+SCRIPT_LIMIT = 8800
 
 # Logs live under /opt/printer_data/logs (bind-mounted from /usr/data).
 KLIPPY_LOG = "/opt/printer_data/logs/klippy.log"
@@ -224,6 +227,18 @@ EXERCISE_ONLY = ("camera-resume", "camera-states", "memexercise", "sof-filter-ab
 
 class CaptureError(Exception):
     pass
+
+
+def _data_b64(name):
+    """A pinned tools/hwcap data file as minified, zlib-compressed base64."""
+    import base64
+    import json
+    import zlib
+    if name not in DATA_FILES:
+        raise CaptureError("unknown data file %r" % name)
+    with open(os.path.join(HWCAP_DIR, name), encoding="utf-8") as fh:
+        raw = json.dumps(json.load(fh), separators=(",", ":")).encode()
+    return base64.b64encode(zlib.compress(raw, 9)).decode()
 
 
 def _probe_source(name):
@@ -492,17 +507,23 @@ EXERCISE_PROFILES.update({
         "| while read f; do echo \"$(wc -c < \"$f\") $f\"; done | sort -n | tail -1 | cut -d' ' -f2-); "
         "[ -n \"$G\" ] || { echo NO_GCODE_FILE; exit 3; }; "
         "echo \"gcode=$G bytes=$(wc -c < \"$G\") lines=$(wc -l < \"$G\")\"; "
+        "echo '" + _data_b64("klipper-dict-board.json") + "' | python3 -c \"import sys,zlib,base64;"
+        "open(sys.argv[1],'wb').write(zlib.decompress(base64.b64decode(sys.stdin.read())))\" $T/board.json; "
+        "python3 -c \"import sys,zlib,json\nd=open('/usr/bin/klipper_mcu','rb').read()\nfor i in range(len(d)-1):\n"
+        " if d[i]==0x78 and d[i+1] in (1,0x5e,0x9c,0xda):\n  try: j=zlib.decompressobj().decompress(d[i:i+65536]);json.loads(j)\n"
+        "  except Exception: continue\n  open(sys.argv[1],'wb').write(j);break\" $T/host.json; "
+        "echo \"dicts: board=$(wc -c < $T/board.json) host=$(wc -c < $T/host.json)\"; "
         "PY=/usr/bin/python3; [ -x /usr/data/nebulaos/envs/klipper/bin/python3 ] && PY=/usr/data/nebulaos/envs/klipper/bin/python3; "
         "echo \"before: $(cat /proc/loadavg) cpu_psi=$(head -1 /proc/pressure/cpu)\"; "
         "python3 -c \"import resource,subprocess,sys,time;t=time.monotonic();rc=subprocess.call(sys.argv[1:]);"
         "w=time.monotonic()-t;u=resource.getrusage(resource.RUSAGE_CHILDREN);"
         "print('BATCH rc=%d wall_s=%.1f user_s=%.1f sys_s=%.1f maxrss_kb=%d'%(rc,w,u.ru_utime,u.ru_stime,u.ru_maxrss))\" "
         "timeout 1200 $PY /opt/klipper/klippy/klippy.py $T/batch.cfg -i \"$G\" -o /dev/null "
-        "-d $T/klipper-dict-board.json -d rpi=$T/klipper-dict-host.json -l $T/batch.log; "
+        "-d $T/board.json -d rpi=$T/host.json -l $T/batch.log; "
         "echo \"after: $(cat /proc/loadavg) cpu_psi=$(head -1 /proc/pressure/cpu)\"; "
         "echo \"unknown_commands=$(grep -c 'Unknown command' $T/batch.log) errors=$(grep -c '^!!' $T/batch.log)\"; "
         "grep -m5 'Unknown command' $T/batch.log; grep -E 'Exiting|print time|Traceback|Error' $T/batch.log | tail -10; "
-        "tail -5 $T/batch.log; " + _RT_SPLAT,
+        "tail -5 $T/batch.log",
         ":",
         1500),
     # Boot forensics: the cost of the checks S04/S05 repeat on every normal
@@ -534,8 +555,7 @@ EXERCISE_PROFILES.update({
 
 # Exercises that embed a tracked hwcap probe, the same way captures do.
 EXERCISE_PROBES = {"ktimers-ab": ("timerlat.py",), "ttyflip-ab": ("ptyrtt.py",),
-                   "uart-fe-probe": ("qualmcu.py",), "mcu-link-bench": ("qualmcu.py",),
-                   "klippy-batch": ("klipper-dict-board.json", "klipper-dict-host.json")}
+                   "uart-fe-probe": ("qualmcu.py",), "mcu-link-bench": ("qualmcu.py",)}
 
 
 def exercise_script(name):
@@ -554,4 +574,6 @@ def exercise_script(name):
     for probe in EXERCISE_PROBES.get(name, ()):
         s += "cat > \"$T/%s\" <<'NEBULAOS_PROBE_EOF'\n%s\nNEBULAOS_PROBE_EOF\n" % (probe, _probe_source(probe))
     s += "%s; printf '\\nEND_UTC=%%s\\n' \"$(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ)\"" % body
+    if len(s) > SCRIPT_LIMIT:
+        raise CaptureError("exercise %s is %d bytes, over the %d-byte command limit" % (name, len(s), SCRIPT_LIMIT))
     return s, timeout

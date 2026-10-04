@@ -38,7 +38,6 @@ HOST=(
   tools/hardware/nebulaos_verify.py
   tools/hwcap/adxl_overflows.py
   tools/hwcap/klipper-dict-board.json
-  tools/hwcap/klipper-dict-host.json
   tools/hwcap/kduty.py
   tools/hwcap/ptyrtt.py
   tools/hwcap/qualmcu.py
