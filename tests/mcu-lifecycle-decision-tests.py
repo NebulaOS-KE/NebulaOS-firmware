@@ -503,6 +503,192 @@ class RealCrealityFlashImportTests(unittest.TestCase):
         self.assertEqual(decision.hw_id_status, "UNREACHABLE")
 
 
+class _ClosingTransport(FakeTransport):
+    def __init__(self):
+        self.closed = 0
+
+    def close(self):
+        self.closed += 1
+
+
+class _CountingFactory:
+    def __init__(self, exc=None):
+        self.calls = 0
+        self.exc = exc
+        self.transports = []
+
+    def __call__(self):
+        self.calls += 1
+        if self.exc:
+            raise self.exc
+        t = _ClosingTransport()
+        self.transports.append(t)
+        return t
+
+
+class HardwareFallbackTests(unittest.TestCase):
+    """The pyserial fallback path (_check_hardware_identity), ke-dev
+    2026-10-03: primary identify timed out and the fallback crashed on
+    pyserial 3.5's "unexpected keyword arguments: {'dtr', 'rts'}"."""
+
+    def test_primary_success_fallback_not_used(self):
+        f = _CountingFactory()
+        d = lifecycle.decide(
+            creality_flash_module=FakeCrealityFlash(), transport_factory=f,
+            application_identify_fn=make_identify_fn(NATIVE_VERSION))
+        self.assertEqual(d.hw_id_status, "not_checked_not_needed")
+        self.assertEqual(f.calls, 0)
+
+    def test_primary_failure_runs_fallback_and_closes(self):
+        f = _CountingFactory()
+        cf = FakeCrealityFlash()
+        d = lifecycle.decide(
+            creality_flash_module=cf, transport_factory=f,
+            application_identify_fn=make_identify_fn(None, should_fail=True))
+        self.assertEqual(f.calls, 1)
+        self.assertEqual(d.hw_id_status, "MATCH")
+        self.assertEqual(cf.app_start_calls, 1)
+        self.assertEqual(f.transports[0].closed, 1)
+
+    def test_fallback_timeout_is_clean_failure(self):
+        f = _CountingFactory()
+        d = lifecycle.decide(
+            creality_flash_module=FakeCrealityFlash(bootloader_reachable=False),
+            transport_factory=f,
+            application_identify_fn=make_identify_fn(None, should_fail=True))
+        self.assertEqual(d.state, lifecycle.MCU_UNREACHABLE)
+        self.assertEqual(d.hw_id_status, "UNREACHABLE")
+        self.assertIn("bootloader_entry_failed", d.detail)
+        self.assertEqual(f.transports[0].closed, 1)
+
+    def test_fallback_unexpected_error_is_clean_failure(self):
+        class _Raising(FakeCrealityFlash):
+            def identify(self, transport):
+                raise OSError("simulated SerialTimeoutException: Write timeout")
+        f = _CountingFactory()
+        d = lifecycle.decide(
+            creality_flash_module=_Raising(), transport_factory=f,
+            application_identify_fn=make_identify_fn(None, should_fail=True))
+        self.assertEqual(d.hw_id_status, "UNREACHABLE")
+        self.assertIn("unexpected_error", d.detail)
+        self.assertEqual(f.transports[0].closed, 1)
+
+    def test_identity_mismatch_still_blocks(self):
+        f = _CountingFactory()
+        d = lifecycle.decide(
+            creality_flash_module=FakeCrealityFlash(hw_id=BAD_HW_ID),
+            transport_factory=f,
+            application_identify_fn=make_identify_fn(None, should_fail=True))
+        self.assertEqual(d.state, lifecycle.UNSUPPORTED_HW)
+        self.assertEqual(d.action, lifecycle.BLOCK_KLIPPER_START)
+        self.assertEqual(f.transports[0].closed, 1)
+
+    def test_open_failure_reports_exact_reason(self):
+        f = _CountingFactory(exc=ValueError("unexpected keyword arguments: {'dtr': False}"))
+        d = lifecycle.decide(
+            creality_flash_module=FakeCrealityFlash(), transport_factory=f,
+            application_identify_fn=make_identify_fn(None, should_fail=True))
+        self.assertEqual(d.hw_id_status, "UNREACHABLE")
+        self.assertIn("serial_open_failed: unexpected keyword arguments", d.detail)
+
+    def test_close_failure_does_not_mask_the_result(self):
+        class _BadClose(_ClosingTransport):
+            def close(self):
+                raise OSError("close failed")
+        d = lifecycle.decide(
+            creality_flash_module=FakeCrealityFlash(), transport_factory=_BadClose,
+            application_identify_fn=make_identify_fn(None, should_fail=True))
+        self.assertEqual(d.hw_id_status, "MATCH")
+
+
+TOOLS_DIR = os.path.abspath(os.path.join(
+    os.path.dirname(__file__), "..", "scripts", "build", "overlay", "opt", "nebulaos", "tools"))
+
+
+class _Pyserial35:
+    """The parts of pyserial 3.5's serial.Serial that SerialTransport uses,
+    including its refusal of constructor keywords it does not know."""
+    instances = []
+    KNOWN = {"port", "baudrate", "bytesize", "parity", "stopbits", "timeout",
+             "xonxoff", "rtscts", "write_timeout", "dsrdtr", "inter_byte_timeout",
+             "exclusive"}
+
+    def __init__(self, port=None, **kwargs):
+        unknown = {k: v for k, v in kwargs.items() if k not in self.KNOWN}
+        if unknown:
+            raise ValueError("unexpected keyword arguments: {!r}".format(unknown))
+        self.events = [("init", port, dict(kwargs))]
+        self.port, self.is_open = port, port is not None
+        _Pyserial35.instances.append(self)
+
+    def __setattr__(self, k, v):
+        if k in ("dtr", "rts", "port", "baudrate", "timeout", "write_timeout"):
+            self.__dict__.setdefault("events", []).append(("set", k, v, self.__dict__.get("is_open")))
+        object.__setattr__(self, k, v)
+
+    def open(self):
+        self.events.append(("open",))
+        self.is_open = True
+
+    def close(self):
+        self.events.append(("close",))
+        self.is_open = False
+
+
+class SerialTransportApiTests(unittest.TestCase):
+    def _load(self, fake_serial):
+        import types
+        mod = types.ModuleType("serial")
+        mod.Serial = fake_serial
+        self._saved = sys.modules.get("serial")
+        sys.modules["serial"] = mod
+        sys.path.insert(0, TOOLS_DIR)
+        sys.modules.pop("creality_flash", None)
+        import creality_flash
+        return creality_flash
+
+    def tearDown(self):
+        if getattr(self, "_saved", None) is not None:
+            sys.modules["serial"] = self._saved
+        else:
+            sys.modules.pop("serial", None)
+        sys.modules.pop("creality_flash", None)
+        if TOOLS_DIR in sys.path:
+            sys.path.remove(TOOLS_DIR)
+
+    def test_opens_with_pyserial_35_api(self):
+        _Pyserial35.instances = []
+        cf = self._load(_Pyserial35)
+        t = cf.SerialTransport("/dev/ttyS1", 230400, timeout=2.0)
+        s = _Pyserial35.instances[-1]
+        init = s.events[0]
+        self.assertIsNone(init[1], "the port must not be opened by the constructor")
+        self.assertNotIn("dtr", init[2])
+        self.assertNotIn("rts", init[2])
+        sets = {e[1]: (e[2], e[3]) for e in s.events if e[0] == "set"}
+        self.assertEqual(sets["dtr"], (False, False), "DTR set low before open()")
+        self.assertEqual(sets["rts"], (False, False), "RTS set low before open()")
+        self.assertEqual(sets["timeout"][0], 2.0)
+        self.assertEqual(sets["write_timeout"][0], 2.0, "writes are bounded too")
+        self.assertEqual(sets["baudrate"][0], 230400)
+        self.assertIn(("open",), s.events)
+        t.close()
+        self.assertEqual(s.events[-1], ("close",))
+
+    def test_real_pyserial_rejects_nothing_we_pass(self):
+        try:
+            import serial as real
+        except ImportError:
+            self.skipTest("pyserial not installed on this host")
+        if not hasattr(real, "SerialException"):
+            self.skipTest("not the real pyserial")
+        sys.path.insert(0, TOOLS_DIR)
+        sys.modules.pop("creality_flash", None)
+        import creality_flash
+        with self.assertRaises(real.SerialException):
+            creality_flash.SerialTransport("/nonexistent/nebulaos-tty", 230400, timeout=0.1)
+
+
 class ClassificationTests(unittest.TestCase):
     def test_exact_match_only_no_prefix_guessing(self):
         """A string that merely starts with the known-stock value must NOT

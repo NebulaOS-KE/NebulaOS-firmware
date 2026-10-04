@@ -110,7 +110,18 @@ def _check_hardware_identity(creality_flash_module, transport_factory):
         transport = transport_factory()
     except Exception as e:
         return "UNREACHABLE", None, f"serial_open_failed: {e}"
+    # The port is released on every path: S55klipper opens it exclusively
+    # right after this guard.
+    try:
+        return _hardware_identity_on(creality_flash_module, transport)
+    finally:
+        try:
+            transport.close()
+        except Exception:
+            pass
 
+
+def _hardware_identity_on(creality_flash_module, transport):
     version_string = None
     bootloader_entered = False
     try:

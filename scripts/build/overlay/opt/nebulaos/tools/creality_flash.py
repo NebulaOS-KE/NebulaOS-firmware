@@ -64,6 +64,8 @@ class Transport:
         raise NotImplementedError
     def set_baudrate(self, baud: int):
         raise NotImplementedError
+    def close(self):
+        pass
 
 
 class SerialTransport(Transport):
@@ -78,11 +80,25 @@ class SerialTransport(Transport):
         # boards that wire a reset/bootloader-entry pin to one of those
         # lines (this project's own Klipper serialhdl.py uses exactly that
         # DTR-toggle technique deliberately elsewhere, over this same
-        # class of port). Passing dtr=False/rts=False here makes pyserial
-        # set those lines low BEFORE the OS-level open, instead of leaving
-        # them at whatever the driver defaults to.
-        self._serial = serial.Serial(
-            port, baudrate=baud, timeout=timeout, dtr=False, rts=False)
+        # class of port).
+        #
+        # pyserial 3.5 has no dtr=/rts= constructor arguments: Serial(...,
+        # dtr=False, rts=False) raises "ValueError: unexpected keyword
+        # arguments", so the MCU guard's hardware-identity fallback could
+        # never open the port (seen on ke-dev, 2026-10-03). The supported
+        # sequence is an unopened Serial with the line states set as
+        # attributes; open() then drives DTR/RTS low right after the
+        # OS-level open. write_timeout bounds a stuck write the same way
+        # timeout bounds a read.
+        s = serial.Serial()
+        s.port = port
+        s.baudrate = baud
+        s.timeout = timeout
+        s.write_timeout = timeout
+        s.dtr = False
+        s.rts = False
+        s.open()
+        self._serial = s
 
     def write(self, data: bytes) -> int:
         return self._serial.write(data)
@@ -92,6 +108,9 @@ class SerialTransport(Transport):
 
     def set_baudrate(self, baud: int):
         self._serial.baudrate = baud
+
+    def close(self):
+        self._serial.close()
 
 
 # ---------------------------------------------------------------------
