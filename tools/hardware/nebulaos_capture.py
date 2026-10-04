@@ -490,7 +490,8 @@ EXERCISE_PROFILES.update({
         480),
     # L5: Klipper host batch mode on the printer's own machine definition
     # (power-loss recovery and accelerometer sections left out, so nothing is
-    # written outside $T), fed the largest stored G-code file, output discarded.
+    # written outside $T), fed the first 300k lines of the largest stored G-code
+    # file (the USB stick included, read only), output discarded.
     # Host processing only: batch mode never opens an MCU port.
     "klippy-batch": (
         "Q=$(wget -q -T 3 -O - 'http://127.0.0.1:7125/printer/objects/query?print_stats=state' 2>/dev/null); "
@@ -503,10 +504,11 @@ EXERCISE_PROFILES.update({
         " if keep: out.append(l)\n"
         "open(sys.argv[2],'w').write(''.join(out))\" $M $T/batch.cfg; "
         "echo \"config=$M sections=$(grep -c '^\\[' $T/batch.cfg)\"; "
-        "G=$(find /opt/printer_data/gcodes -path '*/USB' -prune -o -name '*.gcode' -type f -print 2>/dev/null "
+        "G=$(find /opt/printer_data/gcodes -name '*.gcode' -type f 2>/dev/null "
         "| while read f; do echo \"$(wc -c < \"$f\") $f\"; done | sort -n | tail -1 | cut -d' ' -f2-); "
         "[ -n \"$G\" ] || { echo NO_GCODE_FILE; exit 3; }; "
-        "echo \"gcode=$G bytes=$(wc -c < \"$G\") lines=$(wc -l < \"$G\")\"; "
+        "echo \"gcode=$G bytes=$(wc -c < \"$G\") lines=$(wc -l < \"$G\") used_lines=300000\"; mkfifo $T/in.gcode; "
+        "head -n 300000 \"$G\" > $T/in.gcode & "
         "echo '" + _data_b64("klipper-dict-board.json") + "' | python3 -c \"import sys,zlib,base64;"
         "open(sys.argv[1],'wb').write(zlib.decompress(base64.b64decode(sys.stdin.read())))\" $T/board.json; "
         "python3 -c \"import sys,zlib,json\nd=open('/usr/bin/klipper_mcu','rb').read()\nfor i in range(len(d)-1):\n"
@@ -518,8 +520,8 @@ EXERCISE_PROFILES.update({
         "python3 -c \"import resource,subprocess,sys,time;t=time.monotonic();rc=subprocess.call(sys.argv[1:]);"
         "w=time.monotonic()-t;u=resource.getrusage(resource.RUSAGE_CHILDREN);"
         "print('BATCH rc=%d wall_s=%.1f user_s=%.1f sys_s=%.1f maxrss_kb=%d'%(rc,w,u.ru_utime,u.ru_stime,u.ru_maxrss))\" "
-        "timeout 1200 $PY /opt/klipper/klippy/klippy.py $T/batch.cfg -i \"$G\" -o /dev/null "
-        "-d $T/board.json -d rpi=$T/host.json -l $T/batch.log; "
+        "timeout 1200 $PY /opt/klipper/klippy/klippy.py $T/batch.cfg -i /dev/stdin -o /dev/null "
+        "-d $T/board.json -d rpi=$T/host.json -l $T/batch.log < $T/in.gcode; "
         "echo \"after: $(cat /proc/loadavg) cpu_psi=$(head -1 /proc/pressure/cpu)\"; "
         "echo \"unknown_commands=$(grep -c 'Unknown command' $T/batch.log) errors=$(grep -c '^!!' $T/batch.log)\"; "
         "grep -m5 'Unknown command' $T/batch.log; grep -E 'Exiting|print time|Traceback|Error' $T/batch.log | tail -10; "
