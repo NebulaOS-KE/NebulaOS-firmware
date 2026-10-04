@@ -13,10 +13,12 @@
 # can never take down the already-hardware-proven crash-recovery S50webcam
 # provides.
 #
-# Default state (C0): DISABLED. Every build ships with the camera always
-# active, exactly as it is today, until an explicit maintenance marker
-# opts into C2. This file being present in the image changes nothing by
-# itself.
+# Default state: C2 (idle pause ON). The 2026-10-03 hardware session on
+# 6.6.157-rt79 measured that a paused camera lets the camera, hub and root
+# port all runtime-suspend (USB interrupts 0/s, no disconnect, VBUS kept)
+# and that the first frame after resume arrives in 1.26 s (limit 10 s,
+# HWDP-DWC-6), so CAM-04 is enabled. Writing C0 to the maintenance marker
+# opts out and keeps the camera always active.
 #
 # Viewer-activity signal: rather than depend on a live client-count query
 # from ustreamer (unconfirmed to exist from source - see the source
@@ -54,10 +56,17 @@ NEBULAOS_CAMERA_IDLE_RESUME_RETRIES="${NEBULAOS_CAMERA_IDLE_RESUME_RETRIES:-5}"
 NEBULAOS_CAMERA_IDLE_RESUME_BACKOFF_BASE="${NEBULAOS_CAMERA_IDLE_RESUME_BACKOFF_BASE:-1}"
 NEBULAOS_CAMERA_IDLE_STATE_FILE="${NEBULAOS_CAMERA_IDLE_STATE_FILE:-/var/run/nebulaos-camera-idle-state}"
 
-# Prints "C2" if the marker requests it, "C0" (default, disabled)
-# otherwise - fails safe to disabled on any unrecognized marker content.
+# Prints the requested mode. No marker -> "C2" (the default since the
+# 2026-10-03 hardware session, HWDP-DWC-4/6). A marker containing "C0"
+# opts out, "C2" opts in explicitly; any other content, or a marker path
+# that exists but cannot be read as a file, fails safe to "C0" (camera
+# always active).
 nebulaos_camera_idle_requested_mode() {
 	marker="${1:-$NEBULAOS_CAMERA_IDLE_MARKER}"
+	if [ ! -e "$marker" ]; then
+		printf 'C2'
+		return 0
+	fi
 	if [ -f "$marker" ] && [ "$(cat "$marker" 2>/dev/null)" = "C2" ]; then
 		printf 'C2'
 	else

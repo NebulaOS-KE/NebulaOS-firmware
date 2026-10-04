@@ -65,11 +65,20 @@ reset_curl_log() { : > "$FAKE_CURL_LOG"; echo "200" > "$FAKE_CURL_CODE_FILE"; }
 # Mode marker parsing
 # ============================================================
 
-# --- no marker -> C0 (disabled, the default). ---
+# --- no marker -> C2 (idle pause ON, the default since HWDP-DWC-4/6). ---
 mode=$(nebulaos_camera_idle_requested_mode "$WORK/marker-absent")
-[ "$mode" = "C0" ] && pass || fail "no marker produced '$mode', expected C0"
+[ "$mode" = "C2" ] && pass || fail "no marker produced '$mode', expected C2 (default on)"
 
-# --- marker containing C2 -> C2 (enabled). ---
+# --- fresh image: the shipped default marker path is absent -> C2. ---
+mode=$(NEBULAOS_CAMERA_IDLE_MARKER="$WORK/fresh/maintenance/camera-idle-mode" nebulaos_camera_idle_requested_mode)
+[ "$mode" = "C2" ] && pass || fail "fresh image (no marker at the default path) produced '$mode', expected C2"
+
+# --- marker containing C0 -> C0 (explicit opt-out). ---
+printf 'C0\n' > "$WORK/marker-c0"
+mode=$(nebulaos_camera_idle_requested_mode "$WORK/marker-c0")
+[ "$mode" = "C0" ] && pass || fail "a C0 marker produced '$mode', expected C0 (opt-out)"
+
+# --- marker containing C2 -> C2 (explicit opt-in still honoured). ---
 printf 'C2\n' > "$WORK/marker-c2"
 mode=$(nebulaos_camera_idle_requested_mode "$WORK/marker-c2")
 [ "$mode" = "C2" ] && pass || fail "a C2 marker produced '$mode', expected C2"
@@ -78,6 +87,51 @@ mode=$(nebulaos_camera_idle_requested_mode "$WORK/marker-c2")
 printf 'banana\n' > "$WORK/marker-garbage"
 mode=$(nebulaos_camera_idle_requested_mode "$WORK/marker-garbage")
 [ "$mode" = "C0" ] && pass || fail "a garbage marker produced '$mode', expected C0 (fail-safe)"
+
+# --- empty marker file fails safe to C0. ---
+: > "$WORK/marker-empty"
+mode=$(nebulaos_camera_idle_requested_mode "$WORK/marker-empty")
+[ "$mode" = "C0" ] && pass || fail "an empty marker produced '$mode', expected C0 (fail-safe)"
+
+# --- a marker path that exists but is not a readable file fails safe to C0. ---
+mkdir -p "$WORK/marker-dir"
+mode=$(nebulaos_camera_idle_requested_mode "$WORK/marker-dir")
+[ "$mode" = "C0" ] && pass || fail "a directory at the marker path produced '$mode', expected C0 (fail-safe)"
+
+# --- S51 init script: default starts the controller, C0 does not, stop resumes. ---
+S51="$SCRIPT_DIR/../scripts/build/overlay/etc/init.d/S51nebulaos-camera-idle-controller"
+SSD_LOG="$WORK/ssd.log"
+cat > "$FAKE_BIN/start-stop-daemon" <<'EOF'
+#!/bin/sh
+echo "ssd $*" >> "$SSD_LOG"
+exit 0
+EOF
+chmod +x "$FAKE_BIN/start-stop-daemon"
+export SSD_LOG
+run_s51() { # marker action
+	( NEBULAOS_CAMERA_IDLE_MARKER="$1"; set -- "$2"; . "$S51" ) >/dev/null 2>&1
+}
+: > "$SSD_LOG"; reset_curl_log
+run_s51 "$WORK/marker-absent" start
+grep -q '^ssd -S .* __run' "$SSD_LOG" && pass || fail "S51 start with no marker did not launch the controller"
+: > "$SSD_LOG"
+run_s51 "$WORK/marker-c0" start
+[ ! -s "$SSD_LOG" ] && pass || fail "S51 start with a C0 marker launched the controller"
+: > "$SSD_LOG"; reset_curl_log
+run_s51 "$WORK/marker-absent" restart
+if grep -q '^ssd -K' "$SSD_LOG" && grep -q '^ssd -S .* __run' "$SSD_LOG" && grep -q '/resume' "$FAKE_CURL_LOG"; then
+	pass
+else
+	fail "S51 restart must stop (with a resume) and start the controller again"
+fi
+reset_curl_log
+
+# --- no camera-idle code path opens the video node to detect the camera. ---
+if grep -v '^[[:space:]]*#' "$LIB" "$S51" | grep -q '/dev/video'; then
+	fail "camera idle controller references /dev/video* outside comments"
+else
+	pass
+fi
 
 # ============================================================
 # Connection detection (/proc/net/tcp parsing)
