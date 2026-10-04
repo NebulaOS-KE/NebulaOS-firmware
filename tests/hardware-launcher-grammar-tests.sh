@@ -105,6 +105,9 @@ accept "inspect"  --device p1 --control "$SHA" inspect
 accept "status"   --device p1 --control "$SHA" status
 accept "verify"   --device p1 --control "$SHA" verify  "$SHA" "$S256" "$S256"
 accept "install"  --device p1 --control "$SHA" install "$SHA" "$S256" "$S256"
+accept "reboot back into NebulaOS (confirmed)" --device p1 --control "$SHA" reboot REBOOT_CONFIRM=NEBULAOS
+refuse "reboot confirming another target"     --device p1 --control "$SHA" reboot REBOOT_CONFIRM=STOCK
+refuse "reboot with an extra argument"        --device p1 --control "$SHA" reboot REBOOT_CONFIRM=NEBULAOS now
 accept "a device id using the full permitted character set" \
         --device printer_01-a --control "$SHA" status
 

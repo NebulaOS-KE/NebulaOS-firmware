@@ -33,11 +33,13 @@
 #   run-nebulaos-hardware.sh --device <id> --control <C> exercise <profile> [EXERCISE_CONFIRM=<profile>]
 #                                          (without the confirmation word, confirm on stdin)
 #   run-nebulaos-hardware.sh --device <id> --control <C> restart <service>
+#   run-nebulaos-hardware.sh --device <id> --control <C> reboot REBOOT_CONFIRM=NEBULAOS
 #   run-nebulaos-hardware.sh --device <id> --control <C> verify  <X> <ximage-sha256> <rootfs-sha256>
 #   run-nebulaos-hardware.sh --device <id> --control <C> install <X> <ximage-sha256> <rootfs-sha256>
 #
-# There is no --host, --password, --command, ssh, scp, dd, marker, reboot, flash
-# or raw usbboot - not filtered, absent. The target is an ENROLLED DEVICE ID, not
+# There is no --host, --password, --command, ssh, scp, dd, marker, flash or raw
+# usbboot - not filtered, absent. `reboot` only returns an idle NebulaOS to
+# NebulaOS; it writes nothing. The target is an ENROLLED DEVICE ID, not
 # an address: an address is not an identity, DHCP moves leases, and the machine
 # answering at a remembered IP may be a different one. Which addresses may be
 # spoken to at all is a property of the human-created device profile.
@@ -148,13 +150,18 @@ case "$OP" in
     case "$2" in
       ""|-*|*[!a-z0-9-]*) die "unknown $OP profile '$2'" ;;
     esac ;;
+  reboot)
+    # Software reboot of an idle NebulaOS back into NebulaOS (boot timing).
+    # The agent refuses unless the OTA marker already selects NebulaOS.
+    [ "$#" -eq 2 ] && [ "$2" = "REBOOT_CONFIRM=NEBULAOS" ] \
+      || die "'reboot' requires exactly the confirmation word REBOOT_CONFIRM=NEBULAOS" ;;
   verify|install)
     [ "$#" -eq 4 ] || die "'$OP' requires <source-head> <ximage-sha256> <rootfs-sha256>"
     is_hex "$2" 40 || die "source-head must be a full 40-character lowercase hex SHA"
     is_hex "$3" 64 || die "ximage-sha256 must be 64 lowercase hex characters"
     is_hex "$4" 64 || die "rootfs-sha256 must be 64 lowercase hex characters" ;;
-  *) die "unknown operation '${OP:-}'. The Hardware Agent has exactly eight:
-       inspect  status  diagnose  capture  exercise  restart  verify  install
+  *) die "unknown operation '${OP:-}'. The Hardware Agent has exactly nine:
+       inspect  status  diagnose  capture  exercise  restart  reboot  verify  install
        Motion, heating, extrusion, calibration and MCU flashing are Part 2 and have no
        operation here." ;;
 esac

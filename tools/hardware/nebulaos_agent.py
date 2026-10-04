@@ -11,8 +11,10 @@ THE PUBLIC INTERFACE IS SEMANTIC
     restart   repair: restart ONE named service with the update supervisor's
               semantics (see nebulaos_device.restart_script)
     install   the developer install, NebulaOS -> Stock -> flash -> NebulaOS
+    reboot    software reboot of an idle NebulaOS back into NebulaOS, for
+              boot timing; refused unless the marker already selects NebulaOS
 
-There is no ssh, scp, dd, marker, reboot, flash, raw usbboot, --host, --password
+There is no ssh, scp, dd, marker, raw reboot, flash, raw usbboot, --host, --password
 or --command. Not because they are filtered - because no such operation exists
 here to name. The device is reached only through DeviceSession, whose vocabulary
 is closed, and the target is chosen only by enrolled device id.
@@ -477,6 +479,80 @@ def op_exercise(args):
     return 0
 
 
+REBOOT_CONFIRM_WORD = "REBOOT_CONFIRM=NEBULAOS"
+REBOOT_BACK_TIMEOUT = 300
+
+
+def op_reboot(args):
+    """A software reboot of a running NebulaOS printer back into NebulaOS, for
+    boot-time measurement. No partition or marker write: it refuses unless the
+    OTA marker already selects the NebulaOS slot, so the printer cannot come
+    back as stock (and a software reboot never power-cycles the MCU). Needs a
+    proven idle printer and no open install transaction. Success is a CHANGED
+    boot id on a rediscovered, identity-matched NebulaOS."""
+    import time
+    if args.confirm != REBOOT_CONFIRM_WORD:
+        raise AgentRefusal("reboot not confirmed (expected %s)" % REBOOT_CONFIRM_WORD)
+    profile, _, _ = prove_preconditions(
+        args.device, None, None, None, args.control_commit, destructive=False)
+    with journal.HostLock(args.device):
+        txn = journal.Transaction.open(args.device)
+        if txn is not None and txn.state not in journal.TERMINAL_STATES:
+            raise AgentRefusal("an install transaction is open (state %s); resolve it before "
+                               "rebooting" % txn.state)
+        session, which, address = _connect_matching(profile, (device.OS_NEBULAOS,))
+        try:
+            if session.which_os() != device.OS_NEBULAOS:
+                raise AgentRefusal("the printer is not running NebulaOS")
+            state, why = marker.parse(session.read_marker_block())
+            if state != marker.KERNEL2:
+                raise AgentRefusal("the OTA marker does not select NebulaOS (%s: %s); a reboot "
+                                   "could land in stock" % (state, why))
+            idle = session.idle_state()
+            say(idle.describe())
+            if not idle.is_idle():
+                raise AgentRefusal("reboot needs a proven idle printer: %s" % idle.why_not_idle())
+            boot_before = session.boot_id()
+            if not boot_before:
+                raise AgentRefusal("cannot read the current boot id, so a reboot could not be proven")
+            say("REBOOT_TARGET=%s@%s" % (which, address))
+            say("BOOT_ID_BEFORE=%s" % boot_before)
+            session.reboot()
+            issued = time.time()
+        finally:
+            session.close()
+
+        last = ""
+        deadline = issued + REBOOT_BACK_TIMEOUT
+        time.sleep(15)
+        while time.time() < deadline:
+            try:
+                session, which, address = _connect_matching(profile, (device.OS_NEBULAOS,))
+            except AgentRefusal as exc:
+                last = str(exc)[:160]
+                time.sleep(5)
+                continue
+            try:
+                boot_now = session.boot_id()
+                if boot_now and boot_now != boot_before and session.which_os() == device.OS_NEBULAOS:
+                    _, out, _ = session._run("cut -d' ' -f1 /proc/uptime")
+                    say("REBOOT_OBSERVED=YES os=nebulaos boot_id=%s->%s"
+                        % (boot_before[:8], boot_now[:8]))
+                    say("BOOT_ID_AFTER=%s" % boot_now)
+                    say("REDISCOVERED_AFTER_S=%.0f" % (time.time() - issued))
+                    say("DEVICE_UPTIME_AT_REDISCOVERY_S=%s" % out.strip())
+                    say("RUN_NEBULAOS_HARDWARE=REBOOT_COMPLETE")
+                    return 0
+                last = "boot id unchanged - not rebooted yet"
+            except Exception as exc:              # noqa: BLE001 - keep waiting
+                last = str(exc)[:160]
+            finally:
+                session.close()
+            time.sleep(5)
+    raise AgentRefusal("the printer did not come back as NebulaOS within %d s (last: %s). Nothing "
+                       "was written; check it with `diagnose`." % (REBOOT_BACK_TIMEOUT, last))
+
+
 def control_is_published(control_commit):
     """The seam tests replace. Repairs require a PUBLISHED control commit."""
     return evidence.product_is_published(FW_ROOT, control_commit)
@@ -662,6 +738,7 @@ def main(argv):
     p.add_argument("profile")
     p.add_argument("confirm", nargs="?", default=None)
     sub.add_parser("restart").add_argument("service")
+    sub.add_parser("reboot").add_argument("confirm", nargs="?", default=None)
     for name in ("verify", "install"):
         p = sub.add_parser(name)
         p.add_argument("source_head")
@@ -671,7 +748,8 @@ def main(argv):
     args = parser.parse_args(argv)
     handler = {"inspect": op_inspect, "status": op_status, "diagnose": op_diagnose,
                "capture": op_capture, "exercise": op_exercise,
-               "restart": op_restart, "verify": op_verify, "install": op_install}[args.op]
+               "restart": op_restart, "reboot": op_reboot,
+               "verify": op_verify, "install": op_install}[args.op]
     try:
         return handler(args)
     except AgentRefusal as exc:

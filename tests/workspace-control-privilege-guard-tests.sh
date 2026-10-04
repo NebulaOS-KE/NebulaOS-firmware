@@ -537,6 +537,10 @@ run_case hw DENY "" 1 "exercise without confirmation"        "$HWRUN $DEV exerci
 run_case hw DENY "" 1 "exercise confirming another profile"  "$HWRUN $DEV exercise memexercise EXERCISE_CONFIRM=camera-resume" "$R"
 run_case hw DENY "" 1 "exercise with a bare yes"             "$HWRUN $DEV exercise camera-resume yes" "$R"
 run_case hw DENY "" 1 "exercise with an extra word"          "$HWRUN $DEV exercise camera-resume EXERCISE_CONFIRM=camera-resume now" "$R"
+run_case hw DENY "" 1 "bare reboot"                          "$HWRUN $DEV reboot" "$R"
+run_case hw DENY "" 1 "reboot confirming stock"              "$HWRUN $DEV reboot REBOOT_CONFIRM=STOCK" "$R"
+run_case hw DENY "" 1 "reboot with a bare yes"               "$HWRUN $DEV reboot yes" "$R"
+run_case hw DENY "" 1 "reboot with an extra word"            "$HWRUN $DEV reboot REBOOT_CONFIRM=NEBULAOS now" "$R"
 echo
 
 # The main agent may run every hardware operation, install included (the
@@ -574,6 +578,8 @@ run_case hw ALLOW "" 1 "main agent, verify" "$HWRUN $OK_KEYED"
 run_case hw ALLOW "" 1 "main agent, capture" "$HWRUN $DEV capture usb-topology"
 run_case hw ALLOW nebulaos-hardware 1 "hardware agent, capture" "$HWRUN $DEV capture dwc2-hw"
 run_case hw ALLOW "" 1 "main agent, confirmed exercise" "$HWRUN $DEV exercise camera-resume EXERCISE_CONFIRM=camera-resume"
+run_case hw ALLOW "" 1 "main agent, confirmed reboot" "$HWRUN $DEV reboot REBOOT_CONFIRM=NEBULAOS"
+run_case hw ALLOW nebulaos-hardware 1 "hardware agent, confirmed reboot" "$HWRUN $DEV reboot REBOOT_CONFIRM=NEBULAOS"
 for svc in klipper moonraker guppyscreen webcam nginx; do
   run_case hw ALLOW "" 1 "main agent, restart $svc" "$HWRUN $DEV restart $svc"
 done

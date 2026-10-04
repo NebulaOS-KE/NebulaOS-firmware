@@ -99,6 +99,13 @@ for given in ("", "yes", "EXERCISE_CONFIRM=memexercise", "EXERCISE_CONFIRM=sof-f
     except agent.AgentRefusal:
         check(True, "wrong argument confirmation refused (%r)" % given)
 sys.stdin = sys.__stdin__
+# reboot: refused without the exact confirmation word, before any device contact
+for given in (None, "", "yes", "REBOOT_CONFIRM=STOCK", "REBOOT_CONFIRM=nebulaos"):
+    ns = types.SimpleNamespace(device="p1", control_commit="a" * 40, confirm=given)
+    try:
+        agent.op_reboot(ns); check(False, "unconfirmed reboot refused (%r)" % given)
+    except agent.AgentRefusal:
+        check(True, "unconfirmed reboot refused (%r)" % given)
 print("capture-profile python checks: %d passed, %d failed" % (passed, failed))
 sys.exit(1 if failed else 0)
 PYEOF

@@ -268,7 +268,7 @@ if agent==HW_AGENT:
                 "It reaches a printer only through its launcher, which composes every device\n"
                 "command in reviewed control code against an enrolled device profile:\n\n"
                 "  tools/run-nebulaos-hardware.sh --device <id> --control <40-hex C> <operation>\n\n"
-                "Operations: inspect status diagnose capture exercise restart verify install.")
+                "Operations: inspect status diagnose capture exercise restart reboot verify install.")
 
 # one plain command: no chaining, redirection, substitution or expansion
 bad=set(";&|<>(){}$\n\r"); bad.add(chr(96))
@@ -397,6 +397,7 @@ if sandbox_off:
         #   --device <id> --control <40-hex C> capture  <profile>
         #   --device <id> --control <40-hex C> exercise <profile> EXERCISE_CONFIRM=<profile>
         #   --device <id> --control <40-hex C> restart <service>
+        #   --device <id> --control <40-hex C> reboot REBOOT_CONFIRM=NEBULAOS
         #   --device <id> --control <40-hex C> verify  <40-hex X> <64-hex> <64-hex>
         #   --device <id> --control <40-hex C> install <40-hex X> <64-hex> <64-hex>
         #
@@ -443,6 +444,7 @@ if sandbox_off:
                   (len(a)==2 and a[0]=="capture" and is_profile(a[1])) or \
                   (len(a)==3 and a[0]=="exercise" and is_profile(a[1])
                    and a[2]=="EXERCISE_CONFIRM="+a[1]) or \
+                  (len(a)==2 and a[0]=="reboot" and a[1]=="REBOOT_CONFIRM=NEBULAOS") or \
                   (len(a)==4 and a[0] in HW_KEYED
                    and is_sha(a[1]) and is_sha256(a[2]) and is_sha256(a[3]))
         if not ok_args:
@@ -453,6 +455,7 @@ if sandbox_off:
                 "  --device <id> --control <40-hex C> capture  <profile>\n"
                 "  --device <id> --control <40-hex C> exercise <profile> EXERCISE_CONFIRM=<profile>\n"
                 "  --device <id> --control <40-hex C> restart klipper|moonraker|guppyscreen|webcam|nginx\n"
+                "  --device <id> --control <40-hex C> reboot REBOOT_CONFIRM=NEBULAOS\n"
                 "  --device <id> --control <40-hex C> verify  <40-hex X> <64-hex> <64-hex>\n"
                 "  --device <id> --control <40-hex C> install <40-hex X> <64-hex> <64-hex>\n\n"
                 "Refused - verify and install state their target release and BOTH artifact\n"

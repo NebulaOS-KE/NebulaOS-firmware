@@ -24,6 +24,7 @@ tools/run-nebulaos-hardware.sh --device <enrolled-id> --control <40-hex C> <oper
 | `exercise <profile> EXERCISE_CONFIRM=<profile>` | reversible, self-undoing state change (TOOL-02) |
 | `verify <X> <ximage-sha256> <rootfs-sha256>` | read-only |
 | `restart klipper\|moonraker\|guppyscreen\|webcam\|nginx` | repair (published C on a RELEASE device) |
+| `reboot REBOOT_CONFIRM=NEBULAOS` | software reboot of an idle NebulaOS back into NebulaOS; no write |
 | `install <X> <ximage-sha256> <rootfs-sha256>` | flash |
 
 The main agent may run every operation too. On the dev printer (`INSTALL_MODE=dev`) this is
@@ -39,7 +40,7 @@ and binds the launcher to its committed content.
 Only when the user explicitly asks for a hardware task, and never otherwise:
 
 - contact the printer at all, even read-only
-- install, verify, diagnose, capture, exercise or restart anything
+- install, verify, diagnose, capture, exercise, reboot or restart anything
 
 Always, whatever the mission:
 
