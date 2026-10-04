@@ -497,7 +497,7 @@ EXERCISE_PROFILES.update({
         "Q=$(wget -q -T 3 -O - 'http://127.0.0.1:7125/printer/objects/query?print_stats=state' 2>/dev/null); "
         "case \"$Q\" in *printing*|*paused*) echo PRINT_ACTIVE_REFUSED; exit 3 ;; esac; "
         "M=/opt/printer_data/config/nebulaos/machine.cfg; [ -f $M ] || M=/etc/nebulaos/klipper/machine.cfg; "
-        "python3 -c \"import re,sys;out=['[bltouch]\\nz_offset: 0\\n']\n"
+        "python3 -c \"import re,sys;out=['[bltouch]\\nz_offset: 0\\n[heater_bed]\\ncontrol: watermark\\n[extruder]\\ncontrol: watermark\\nrotation_distance: 7.5\\n']\n"
         "for f in sys.argv[2:]:\n"
         " keep=True\n"
         " for l in open(f):\n"
