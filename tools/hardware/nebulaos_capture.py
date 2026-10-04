@@ -27,7 +27,8 @@ import os
 FW_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 HWCAP_DIR = os.path.join(FW_ROOT, "tools", "hwcap")
 
-PROBES = ("schedsnap.py", "timerlat.py", "ptyrtt.py", "kduty.py", "adxl_overflows.py")
+PROBES = ("schedsnap.py", "timerlat.py", "ptyrtt.py", "kduty.py", "adxl_overflows.py", "qualmcu.py",
+          "klipper-dict-board.json", "klipper-dict-host.json")
 
 # Logs live under /opt/printer_data/logs (bind-mounted from /usr/data).
 KLIPPY_LOG = "/opt/printer_data/logs/klippy.log"
@@ -425,8 +426,116 @@ EXERCISE_PROFILES["memexercise-sw100"] = (
     EXERCISE_PROFILES["memexercise"][1] + "; [ -n \"${S0:-}\" ] && echo $S0 > /proc/sys/vm/swappiness",
     EXERCISE_PROFILES["memexercise"][2])
 
+
+# --- Second qualification round (2026-10-04): uart1, L5, L6, boot checks -----
+# Refuse unless Klipper is up, idle and has no heater target set.
+_IDLE_GUARD = (
+    "Q=$(wget -q -T 3 -O - 'http://127.0.0.1:7125/printer/objects/query?print_stats=state&extruder=target&heater_bed=target' "
+    "2>/dev/null); case \"$Q\" in *printing*|*paused*) echo PRINT_ACTIVE_REFUSED; exit 3 ;; esac; "
+    "echo \"$Q\" | grep -q '\"print_stats\"' || { echo KLIPPY_NOT_READY_REFUSED; exit 3; }; "
+    "echo \"$Q\" | grep -qE '\"target\": *[1-9]' && { echo HEATER_TARGET_SET_REFUSED; exit 3; }; ")
+_QM = "python3 $T/qualmcu.py"
+# Stop klippy and wait until nothing holds /dev/ttyS1. KS marks it for the undo.
+_KLIPPY_STOP = (
+    "KS=1; /etc/init.d/S55klipper stop; i=0; while [ -n \"$(" + _QM + " holders)\" ] && [ $i -lt 30 ]; do sleep 1; "
+    "i=$((i + 1)); done; [ -z \"$(" + _QM + " holders)\" ] || { echo PORT_STILL_HELD; exit 4; }; ")
+# Undo: start klippy if it is not running, wait for ready, record the counters.
+_KLIPPY_RESTORE = (
+    "if [ -n \"${KS:-}\" ]; then p=$(cat /var/run/klippy.pid 2>/dev/null); "
+    "if [ -z \"$p\" ] || [ ! -d /proc/$p ]; then /etc/init.d/S55klipper start; fi; i=0; s=; "
+    "while [ $i -lt 120 ]; do s=$(wget -q -T 3 -O - http://127.0.0.1:7125/printer/info 2>/dev/null "
+    "| sed -n 's/.*\"state\": *\"\\([a-z]*\\)\".*/\\1/p'); [ \"$s\" = ready ] && break; sleep 2; i=$((i + 2)); done; "
+    "echo \"klippy_state_after=${s:-unknown} waited_s=$i\"; " + _QM + " snap klippy-restarted; fi")
+_APP_IDENTIFY = "/usr/bin/python3 /etc/nebulaos/mcu_application_identify.py; " + _QM + " snap"
+
+EXERCISE_PROFILES.update({
+    # uart1 framing errors at boot (open observation): which open produces
+    # them. The MCU sends a stats message every 5 s with or without a host, so
+    # the port is listened to at the right and at wrong rates, then the guard's
+    # identify and klippy's own connect run from a saved 230400 and from the
+    # 9600 a first open after boot starts with. Nothing is written to the MCU
+    # except the identify handshake the guard sends on every boot.
+    "uart-fe-probe": (
+        _QM + " snap start; " + _IDLE_GUARD + _KLIPPY_STOP + _QM + " snap klippy-stopped; "
+        "sleep 12; " + _QM + " snap closed-12s; "
+        "for b in 230400 115200 9600; do " + _QM + " listen $b 12; " + _QM + " snap listened-$b; done; "
+        + _QM + " setbaud 230400; " + _QM + " snap saved-230400; "
+        + _APP_IDENTIFY + " identify-from-saved-230400; "
+        + _QM + " setbaud 9600; " + _QM + " snap saved-9600; "
+        + _APP_IDENTIFY + " identify-from-saved-9600; "
+        + _QM + " setbaud 9600; " + _QM + " snap saved-9600-before-klippy",
+        _KLIPPY_RESTORE,
+        480),
+    # L6: MCU link benchmark with klippy stopped - round-trip times of read-only
+    # commands and debug_nop throughput, through Klipper's own serialhdl.
+    "mcu-link-bench": (
+        _QM + " snap start; " + _IDLE_GUARD + _KLIPPY_STOP + _QM + " snap klippy-stopped; "
+        + _QM + " bench; " + _QM + " snap after-bench",
+        _KLIPPY_RESTORE,
+        480),
+    # L5: Klipper host batch mode on the printer's own machine definition
+    # (power-loss recovery and accelerometer sections left out, so nothing is
+    # written outside $T), fed the largest stored G-code file, output discarded.
+    # Host processing only: batch mode never opens an MCU port.
+    "klippy-batch": (
+        "Q=$(wget -q -T 3 -O - 'http://127.0.0.1:7125/printer/objects/query?print_stats=state' 2>/dev/null); "
+        "case \"$Q\" in *printing*|*paused*) echo PRINT_ACTIVE_REFUSED; exit 3 ;; esac; "
+        "M=/opt/printer_data/config/nebulaos/machine.cfg; [ -f $M ] || M=/etc/nebulaos/klipper/machine.cfg; "
+        "python3 -c \"import re,sys;out=[];keep=True\n"
+        "for l in open(sys.argv[1]):\n"
+        " m=re.match(r'\\[([^\\]]+)\\]',l)\n"
+        " if m: keep=not re.match(r'(nebulaos_|adxl345|resonance_tester)',m.group(1))\n"
+        " if keep: out.append(l)\n"
+        "open(sys.argv[2],'w').write(''.join(out))\" $M $T/batch.cfg; "
+        "echo \"config=$M sections=$(grep -c '^\\[' $T/batch.cfg)\"; "
+        "G=$(find /opt/printer_data/gcodes -path '*/USB' -prune -o -name '*.gcode' -type f -print 2>/dev/null "
+        "| while read f; do echo \"$(wc -c < \"$f\") $f\"; done | sort -n | tail -1 | cut -d' ' -f2-); "
+        "[ -n \"$G\" ] || { echo NO_GCODE_FILE; exit 3; }; "
+        "echo \"gcode=$G bytes=$(wc -c < \"$G\") lines=$(wc -l < \"$G\")\"; "
+        "PY=/usr/bin/python3; [ -x /usr/data/nebulaos/envs/klipper/bin/python3 ] && PY=/usr/data/nebulaos/envs/klipper/bin/python3; "
+        "echo \"before: $(cat /proc/loadavg) cpu_psi=$(head -1 /proc/pressure/cpu)\"; "
+        "python3 -c \"import resource,subprocess,sys,time;t=time.monotonic();rc=subprocess.call(sys.argv[1:]);"
+        "w=time.monotonic()-t;u=resource.getrusage(resource.RUSAGE_CHILDREN);"
+        "print('BATCH rc=%d wall_s=%.1f user_s=%.1f sys_s=%.1f maxrss_kb=%d'%(rc,w,u.ru_utime,u.ru_stime,u.ru_maxrss))\" "
+        "timeout 1200 $PY /opt/klipper/klippy/klippy.py $T/batch.cfg -i \"$G\" -o /dev/null "
+        "-d $T/klipper-dict-board.json -d rpi=$T/klipper-dict-host.json -l $T/batch.log; "
+        "echo \"after: $(cat /proc/loadavg) cpu_psi=$(head -1 /proc/pressure/cpu)\"; "
+        "echo \"unknown_commands=$(grep -c 'Unknown command' $T/batch.log) errors=$(grep -c '^!!' $T/batch.log)\"; "
+        "grep -m5 'Unknown command' $T/batch.log; grep -E 'Exiting|print time|Traceback|Error' $T/batch.log | tail -10; "
+        "tail -5 $T/batch.log; " + _RT_SPLAT,
+        ":",
+        1500),
+    # Boot forensics: the cost of the checks S04/S05 repeat on every normal
+    # boot, cold (page cache dropped, as at boot) and warm; plus the evidence
+    # behind the per-boot migrate findings. The checks only import modules and
+    # read git refs.
+    "boot-check-costs": (
+        "log(){ :; }; . /usr/libexec/nebulaos-venv-lib.sh; "
+        "MS='import tornado, numpy, streaming_form_data.targets'; KSM='import greenlet, cffi, jinja2, serial, can'; "
+        "A=/usr/data/nebulaos/apps; "
+        "c(){ l=$1; shift; s=$(cut -d' ' -f1 /proc/uptime); \"$@\" >/dev/null 2>&1; r=$?; e=$(cut -d' ' -f1 /proc/uptime); "
+        "echo \"COST $l rc=$r seconds=$(awk -v a=$s -v b=$e 'BEGIN{printf \"%.2f\", b-a}')\"; }; "
+        "g(){ for x in klipper nebulaos-klipper-extensions moonraker; do git -C $A/$x rev-parse HEAD; done; }; "
+        "for pass in cold warm; do [ $pass = cold ] && { sync; echo 3 > /proc/sys/vm/drop_caches; }; "
+        "c $pass-python-bare /usr/bin/python3 -c pass; "
+        "c $pass-S04-moonraker-venv venv_is_usable /usr/data/nebulaos/envs/moonraker \"$MS\"; "
+        "c $pass-S04-klipper-venv venv_is_usable /usr/data/nebulaos/envs/klipper \"$KSM\"; "
+        "c $pass-S05-klipper-venv venv_is_usable /usr/data/nebulaos/envs/klipper \"$KSM\"; "
+        "c $pass-S04-migrate-git-heads g; done; "
+        "echo '== printer.cfg includes'; grep -n '^\\[include' /opt/printer_data/config/printer.cfg; "
+        "echo '== migrate refusal backups'; B=/usr/data/nebulaos/system/migration-backups/printer-cfg-migration-refused; "
+        "echo \"count=$(ls $B 2>/dev/null | wc -l) kb=$(du -sk $B 2>/dev/null | cut -f1)\"; ls $B 2>/dev/null | sed -n '1p;$p'; "
+        "echo '== migration-backups total'; du -sk /usr/data/nebulaos/system/migration-backups/* 2>/dev/null; "
+        "echo '== diskswap'; cat /proc/swaps; grep -iE 'diskswap|swapfile' /usr/data/nebulaos/logs/memguard.log 2>/dev/null | tail -5; "
+        "echo '== seeds'; tail -n 5 /usr/data/nebulaos/maintenance/logs/camera-seed.log /usr/data/nebulaos/maintenance/logs/mainsail-macros-seed.log 2>/dev/null",
+        ":",
+        300),
+})
+
 # Exercises that embed a tracked hwcap probe, the same way captures do.
-EXERCISE_PROBES = {"ktimers-ab": ("timerlat.py",), "ttyflip-ab": ("ptyrtt.py",)}
+EXERCISE_PROBES = {"ktimers-ab": ("timerlat.py",), "ttyflip-ab": ("ptyrtt.py",),
+                   "uart-fe-probe": ("qualmcu.py",), "mcu-link-bench": ("qualmcu.py",),
+                   "klippy-batch": ("klipper-dict-board.json", "klipper-dict-host.json")}
 
 
 def exercise_script(name):
