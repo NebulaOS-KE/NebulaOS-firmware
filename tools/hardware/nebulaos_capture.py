@@ -207,6 +207,12 @@ CAPTURE_PROFILES = {
     "boot-timing": (_BOOT_TIMING, False, None, 120),
     # CPU/memory/IO pressure and scheduler counters over 10 s.
     "pressure": (_PRESSURE, False, None, 60),
+    # Per-process CPU over 10 s: utime+stime ticks (USER_HZ 100), all threads summed.
+    "top-cpu": ("snap(){ for p in /proc/[0-9]*; do s=$(cat $p/stat 2>/dev/null) || continue; r=${s##*) }; set -- $r; "
+                "echo \"${p#/proc/} $(( ${12} + ${13} )) $(cat $p/comm 2>/dev/null) nice=${17}\"; done; }; "
+                "snap > $T/a; sleep 10; snap > $T/b; echo 'ticks_in_10s pid comm nice'; "
+                "awk 'NR==FNR{a[$1]=$2; next} ($1 in a){d=$2-a[$1]; if(d>0) print d, $1, $3, $4}' $T/a $T/b | sort -rn | head -30",
+                False, None, 60),
 }
 
 # Defined by the plan as reversible state changes: TOOL-02 `exercise`, never `capture`.
