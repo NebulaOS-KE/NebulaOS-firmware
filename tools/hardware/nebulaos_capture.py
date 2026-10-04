@@ -502,7 +502,7 @@ EXERCISE_PROFILES.update({
         " keep=True\n"
         " for l in open(f):\n"
         "  m=re.match(r'(#\\*# )?\\[([^\\]]+)\\]',l)\n"
-        "  if m: keep=not re.match(r'(include |nebulaos_|adxl345|resonance_tester)',m.group(2))\n"
+        "  if m: keep=not re.match(r'(include |nebulaos_|adxl345|resonance_tester|temperature_sensor mcu_temp)',m.group(2))\n"
         "  if keep: out.append(l)\n"
         "open(sys.argv[1],'w').write(''.join(out))\" $T/batch.cfg $M /opt/printer_data/config/printer.cfg; "
         "echo \"config=$M sections=$(grep -c '^\\[' $T/batch.cfg)\"; "
