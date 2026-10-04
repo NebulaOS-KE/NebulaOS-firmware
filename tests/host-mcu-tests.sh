@@ -159,12 +159,22 @@ scripts/build/overlay/opt/nebulaos/tools/creality_validator.py"
 
 if command -v git >/dev/null 2>&1 && git -C "$REPO_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
     MERGE_BASE=$(git -C "$REPO_ROOT" merge-base HEAD origin/main 2>/dev/null || git -C "$REPO_ROOT" merge-base HEAD main 2>/dev/null)
+    # Reviewed GD32 lifecycle changes made after Phase 1.9A, by full commit
+    # SHA. Anything else touching these files - another commit or an
+    # uncommitted edit - still fails.
+    #   3a7a81762b68: pyserial-3.5-compatible open in the MCU guard's hardware
+    #   fallback (ke-dev 2026-10-03, final qualification test build).
+    GD32_REVIEWED="3a7a81762b6804e2cedda495112802da25850ed6"
     if [ -n "$MERGE_BASE" ]; then
-        CHANGED=$(git -C "$REPO_ROOT" diff --name-only "$MERGE_BASE" -- $GD32_FILES 2>/dev/null)
-        if [ -z "$CHANGED" ]; then
-            pass "no GD32F303 MCU lifecycle file changed on this branch (diff against $MERGE_BASE)"
+        UNREVIEWED=""
+        for c in $(git -C "$REPO_ROOT" rev-list "$MERGE_BASE"..HEAD -- $GD32_FILES 2>/dev/null); do
+            case " $GD32_REVIEWED " in *" $c "*) ;; *) UNREVIEWED="$UNREVIEWED $c" ;; esac
+        done
+        DIRTY=$(git -C "$REPO_ROOT" diff --name-only HEAD -- $GD32_FILES 2>/dev/null)
+        if [ -z "$UNREVIEWED" ] && [ -z "$DIRTY" ]; then
+            pass "no unreviewed GD32F303 MCU lifecycle change on this branch (against $MERGE_BASE)"
         else
-            fail "GD32F303 MCU lifecycle files changed on this branch: $CHANGED"
+            fail "unreviewed GD32F303 MCU lifecycle changes on this branch:${UNREVIEWED} ${DIRTY}"
         fi
     else
         echo "SKIP: could not resolve a merge-base against main - skipping the diff-based GD32 check"
