@@ -488,8 +488,8 @@ EXERCISE_PROFILES.update({
         + _QM + " bench; " + _QM + " snap after-bench",
         _KLIPPY_RESTORE,
         480),
-    # L5: Klipper host batch mode on the printer's own machine definition
-    # (power-loss recovery and accelerometer sections left out, so nothing is
+    # L5: Klipper host batch mode on the printer's own machine definition and
+    # printer.cfg calibration (includes, power-loss recovery and accelerometer sections left out, so nothing is
     # written outside $T), fed the first 300k lines of the largest stored G-code
     # file (the USB stick included, read only), output discarded.
     # Host processing only: batch mode never opens an MCU port.
@@ -497,12 +497,14 @@ EXERCISE_PROFILES.update({
         "Q=$(wget -q -T 3 -O - 'http://127.0.0.1:7125/printer/objects/query?print_stats=state' 2>/dev/null); "
         "case \"$Q\" in *printing*|*paused*) echo PRINT_ACTIVE_REFUSED; exit 3 ;; esac; "
         "M=/opt/printer_data/config/nebulaos/machine.cfg; [ -f $M ] || M=/etc/nebulaos/klipper/machine.cfg; "
-        "python3 -c \"import re,sys;out=[];keep=True\n"
-        "for l in open(sys.argv[1]):\n"
-        " m=re.match(r'\\[([^\\]]+)\\]',l)\n"
-        " if m: keep=not re.match(r'(nebulaos_|adxl345|resonance_tester)',m.group(1))\n"
-        " if keep: out.append(l)\n"
-        "open(sys.argv[2],'w').write(''.join(out))\" $M $T/batch.cfg; "
+        "python3 -c \"import re,sys;out=[]\n"
+        "for f in sys.argv[2:]:\n"
+        " keep=True\n"
+        " for l in open(f):\n"
+        "  m=re.match(r'(#\\*# )?\\[([^\\]]+)\\]',l)\n"
+        "  if m: keep=not re.match(r'(include |nebulaos_|adxl345|resonance_tester)',m.group(2))\n"
+        "  if keep: out.append(l)\n"
+        "open(sys.argv[1],'w').write(''.join(out))\" $T/batch.cfg $M /opt/printer_data/config/printer.cfg; "
         "echo \"config=$M sections=$(grep -c '^\\[' $T/batch.cfg)\"; "
         "G=$(find /opt/printer_data/gcodes -name '*.gcode' -type f 2>/dev/null "
         "| while read f; do echo \"$(wc -c < \"$f\") $f\"; done | sort -n | tail -1 | cut -d' ' -f2-); "
