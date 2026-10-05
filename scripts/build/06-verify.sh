@@ -1864,6 +1864,47 @@ if [ -n "$SEED_MAINSAIL_MACROS_CONTENT" ]; then
 	fi
 fi
 
+# --- Boot/camera optimization test build (2026-10-05): read back from the image ---
+echo "=== BOOT-01..09 / CAM-01R / CAM-05 in the built rootfs ==="
+_img_cat() { debugfs -R "cat $1" ${IMAGES}/rootfs.ext2 2>/dev/null; }
+_img_has() { # label path fixed-string [absent]
+	if _img_cat "$2" | grep -qF -- "$3"; then
+		[ "${4:-}" = absent ] && echo "MISS $1" || echo "OK   $1"
+	else
+		[ "${4:-}" = absent ] && echo "OK   $1" || echo "MISS $1"
+	fi
+}
+if _img_cat /etc/network/interfaces | grep -v '^[[:space:]]*#' | grep -qw eth0; then
+	echo "MISS BOOT-01: /etc/network/interfaces still configures eth0"
+else
+	echo "OK   BOOT-01: /etc/network/interfaces has no eth0 stanza"
+fi
+_img_has "BOOT-01: wlan0 stanza present" /etc/network/interfaces "iface wlan0 inet dhcp"
+_img_has "BOOT-02: one-shot Wi-Fi selector (take_mode)" /etc/nebulaos-wifi-boot-wait.sh "nebulaos_wifi_boot_wait_take_mode()"
+_img_has "BOOT-02: S01wifi records the ifup result" /etc/init.d/S01wifi "nebulaos_wifi_boot_wait_record_ifup"
+_img_has "BOOT-06: S01wifi waits for wlan0" /etc/init.d/S01wifi "NEBULAOS_WLAN_WAIT_TENTHS"
+_img_has "BOOT-03: venv validation stamp in the venv lib" /usr/libexec/nebulaos-venv-lib.sh "venv_validated_usable()"
+_img_has "BOOT-03: S04 factory-seed fast path uses the stamp" /etc/init.d/S04nebulaos-factory-seed 'venv_validated_usable "$ENVS/klipper"'
+_img_has "BOOT-04: S05 activate uses the shared stamp" /etc/init.d/S05nebulaos-activate 'venv_validated_usable "$NEBULAOS_ROOT/envs/klipper"'
+_img_has "BOOT-05: S56 runs the update_manager check in the background" /etc/init.d/S56moonraker "_IN_RECOVERY=1"
+_img_has "BOOT-07: migrate accepts the managed-tree printer.cfg" /etc/init.d/S04nebulaos-migrate "grep -qxF '[include nebulaos/platform.cfg]' \"\$f\" \\"
+_img_has "BOOT-08: S03 enables the eMMC swap only for maintenance boots" /etc/init.d/S03nebulaos-diskswap "boot_maintenance_reason()"
+_img_has "BOOT-09: rcS writes per-script timing" /etc/init.d/rcS "/run/nebulaos-boot-scripts.log"
+if _img_cat /etc/nebulaos-camera-idle-controller.sh | sed -n '/^nebulaos_camera_idle_requested_mode()/,/^}/p' | grep -q "printf 'C2'" \
+	&& ! _img_cat /etc/nebulaos-camera-idle-controller.sh | sed -n '/^nebulaos_camera_idle_requested_mode()/,/^}/p' | grep -q '! -e "$marker"'; then
+	echo "OK   CAM-01R: camera idle pause is opt-in (no marker -> C0)"
+else
+	echo "MISS CAM-01R: camera idle default is not C0"
+fi
+_cam05_img=$(debugfs -R "cat /usr/bin/ustreamer" ${IMAGES}/rootfs.ext2 2>/dev/null | sha256sum | cut -d' ' -f1)
+_cam05_built="$REPO_ROOT/vendor/k1-ustreamer/build/ustreamer-src/src/ustreamer.bin"
+if [ -f "$_cam05_built" ] && [ "$_cam05_img" = "$(sha256sum "$_cam05_built" | cut -d' ' -f1)" ] \
+	&& grep -q 'blank->jpeg_text' "$REPO_ROOT/vendor/k1-ustreamer/build/ustreamer-src/src/ustreamer/blank.c"; then
+	echo "OK   CAM-05: /usr/bin/ustreamer is the binary built from the patched source ($_cam05_img)"
+else
+	echo "MISS CAM-05: /usr/bin/ustreamer does not match the CAM-05 patched build"
+fi
+
 if [ "$MISS_REQUIRED" -gt 0 ]; then
 	echo "== verification FAILED - $MISS_REQUIRED REQUIRED path(s) missing from the image (see the '<== REQUIRED' lines above). Other MISS lines are reporting only. =="
 	exit 1
