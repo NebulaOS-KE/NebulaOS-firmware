@@ -25,7 +25,9 @@ CONFIG=/opt/printer_data/config/moonraker.conf
 DATAPATH=/opt/printer_data
 LOGFILE=/opt/printer_data/logs/moonraker.log
 UNIXSOCKET=/opt/printer_data/comms/moonraker.sock
-PIDFILE=/var/run/moonraker.pid
+PIDFILE="${MOONRAKER_PIDFILE:-/var/run/moonraker.pid}"
+# BOOT-05: pid of the background first-start update_manager check.
+RECOVERY_PIDFILE="${MOONRAKER_RECOVERY_PIDFILE:-/var/run/moonraker-recovery.pid}"
 
 # NebulaOS mutable-runtime mission, Phase 7: prefer the writable venv
 # S04nebulaos-factory-seed creates at /usr/data/nebulaos/envs/moonraker
@@ -132,8 +134,23 @@ start_daemon() {
 }
 
 stop() {
+	cancel_pending_recovery
 	echo "Stopping moonraker"
 	start-stop-daemon -K -p "$PIDFILE" && rm -f "$PIDFILE"
+}
+
+# BOOT-05: an explicit stop (or a new start) cancels a still-pending
+# background update_manager check, so it can never restart a Moonraker
+# someone else stopped. The check itself runs with _IN_RECOVERY set and
+# never cancels itself. A pid is only killed while it is still this script.
+cancel_pending_recovery() {
+	[ -n "${_IN_RECOVERY:-}" ] && return 0
+	_rp=$(cat "$RECOVERY_PIDFILE" 2>/dev/null)
+	if [ -n "$_rp" ] && kill -0 "$_rp" 2>/dev/null \
+		&& grep -q 'S56moonraker' "/proc/$_rp/cmdline" 2>/dev/null; then
+		kill "$_rp" 2>/dev/null && log "cancelled the pending first-start update_manager check (pid $_rp)"
+	fi
+	rm -f "$RECOVERY_PIDFILE" 2>/dev/null
 }
 
 # Waits for Moonraker's HTTP API to answer at all (it takes a few seconds
@@ -155,7 +172,10 @@ wait_for_server_info() {
 	return 1
 }
 
+# $1 (optional): the Moonraker pid this check belongs to. When given, the
+# restart only happens if that exact instance is still the running one.
 recover_update_manager_if_needed() {
+	_rum_expected="${1:-}"
 	info=$(wait_for_server_info) || {
 		log "server/info did not respond within ${MOONRAKER_INFO_POLL_TIMEOUT}s - skipping the first-boot update_manager recovery check (Moonraker may still be starting; nothing further this script can safely do)"
 		return 0
@@ -163,6 +183,10 @@ recover_update_manager_if_needed() {
 	failed=$(printf '%s' "$info" | grep -o '"failed_components"[[:space:]]*:[[:space:]]*\[[^]]*\]')
 	case "$failed" in
 		*'"update_manager"'*)
+			if [ -n "$_rum_expected" ] && [ "$(cat "$PIDFILE" 2>/dev/null)" != "$_rum_expected" ]; then
+				log "update_manager failed on start, but Moonraker was restarted meanwhile (pid $_rum_expected is gone) - leaving the new instance alone"
+				return 0
+			fi
 			log "update_manager failed to load on this start (known first-boot venv-discovery race - see this script's own header) - restarting once so it re-reads Klipper's now-identified venv path"
 			stop
 			start_daemon
@@ -172,9 +196,26 @@ recover_update_manager_if_needed() {
 	esac
 }
 
+# BOOT-05 (2026-10-05): the first-start update_manager check used to run
+# synchronously, so rcS held S57/S58 (and the screen) for ~9.7 s on every
+# boot until /server/info answered. It now runs in the background with the
+# same bounded wait and the same one-restart decision. GuppyScreen does not
+# need Moonraker to be up when it starts: its websocket client reconnects
+# forever with a 200 ms - 2 s backoff and shows its init overlay until
+# Moonraker and Klippy report ready; the S57 seeders already retry with
+# their own bounded backoff.
 start() {
 	start_daemon
-	recover_update_manager_if_needed
+	_started=$(cat "$PIDFILE" 2>/dev/null)
+	cancel_pending_recovery
+	(
+		_IN_RECOVERY=1
+		trap '' HUP
+		recover_update_manager_if_needed "$_started"
+		rm -f "$RECOVERY_PIDFILE" 2>/dev/null
+	) < /dev/null &
+	echo $! > "$RECOVERY_PIDFILE" 2>/dev/null
+	return 0
 }
 
 if [ -z "${S56MOONRAKER_NO_AUTORUN:-}" ]; then
