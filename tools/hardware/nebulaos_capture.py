@@ -566,13 +566,13 @@ EXERCISE_PROFILES.update({
 # the display configuration, disk writes and CPU after readiness, errors.
 CAPTURE_PROFILES["boot-forensics"] = (
     "echo \"uptime=$(cut -d' ' -f1 /proc/uptime)\"; echo '== swaps'; cat /proc/swaps; "
-    "echo '== swapfile'; ls -le /usr/data/nebulaos/system/swapfile 2>&1; "
+    "echo '== swapfile'; ls -l --full-time /usr/data/nebulaos/system/swapfile 2>&1; "
     "echo '== app-generation'; cat /usr/data/nebulaos/system/app-generation.json 2>/dev/null; "
     "grep -o '\"migration_version\"[^,}]*' /opt/nebulaos-seeds/seed-manifest.json; "
-    "echo '== venv-validation'; ls -le /usr/data/nebulaos/system/venv-validation/ 2>&1; "
+    "echo '== venv-validation'; ls -l --full-time /usr/data/nebulaos/system/venv-validation/ 2>&1; "
     "echo '== migration-log'; tail -n 30 /usr/data/nebulaos/system/diagnostics/migration.log 2>/dev/null; "
     "echo '== activation-log'; tail -n 16 /usr/data/nebulaos/system/diagnostics/activation.log 2>/dev/null; "
-    "echo '== refused-backups'; ls -le /usr/data/nebulaos/system/migration-backups/printer-cfg-migration-refused 2>&1 | tail -4; "
+    "echo '== refused-backups'; ls -l --full-time /usr/data/nebulaos/system/migration-backups/printer-cfg-migration-refused 2>&1 | tail -4; "
     "echo '== debugfs'; grep debugfs /proc/mounts || echo DEBUGFS_NOT_MOUNTED; "
     "ls -l /sys/kernel/debug/nebulaos_backlight_final/status 2>&1; "
     "echo '== S97 gates now'; /etc/nebulaos-healthcheck.sh stage2 2>&1 | tail -8; "
