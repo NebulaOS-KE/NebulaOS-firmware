@@ -184,6 +184,8 @@ artifact_sha256() {
 	else
 		echo "git_submodules_k1_ustreamer=absent"
 	fi
+	artifact_sha256 ustreamer_cam05_patch_sha256 "$REPO_ROOT/scripts/build/patches/ustreamer-cam05-paused-blank-cache.patch"
+	artifact_sha256 ustreamer_sha256 "$REPO_ROOT/vendor/k1-ustreamer/build/ustreamer-src/src/ustreamer.bin"
 	artifact_sha256 mainsail_zip_sha256 "$REPO_ROOT/vendor/mainsail-dist/mainsail.zip"
 	artifact_sha256 guppyscreen_sha256 "$REPO_ROOT/artifacts/guppyscreen-mips/guppyscreen"
 	artifact_sha256 guppybeep_sha256 "$REPO_ROOT/artifacts/guppyscreen-mips/guppybeep"

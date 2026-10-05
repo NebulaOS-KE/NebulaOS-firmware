@@ -1,0 +1,96 @@
+NebulaOS CAM-05 (2026-10-05): cache ustreamer's offline "blank" JPEG.
+
+Upstream: pellcorp/ustreamer at 7fe8c87 (the k1-ustreamer submodule pinned
+by K1_USTREAMER_PIN). Applied by scripts/build/04-cross-compile-app-stack.sh
+to a copy of that exact tree with --fuzz=0; any context drift fails the build.
+Recorded for later upstream submission; not submitted.
+
+Problem: while the camera is paused (or absent) the stream's offline loop
+calls us_blank_draw() every --device-error-delay second (1 s default). The
+text render is already cached by us_frametext_draw(), but the 1080p RGB ->
+JPEG q95 software encode ran every time: ~36 % of one X2000 CPU measured on
+ke-dev, 2026-10-04 (0.7 % unpaused and idle).
+
+Fix: us_blank_draw() re-encodes only when the text or size differs from what
+blank->jpeg already holds (it keeps its own copy of the text; freed on change
+and in us_blank_destroy()). Also leave the offline wait as soon as a paused
+stream is resumed, instead of after the rest of the error delay. The live
+(hardware-encoded MJPEG) path is not touched.
+
+diff --git a/src/ustreamer/blank.c b/src/ustreamer/blank.c
+index 09b1b00..7b57412 100644
+--- a/src/ustreamer/blank.c
++++ b/src/ustreamer/blank.c
+@@ -22,6 +22,9 @@
+ 
+ #include "blank.h"
+ 
++#include <stdlib.h>
++#include <string.h>
++
+ #include "../libs/types.h"
+ #include "../libs/tools.h"
+ #include "../libs/frame.h"
+@@ -41,11 +44,28 @@ us_blank_s *us_blank_init(void) {
+ }
+ 
+ void us_blank_draw(us_blank_s *blank, const char *text, uint width, uint height) {
++	// The stream's offline loop redraws the blank every --device-error-delay
++	// (1 s by default) for as long as the camera is paused or absent, and the
++	// software JPEG encode below is the whole cost of that (frametext already
++	// skips an unchanged render). Encode only when the text or size changes;
++	// otherwise jpeg still holds exactly this blank.
++	if (
++		blank->jpeg_text != NULL && blank->jpeg->used > 0
++		&& blank->jpeg_width == width && blank->jpeg_height == height
++		&& !strcmp(blank->jpeg_text, text)
++	) {
++		return;
++	}
+ 	us_frametext_draw(blank->ft, text, width, height);
+ 	us_cpu_encoder_compress(blank->raw, blank->jpeg, 95);
++	US_DELETE(blank->jpeg_text, free);
++	blank->jpeg_text = us_strdup(text);
++	blank->jpeg_width = width;
++	blank->jpeg_height = height;
+ }
+ 
+ void us_blank_destroy(us_blank_s *blank) {
++	US_DELETE(blank->jpeg_text, free);
+ 	us_frame_destroy(blank->jpeg);
+ 	us_frametext_destroy(blank->ft);
+ 	free(blank);
+diff --git a/src/ustreamer/blank.h b/src/ustreamer/blank.h
+index 6e539e0..a8a4ff7 100644
+--- a/src/ustreamer/blank.h
++++ b/src/ustreamer/blank.h
+@@ -31,6 +31,10 @@ typedef struct {
+ 	us_frametext_s	*ft;
+ 	us_frame_s		*raw;
+ 	us_frame_s		*jpeg;
++	// What jpeg currently holds, so an unchanged blank is not re-encoded
++	char			*jpeg_text;
++	uint			jpeg_width;
++	uint			jpeg_height;
+ } us_blank_s;
+ 
+ 
+diff --git a/src/ustreamer/stream.c b/src/ustreamer/stream.c
+index 580d1f8..0982499 100644
+--- a/src/ustreamer/stream.c
++++ b/src/ustreamer/stream.c
+@@ -666,10 +666,14 @@ static int _stream_init_loop(us_stream_s *stream) {
+ 			US_LOG_INFO("Device error, exiting ...");
+ 			us_process_suicide();
+ 		}
++		const bool offline_paused = atomic_load(&stream->paused);
+ 		for (uint i = 0; i < stream->error_delay * 10; ++i) {
+ 			if (atomic_load(&run->stop)) {
+ 				break;
+ 			}
++			if (offline_paused && !atomic_load(&stream->paused)) {
++				break; // Resumed: reopen the device now, not after the delay
++			}
+ 			if (i % 10 == 0) {
+ 				// Каждую секунду повторяем blank
+ 				uint width = stream->cap->run->width;

@@ -597,14 +597,33 @@ rm -rf "$VENDOR/k1-ustreamer/build"
 	./configure --host=mipsel-buildroot-linux-gnu --build=x86_64-pc-linux-gnu --prefix="$BUILD_PREFIX"
 	make && make install
 
-	cd "$SRC/ustreamer"
+	# CAM-05: build from a patched copy of the pinned ustreamer tree, never
+	# the vendor checkout itself (06-verify's pin/drift check stays clean).
+	# The copy is the submodule's exact committed content; the patch must
+	# apply with zero fuzz or the build stops.
+	USRC="$SRC/build/ustreamer-src"
+	CAM05_PATCH="$SCRIPT_DIR/patches/ustreamer-cam05-paused-blank-cache.patch"
+	rm -rf "$USRC" && mkdir -p "$USRC"
+	git -C "$SRC/ustreamer" archive --format=tar HEAD | tar -x -C "$USRC"
+	if ! patch -p1 --fuzz=0 --dry-run -d "$USRC" < "$CAM05_PATCH" > /dev/null; then
+		echo "FATAL: CAM-05 ustreamer patch does not apply cleanly to the pinned source - refusing to build an unpatched or misapplied ustreamer" >&2
+		exit 1
+	fi
+	patch -p1 --fuzz=0 -s -d "$USRC" < "$CAM05_PATCH"
+	grep -q 'blank->jpeg_text' "$USRC/src/ustreamer/blank.c" && grep -q 'offline_paused' "$USRC/src/ustreamer/stream.c" || {
+		echo "FATAL: CAM-05 patch effect not present in $USRC" >&2
+		exit 1
+	}
+	echo "CAM-05 ustreamer patch applied (sha256 $(sha256sum "$CAM05_PATCH" | cut -d' ' -f1))"
+
+	cd "$USRC"
 	export CFLAGS="$CFLAGS -Os -march=mips32r2 -ffunction-sections -fdata-sections"
 	export LDFLAGS="$LDFLAGS -Wl,--gc-sections -s"
 	make PKG_CONFIG=true WITH_PTHREAD_NP=0 WITH_SETPROCTITLE=0
 	mipsel-buildroot-linux-gnu-strip --strip-unneeded src/ustreamer.bin
 )
 mkdir -p "$OVERLAY/usr/bin" "$OVERLAY/usr/lib"
-cp "$VENDOR/k1-ustreamer/ustreamer/src/ustreamer.bin" "$OVERLAY/usr/bin/ustreamer"
+cp "$VENDOR/k1-ustreamer/build/ustreamer-src/src/ustreamer.bin" "$OVERLAY/usr/bin/ustreamer"
 chmod 755 "$OVERLAY/usr/bin/ustreamer"
 cp "$VENDOR"/k1-ustreamer/build/ustreamer-deps/lib/*.so* "$OVERLAY/usr/lib/"
 # re-create the SONAME symlinks the binary actually needs - verified fresh
