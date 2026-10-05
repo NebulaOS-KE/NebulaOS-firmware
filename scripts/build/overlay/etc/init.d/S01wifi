@@ -119,6 +119,8 @@ start() {
 	start-stop-daemon -S -b -m -p "$PIDFILE" \
 		-x /usr/sbin/wpa_supplicant -- \
 		-i wlan0 -c "$CONF"
+	# BOOT-02: fixed 2 s settle by default; a one-shot maintenance marker
+	# selects the bounded event-driven wait for exactly one boot.
 	if [ -f /etc/nebulaos-wifi-boot-wait.sh ]; then
 		. /etc/nebulaos-wifi-boot-wait.sh
 		nebulaos_wifi_boot_wait wlan0 || true
@@ -126,6 +128,11 @@ start() {
 		sleep 2
 	fi
 	/sbin/ifup wlan0 2>/dev/null
+	ifup_rc=$?
+	if command -v nebulaos_wifi_boot_wait_record_ifup >/dev/null 2>&1; then
+		nebulaos_wifi_boot_wait_record_ifup "$ifup_rc"
+	fi
+	return 0
 }
 
 stop() {
