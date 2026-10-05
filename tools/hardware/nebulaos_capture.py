@@ -28,7 +28,7 @@ FW_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 HWCAP_DIR = os.path.join(FW_ROOT, "tools", "hwcap")
 
 PROBES = ("schedsnap.py", "timerlat.py", "ptyrtt.py", "kduty.py", "adxl_overflows.py", "qualmcu.py",
-          "lv_m1.py", "lv_s1.sh", "lv_s2.sh", "lv_g5.sh", "lv_cam.sh", "lv_g6.sh", "lv_g7.sh", "lv_g8.sh", "lv_g9.sh", "lv_g10.sh")
+          "lv_m1.py", "lv_s1.sh", "lv_s2.sh", "lv_g5.sh", "lv_cam.sh", "lv_g6.sh", "lv_g7.sh", "lv_g8.sh", "lv_g9.sh", "lv_g10.sh", "lv_ng1.py")
 # Pinned data files embedded compressed (dropbear refuses a command longer than
 # MAX_CMD_LEN = 9000 bytes, so a whole profile must stay under SCRIPT_LIMIT).
 DATA_FILES = ("klipper-dict-board.json",)
@@ -739,6 +739,14 @@ EXERCISE_PROFILES.update({
         ". $T/lv_g10.sh",
         "/etc/init.d/S03nebulaos-diskswap disable > /dev/null 2>&1; echo \"undo: swapfile_in_swaps=$(grep -c swapfile /proc/swaps)\"",
         300),
+    # NG1: Moonraker's HTTP errors never reach the client (Tornado send_error
+    # raises). A throwaway Tornado app on 127.0.0.1:7199, as shipped and with
+    # the missing httputil._ABNF defined; Moonraker is not touched.
+    "live-ng1-tornado": (
+        "PY=/usr/data/nebulaos/envs/moonraker/bin/python3; [ -x $PY ] || PY=python3; "
+        "$PY $T/lv_ng1.py image 2>&1 | grep -vE '^ +|^Traceback' | tail -8; $PY $T/lv_ng1.py fixed 2>&1 | tail -6",
+        ":",
+        120),
     # The end state the mission must prove: no override left anywhere.
     "live-verify-cleanup": (
         "echo \"before: $(ls -A " + _LV + " 2>/dev/null | tr '\\n' ' ')\"; rm -rf " + _LV + " /usr/data/nebulaos/maintenance/live-verify; "
@@ -782,7 +790,7 @@ EXERCISE_PROBES = {"ktimers-ab": ("timerlat.py",), "ttyflip-ab": ("ptyrtt.py",),
                    "mcu-identify-repeat": ("qualmcu.py",), "live-m1-identify": ("lv_m1.py",),
                    "live-s1-s03": ("lv_s1.sh",), "live-s2-s97": ("lv_s2.sh",), "live-g5-debugfs": ("lv_g5.sh",),
                    "live-s3-s4-camera": ("lv_cam.sh",), "live-g6-dhcp": ("lv_g6.sh",), "live-g7-klippy": ("lv_g7.sh",),
-                   "live-g8-seeder": ("lv_g8.sh",), "live-g9-ext4": ("lv_g9.sh",), "live-g10-diskswap": ("lv_g10.sh",)}
+                   "live-g8-seeder": ("lv_g8.sh",), "live-g9-ext4": ("lv_g9.sh",), "live-g10-diskswap": ("lv_g10.sh",), "live-ng1-tornado": ("lv_ng1.py",)}
 
 
 def exercise_script(name):

@@ -47,6 +47,7 @@ HOST=(
   tools/hwcap/lv_g8.sh
   tools/hwcap/lv_g9.sh
   tools/hwcap/lv_m1.py
+  tools/hwcap/lv_ng1.py
   tools/hwcap/lv_s1.sh
   tools/hwcap/lv_s2.sh
   tools/hwcap/ptyrtt.py
