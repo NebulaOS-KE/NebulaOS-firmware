@@ -644,9 +644,29 @@ EXERCISE_PROFILES["camera-c2-qualify"] = (
     "echo \"restored marker=$(cat $M 2>/dev/null || echo absent) state=$(cat $SF 2>/dev/null || echo absent)\"",
     1200)
 
+# MCU guard identify reliability: the guard's exact application-identify step
+# (5 s budget) run repeatedly with klippy stopped, warm and with the page cache
+# dropped (as at boot); uart1 counters around each attempt. Read-only for the
+# MCU (identify handshake only, never the bootloader path).
+EXERCISE_PROFILES["mcu-identify-repeat"] = (
+    _QM + " snap start; " + _IDLE_GUARD + _KLIPPY_STOP + _QM + " snap klippy-stopped; "
+    "for pass in warm warm warm warm cold cold cold warm warm cold; do "
+    "[ $pass = cold ] && { sync; echo 3 > /proc/sys/vm/drop_caches; }; "
+    "s=$(awk '{printf \"%d\", $1*1000}' /proc/uptime); "
+    "o=$(/usr/bin/python3 /etc/nebulaos/mcu_application_identify.py 2>&1 | tail -1); rc=$?; "
+    "e=$(awk '{printf \"%d\", $1*1000}' /proc/uptime); "
+    "echo \"IDENTIFY pass=$pass ms=$((e - s)) out=$o\"; " + _QM + " snap after-$pass; sleep 2; done; "
+    "echo '== import cost cold'; sync; echo 3 > /proc/sys/vm/drop_caches; s=$(awk '{printf \"%d\", $1*1000}' /proc/uptime); "
+    "/usr/bin/python3 -c \"import sys; sys.path.insert(0, '/opt/klipper/klippy'); sys.path.insert(0, '/etc/nebulaos'); "
+    "import reactor, serialhdl, mcu_application_identify; serialhdl.SerialReader(reactor.Reactor())\"; "
+    "e=$(awk '{printf \"%d\", $1*1000}' /proc/uptime); echo \"cold_import_and_reader_ms=$((e - s))\"",
+    _KLIPPY_RESTORE,
+    600)
+
 # Exercises that embed a tracked hwcap probe, the same way captures do.
 EXERCISE_PROBES = {"ktimers-ab": ("timerlat.py",), "ttyflip-ab": ("ptyrtt.py",),
-                   "uart-fe-probe": ("qualmcu.py",), "mcu-link-bench": ("qualmcu.py",)}
+                   "uart-fe-probe": ("qualmcu.py",), "mcu-link-bench": ("qualmcu.py",),
+                   "mcu-identify-repeat": ("qualmcu.py",)}
 
 
 def exercise_script(name):
