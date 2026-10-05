@@ -1,0 +1,4 @@
+# A patch file reproduces upstream context lines byte for byte (a leading
+# space, then the upstream tabs and trailing blanks); whitespace checks do
+# not apply to it.
+*.patch -whitespace
