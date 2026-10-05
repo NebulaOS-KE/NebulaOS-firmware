@@ -17,54 +17,85 @@
 # exist) and before S04nebulaos-factory-seed (the memory-heavy step this
 # exists to protect).
 
-NEBULAOS_ROOT=/usr/data/nebulaos
+# BOOT-08 (2026-10-05): the swapfile is a MAINTENANCE-ONLY tier. A normal
+# boot prepares (validates, or creates once) the file but leaves it OFF:
+# zram is the only swap in normal operation, and memguard (MEM-T13,
+# MG_DISKSWAP_POLICY=maintenance) already turns this tier on while a
+# maintenance lock is held and off again afterwards. Measured on ke-dev
+# before this change: swapon at ~12 s every boot, then memguard swapoff ~30 s
+# later - pure boot-time eMMC churn. This script still turns it on at boot
+# when the boot itself is about to do maintenance-class work that runs
+# before memguard starts (S49):
+#   - S04nebulaos-factory-seed will seed: an app checkout or venv is missing
+#   - S04nebulaos-migrate will migrate: no recorded app generation, or it
+#     differs from this image's seed manifest
+#   - an explicit one-shot request: $NEBULAOS_ROOT/maintenance/diskswap-next-boot
+#     (consumed before use)
+# Explicit control at any time: `S03nebulaos-diskswap enable|disable|status`.
+# memguard's defensive swapoff outside maintenance is unchanged.
+
+NEBULAOS_ROOT="${NEBULAOS_ROOT:-/usr/data/nebulaos}"
 SWAPFILE="$NEBULAOS_ROOT/system/swapfile"
-SWAP_SIZE_BYTES=$((128 * 1024 * 1024))
+SWAP_SIZE_BYTES="${SWAP_SIZE_BYTES:-$((128 * 1024 * 1024))}"
 SWAP_PRIORITY=10
+SEEDS="${SEEDS:-/opt/nebulaos-seeds}"
+DATA_MOUNT="${DATA_MOUNT:-/usr/data}"
+PROC_SWAPS="${PROC_SWAPS:-/proc/swaps}"
+PROC_MOUNTS="${PROC_MOUNTS:-/proc/mounts}"
+BOOT_REQUEST="$NEBULAOS_ROOT/maintenance/diskswap-next-boot"
+SWAPON="${SWAPON:-swapon}"
+SWAPOFF="${SWAPOFF:-swapoff}"
+MKSWAP="${MKSWAP:-mkswap}"
 
 log() {
 	echo "S03nebulaos-diskswap: $1"
 }
 
-start() {
-	if ! awk '$2=="/usr/data" {found=1} END{exit !found}' /proc/mounts; then
-		log "/usr/data not mounted - skipping disk swap this boot (zram alone remains active)"
-		return 0
+swapfile_active() {
+	grep -q "^$SWAPFILE " "$PROC_SWAPS" 2>/dev/null
+}
+
+# 0 when $SWAPFILE exists and is a valid, fully sized, root-only swap file
+# (creating it if absent or invalid); 1 when it cannot be made ready - the
+# caller then simply runs without the tier.
+prepare_swapfile() {
+	if ! awk -v m="$DATA_MOUNT" '$2==m {found=1} END{exit !found}' "$PROC_MOUNTS"; then
+		log "$DATA_MOUNT not mounted - no disk swap tier this boot (zram alone remains active)"
+		return 1
 	fi
-	testfile="/usr/data/.nebulaos-diskswap-rw-test-$$"
+	testfile="$DATA_MOUNT/.nebulaos-diskswap-rw-test-$$"
 	if ! ( : > "$testfile" ) 2>/dev/null; then
-		log "/usr/data is not writable - skipping disk swap this boot"
-		return 0
+		log "$DATA_MOUNT is not writable - no disk swap tier this boot"
+		return 1
 	fi
 	rm -f "$testfile"
 
 	if [ ! -d "$NEBULAOS_ROOT/system" ]; then
 		log "$NEBULAOS_ROOT/system does not exist yet (S02nebulaos-namespace should have created it) - skipping"
-		return 0
+		return 1
 	fi
 
-	if grep -q "^$SWAPFILE " /proc/swaps 2>/dev/null; then
-		log "$SWAPFILE already active in /proc/swaps - skipping (idempotent)"
-		return 0
-	fi
+	# Never validate/rewrite a file that is a live swap area.
+	swapfile_active && return 0
 
 	# Validate any existing file before trusting it - never blindly
 	# swapon() something that might not actually be a valid, correctly
 	# sized swap file (a previous interrupted boot, a truncated copy,
-	# etc.). Recreate from scratch if anything looks wrong, but never
-	# truncate/rewrite a file that is already a genuinely active swap
-	# (the /proc/swaps check above already guards that case).
+	# etc.). Recreate from scratch if anything looks wrong.
 	valid=false
 	if [ -f "$SWAPFILE" ]; then
 		actual_size=$(wc -c < "$SWAPFILE" 2>/dev/null)
 		owner=$(ls -ldn "$SWAPFILE" 2>/dev/null | awk '{print $3":"$4}')
 		perms=$(ls -ld "$SWAPFILE" 2>/dev/null | cut -c1-10)
-		if [ "$actual_size" = "$SWAP_SIZE_BYTES" ] && [ "$owner" = "0:0" ] && [ "$perms" = "-rw-------" ]; then
+		if [ "$actual_size" = "$SWAP_SIZE_BYTES" ] && [ "$owner" = "${SWAP_OWNER:-0:0}" ] && [ "$perms" = "-rw-------" ]; then
 			valid=true
 		else
 			log "existing $SWAPFILE failed validation (size=$actual_size owner=$owner perms=$perms) - recreating"
 			rm -f "$SWAPFILE"
 		fi
+	elif [ -e "$SWAPFILE" ]; then
+		log "ERROR: $SWAPFILE exists but is not a regular file - leaving it alone, no disk swap tier"
+		return 1
 	fi
 
 	if [ "$valid" != "true" ]; then
@@ -75,37 +106,108 @@ start() {
 		# filesystem allocation behavior on this exact ext4/eMMC setup).
 		umask 077
 		if ! dd if=/dev/zero of="$SWAPFILE" bs=1M count=$((SWAP_SIZE_BYTES / 1048576)) conv=fsync 2>/dev/null; then
-			log "ERROR: failed to allocate $SWAPFILE - removing any partial file, skipping disk swap this boot"
+			log "ERROR: failed to allocate $SWAPFILE - removing any partial file, no disk swap tier"
 			rm -f "$SWAPFILE"
-			return 0
+			return 1
 		fi
 		chmod 600 "$SWAPFILE"
 
 		actual_size=$(wc -c < "$SWAPFILE" 2>/dev/null)
 		if [ "$actual_size" != "$SWAP_SIZE_BYTES" ]; then
-			log "ERROR: $SWAPFILE allocated as $actual_size bytes, expected $SWAP_SIZE_BYTES - removing, skipping disk swap this boot"
+			log "ERROR: $SWAPFILE allocated as $actual_size bytes, expected $SWAP_SIZE_BYTES - removing, no disk swap tier"
 			rm -f "$SWAPFILE"
-			return 0
+			return 1
 		fi
 
-		if ! mkswap "$SWAPFILE" >/dev/null 2>&1; then
-			log "ERROR: mkswap $SWAPFILE failed - removing, skipping disk swap this boot"
+		if ! "$MKSWAP" "$SWAPFILE" >/dev/null 2>&1; then
+			log "ERROR: mkswap $SWAPFILE failed - removing, no disk swap tier"
 			rm -f "$SWAPFILE"
-			return 0
+			return 1
 		fi
 	fi
+	return 0
+}
 
-	if ! swapon -p "$SWAP_PRIORITY" "$SWAPFILE" 2>/dev/null; then
-		log "ERROR: swapon $SWAPFILE failed"
+diskswap_on() {
+	if swapfile_active; then
+		log "$SWAPFILE already active - nothing to do"
 		return 0
 	fi
-
+	prepare_swapfile || return 1
+	if ! "$SWAPON" -p "$SWAP_PRIORITY" "$SWAPFILE" 2>/dev/null; then
+		log "ERROR: swapon $SWAPFILE failed"
+		return 1
+	fi
 	log "disk swap active: $SWAPFILE, size=$SWAP_SIZE_BYTES bytes, priority=$SWAP_PRIORITY (lower than zram's priority)"
+}
+
+diskswap_off() {
+	if ! swapfile_active; then
+		log "$SWAPFILE not active - nothing to do"
+		return 0
+	fi
+	if ! "$SWAPOFF" "$SWAPFILE" 2>/dev/null; then
+		log "ERROR: swapoff $SWAPFILE failed (pages may not fit back yet) - left active"
+		return 1
+	fi
+	log "disk swap off: $SWAPFILE"
+}
+
+# Reason this boot needs the tier before memguard runs, or nothing. Cheap
+# file tests only - the expensive validation stays in S04.
+boot_maintenance_reason() {
+	if [ -e "$BOOT_REQUEST" ]; then
+		echo "explicit one-shot request"
+		return 0
+	fi
+	for c in klipper/.git nebulaos-klipper-extensions/.git moonraker/.git mainsail/index.html; do
+		[ -e "$NEBULAOS_ROOT/apps/$c" ] || { echo "factory seed pending (apps/$c missing)"; return 0; }
+	done
+	for e in klipper moonraker; do
+		[ -x "$NEBULAOS_ROOT/envs/$e/bin/python3" ] || { echo "factory seed pending (envs/$e missing)"; return 0; }
+	done
+	want=$(grep -o '"migration_version"[[:space:]]*:[[:space:]]*"[^"]*"' "$SEEDS/seed-manifest.json" 2>/dev/null \
+		| sed -E 's/.*"([^"]*)"$/\1/' | head -1)
+	have=$(grep -o '"migration_version"[[:space:]]*:[[:space:]]*"[^"]*"' "$NEBULAOS_ROOT/system/app-generation.json" 2>/dev/null \
+		| sed -E 's/.*"([^"]*)"$/\1/' | head -1)
+	if [ -n "$want" ] && [ "$have" != "$want" ]; then
+		echo "app generation change pending (installed '${have:-none}', image '$want')"
+		return 0
+	fi
+	return 1
+}
+
+start() {
+	if reason=$(boot_maintenance_reason); then
+		# Consume a one-shot request before acting on it, so a failure here
+		# can never make it sticky.
+		rm -f "$BOOT_REQUEST" 2>/dev/null
+		log "maintenance boot: $reason - enabling the disk swap tier (memguard turns it off once maintenance ends)"
+		diskswap_on || true
+		return 0
+	fi
+	if swapfile_active; then
+		log "normal boot, but $SWAPFILE is already active - leaving it to memguard's maintenance policy"
+		return 0
+	fi
+	prepare_swapfile && log "normal boot: $SWAPFILE ready, left OFF (zram only; maintenance-only tier)"
+	return 0
 }
 
 case "$1" in
 	start)
 		start
+		;;
+	enable)
+		diskswap_on
+		exit $?
+		;;
+	disable)
+		diskswap_off
+		exit $?
+		;;
+	status)
+		swapfile_active && echo "active" || echo "inactive"
 		;;
 	*)
 		;;
