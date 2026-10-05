@@ -746,6 +746,17 @@ EXERCISE_PROFILES.update({
         ":",
         60),
 })
+# G8: how Moonraker answers a read of a missing database key (read-only GETs).
+CAPTURE_PROFILES["live-g8-missing-key"] = (
+    "U=http://127.0.0.1:7125/server/database/item; "
+    "for q in 'namespace=mainsail&key=macros.macrogroups.nebulaos-calibration' "
+    "'namespace=mainsail&key=macros.macrogroups.nebulaos_calibration' "
+    "'namespace=mainsail&key=nebulaos_live_verify_absent_top_level' "
+    "'namespace=nebulaos_live_verify_absent_ns&key=x'; do "
+    "echo \"GET $q -> $(curl -s -o $T/b -m 40 -w 'http=%{http_code} seconds=%{time_total}' \"$U?$q\") body=$(head -c 160 $T/b 2>/dev/null)\"; done; "
+    "echo '== moonraker.log'; grep -nE 'database|Traceback|Error|error' /opt/printer_data/logs/moonraker.log | tail -n 25 | cut -c1-260; "
+    "echo '== moonraker version'; wget -q -T 3 -O - http://127.0.0.1:7125/server/info | grep -o '\"moonraker_version\": *\"[^\"]*\"'",
+    False, None, 240)
 CAPTURE_PROFILES["live-pristine"] = (
     "echo \"lv_dir=$(ls -A " + _LV + " 2>/dev/null | wc -l) lv_persistent=$(ls -d /usr/data/nebulaos/maintenance/live-verify 2>/dev/null || echo absent)\"; "
     "echo \"bind_or_overlay_on_image_paths=$(grep -cE ' /(etc|usr/libexec|usr/bin|opt/nebulaos)[/ ]' /proc/mounts)\"; "
