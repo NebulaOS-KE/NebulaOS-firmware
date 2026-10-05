@@ -79,6 +79,7 @@ _BOOT_TIMING = (
     "echo '== uptime'; cat /proc/uptime; echo \"now_epoch=$(date +%s)\"; date; "
     "echo \"boot_id=$(cat /proc/sys/kernel/random/boot_id)\"; "
     "echo '== boot-timing-log'; cat /var/run/nebulaos-boot-timing.log 2>/dev/null || echo NO_BOOT_TIMING_LOG; "
+    "echo '== boot-scripts-log'; cat /run/nebulaos-boot-scripts.log 2>/dev/null || echo NO_BOOT_SCRIPTS_LOG; "
     "echo '== cmdline'; cat /proc/cmdline; echo '== mounts'; cat /proc/mounts; "
     "echo '== proc-start (field22 ticks, USER_HZ=100)'; "
     "for p in /proc/[0-9]*; do s=$(cat $p/stat 2>/dev/null) || continue; r=${s##*) }; set -- $r; "
