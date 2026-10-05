@@ -1,18 +1,18 @@
-# interface file - Buildroot's own auto-generated eth0 stanza preserved,
-# wlan0 added (FIRMWARE.md sec 17/18) for the WiFi credentials fetched from
-# the real device. wpa_supplicant itself is started by S45wifi (it
-# associates first; ifup's own udhcpc then gets the DHCP lease) - Buildroot's
-# wpa_supplicant package doesn't ship the Debian-style ifupdown wpa-conf
-# hook, confirmed by checking /etc/network/if-pre-up.d/ has no such script.
+# interface file - wlan0 added (FIRMWARE.md sec 17/18) for the WiFi
+# credentials fetched from the real device. wpa_supplicant itself is started
+# by S01wifi (it associates first; ifup's own udhcpc then gets the DHCP
+# lease) - Buildroot's wpa_supplicant package doesn't ship the Debian-style
+# ifupdown wpa-conf hook, confirmed by checking /etc/network/if-pre-up.d/ has
+# no such script.
+#
+# BOOT-01 (2026-10-05): Buildroot's auto-generated eth0 stanza is gone. The
+# KE has no Ethernet (both MACs are disabled in the DT, CONFIG_INGENIC_MAC is
+# off), so eth0 never exists and its `wait-delay 15` made S40network's
+# `ifup -a` sleep 15 s on every boot (measured: udevd 23.7 s -> memguard
+# 40.2 s). Do not add an interface here that the hardware does not have.
 
 auto lo
 iface lo inet loopback
-
-auto eth0
-iface eth0 inet dhcp
-  pre-up /etc/network/nfs_check
-  wait-delay 15
-  hostname $(hostname)
 
 auto wlan0
 iface wlan0 inet dhcp
