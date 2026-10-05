@@ -13,12 +13,14 @@
 # can never take down the already-hardware-proven crash-recovery S50webcam
 # provides.
 #
-# Default state: C2 (idle pause ON). The 2026-10-03 hardware session on
-# 6.6.157-rt79 measured that a paused camera lets the camera, hub and root
-# port all runtime-suspend (USB interrupts 0/s, no disconnect, VBUS kept)
-# and that the first frame after resume arrives in 1.26 s (limit 10 s,
-# HWDP-DWC-6), so CAM-04 is enabled. Writing C0 to the maintenance marker
-# opts out and keeps the camera always active.
+# Default state: C0 (idle pause OFF; CAM-01R, 2026-10-05). The 2026-10-03
+# session showed a paused camera lets the camera, hub and root port
+# runtime-suspend and resumes in 1.26 s (HWDP-DWC-4/6), but the 2026-10-04
+# qualification measured the paused ustreamer at 36 % of one CPU (it
+# re-renders and software-encodes its 1080p placeholder every second)
+# against 0.7 % unpaused and idle - net-negative. Writing C2 to the
+# maintenance marker opts in. CAM-05 caches that placeholder; the default
+# only flips back after CAM-05 is measured on hardware.
 #
 # Viewer-activity signal: rather than depend on a live client-count query
 # from ustreamer (unconfirmed to exist from source - see the source
@@ -56,17 +58,12 @@ NEBULAOS_CAMERA_IDLE_RESUME_RETRIES="${NEBULAOS_CAMERA_IDLE_RESUME_RETRIES:-5}"
 NEBULAOS_CAMERA_IDLE_RESUME_BACKOFF_BASE="${NEBULAOS_CAMERA_IDLE_RESUME_BACKOFF_BASE:-1}"
 NEBULAOS_CAMERA_IDLE_STATE_FILE="${NEBULAOS_CAMERA_IDLE_STATE_FILE:-/var/run/nebulaos-camera-idle-state}"
 
-# Prints the requested mode. No marker -> "C2" (the default since the
-# 2026-10-03 hardware session, HWDP-DWC-4/6). A marker containing "C0"
-# opts out, "C2" opts in explicitly; any other content, or a marker path
-# that exists but cannot be read as a file, fails safe to "C0" (camera
+# Prints the requested mode. No marker -> "C0" (the default, CAM-01R). A
+# marker containing exactly "C2" opts in; "C0", any other content, or a
+# marker path that exists but cannot be read as a file gives "C0" (camera
 # always active).
 nebulaos_camera_idle_requested_mode() {
 	marker="${1:-$NEBULAOS_CAMERA_IDLE_MARKER}"
-	if [ ! -e "$marker" ]; then
-		printf 'C2'
-		return 0
-	fi
 	if [ -f "$marker" ] && [ "$(cat "$marker" 2>/dev/null)" = "C2" ]; then
 		printf 'C2'
 	else

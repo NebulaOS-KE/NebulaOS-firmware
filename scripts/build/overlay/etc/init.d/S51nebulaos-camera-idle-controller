@@ -6,9 +6,9 @@
 #
 # Numbered S51 - right after S50webcam (which this depends on being
 # already started) and well before S55klipper/S56moonraker, so this
-# controller is up before either application stack. C2 is the default
-# (CAM-04); a C0 marker makes its start a true no-op. It never delays or
-# blocks anything after it either way.
+# controller is up before either application stack. C0 is the default
+# (CAM-01R): without a C2 marker its start is a true no-op. It never delays
+# or blocks anything after it either way.
 #
 # Deliberately a completely separate process/supervisor from S50webcam's
 # own - a crash or bug in this experimental controller can never affect
@@ -27,7 +27,7 @@ start() {
 	fi
 	mode=$(nebulaos_camera_idle_requested_mode)
 	if [ "$mode" != "C2" ]; then
-		echo "S51nebulaos-camera-idle-controller: C0 requested by marker, not starting (camera stays always-active)"
+		echo "S51nebulaos-camera-idle-controller: C2 not requested (default C0), not starting (camera stays always-active)"
 		return 0
 	fi
 	if ! command -v curl >/dev/null 2>&1; then
