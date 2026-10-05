@@ -1,0 +1,99 @@
+#!/bin/sh
+#
+# Start all init scripts in /etc/init.d
+# executing them in numerical order.
+#
+# NebulaOS BOOT-09 (2026-10-05): Buildroot's skeleton rcS, unchanged in what
+# it runs and in what order, plus one monotonic timing line before and after
+# every script, so a boot can be reconstructed per script instead of only
+# from the gaps between milestones.
+#
+#   /run/nebulaos-boot-scripts.log  (tmpfs, fresh every boot, <= 512 lines)
+#   T=<uptime s> EV=begin BOOT_ID=<id>
+#   T=<uptime s> EV=start S=<script>
+#   T=<uptime s> EV=end S=<script> RC=<exit status> DUR=<s>
+#   T=<uptime s> EV=done
+#
+# /proc/uptime is the clock (monotonic, no NTP or RTC dependency); the shell
+# builtin `read` takes it and the size cap is a line counter, so timing adds
+# no process per script. Scripts run
+# strictly one after another; work a script leaves in the background ends
+# after its END line and is visible in S02nebulaos-boot-timing's milestones.
+# Logging can never fail the boot: every write is guarded, a missing
+# or malformed /proc/uptime gives T=? (never shell arithmetic on it), and
+# the log stops growing at the line cap.
+
+NEBULAOS_BOOT_SCRIPTS_LOG="${NEBULAOS_BOOT_SCRIPTS_LOG:-/run/nebulaos-boot-scripts.log}"
+NEBULAOS_BOOT_SCRIPTS_LOG_MAX_LINES=512
+INIT_DIR="${INIT_DIR:-/etc/init.d}"
+UPTIME_SRC="${UPTIME_SRC:-/proc/uptime}"
+
+# Sets _t to the uptime string and _cs to centiseconds ("" when unknown).
+_bt_now() {
+	_t=; _cs=
+	read -r _t _ < "$UPTIME_SRC" 2>/dev/null || { _t='?'; return 0; }
+	case "$_t" in
+		*[!0-9.]* | '' | .* | *. | *.*.* | 0[0-9]*) _t='?'; return 0 ;;
+		*.*) _s=${_t%.*}; _c="${_t#*.}00"; _c=${_c%"${_c#??}"} ;;
+		*) _s=$_t; _c=00 ;;
+	esac
+	_cs=$((_s * 100 + ${_c#0}))
+}
+
+_bt_lines=0
+_bt_log() {
+	[ -n "$NEBULAOS_BOOT_SCRIPTS_LOG" ] || return 0
+	[ "$_bt_lines" -lt "$NEBULAOS_BOOT_SCRIPTS_LOG_MAX_LINES" ] || return 0
+	_bt_lines=$((_bt_lines + 1))
+	echo "$*" >> "$NEBULAOS_BOOT_SCRIPTS_LOG" 2>/dev/null || true
+}
+
+_bt_begin() {
+	# `true`, never `:` - a failed redirection on a special builtin exits a
+	# POSIX shell, which would end rcS before the first script runs.
+	[ -n "$NEBULAOS_BOOT_SCRIPTS_LOG" ] && { true > "$NEBULAOS_BOOT_SCRIPTS_LOG"; } 2>/dev/null
+	_bid=; read -r _bid < /proc/sys/kernel/random/boot_id 2>/dev/null || _bid='?'
+	_bt_now; _bt_log "T=$_t EV=begin BOOT_ID=$_bid"
+}
+
+_bt_start() {
+	_bt_now; _bt_t0=$_cs; _bt_log "T=$_t EV=start S=${1##*/}"
+}
+
+_bt_end() {
+	_bt_now
+	if [ -n "$_cs" ] && [ -n "$_bt_t0" ]; then
+		_d=$((_cs - _bt_t0)); _dur="$((_d / 100)).$(((_d % 100) / 10))$((_d % 10))"
+	else
+		_dur='?'
+	fi
+	_bt_log "T=$_t EV=end S=${1##*/} RC=$2 DUR=$_dur"
+}
+
+_bt_begin
+
+for i in "$INIT_DIR"/S??*; do
+
+	# Ignore dangling symlinks (if any).
+	[ ! -f "$i" ] && continue
+
+	_bt_start "$i"
+	case "$i" in
+		*.sh)
+			# Source shell script for speed.
+			(
+				trap - INT QUIT TSTP
+				set start
+				# shellcheck source=/dev/null
+				. "$i"
+			)
+			;;
+		*)
+			# No sh extension, so fork subprocess.
+			"$i" start
+			;;
+	esac
+	_bt_end "$i" $?
+done
+
+_bt_now; _bt_log "T=$_t EV=done"
