@@ -27,7 +27,8 @@ import os
 FW_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 HWCAP_DIR = os.path.join(FW_ROOT, "tools", "hwcap")
 
-PROBES = ("schedsnap.py", "timerlat.py", "ptyrtt.py", "kduty.py", "adxl_overflows.py", "qualmcu.py")
+PROBES = ("schedsnap.py", "timerlat.py", "ptyrtt.py", "kduty.py", "adxl_overflows.py", "qualmcu.py",
+          "lv_m1.py", "lv_s1.sh", "lv_s2.sh", "lv_g5.sh", "lv_cam.sh", "lv_g6.sh", "lv_g7.sh", "lv_g8.sh", "lv_g9.sh", "lv_g10.sh")
 # Pinned data files embedded compressed (dropbear refuses a command longer than
 # MAX_CMD_LEN = 9000 bytes, so a whole profile must stay under SCRIPT_LIMIT).
 DATA_FILES = ("klipper-dict-board.json",)
@@ -670,10 +671,107 @@ EXERCISE_PROFILES["mcu-identify-repeat"] = (
     _KLIPPY_RESTORE,
     600)
 
+# --- Live final fix verification (2026-10-05) ---------------------------------
+# Every proposed final-baseline fix is run as a patched COPY under
+# /run/nebulaos-live-verify (tmpfs) next to the image's own script; the image is
+# never modified, and each undo removes its copies. Probe texts: tools/hwcap/lv_*.sh.
+_LV = "/run/nebulaos-live-verify"
+_LV_M1 = _LV + "/m1"
+_M1 = "python3 $T/lv_m1.py"
+_ID = _M1 + " identify"
+EXERCISE_PROFILES.update({
+    # M1: the guard's identify with the proposed 15 s budget (a patched copy of
+    # mcu_application_identify.py, imported ahead of /etc/nebulaos) against the
+    # image's 5 s: warm, cold, and cold + two CPU hogs + the port's saved rate
+    # at 9600 (the boot conditions); then the failure path must stay bounded.
+    "live-m1-identify": (
+        _M1 + " snap start; " + _IDLE_GUARD + _KLIPPY_STOP.replace(_QM, _M1) + _M1 + " snap klippy-stopped; "
+        "mkdir -p " + _LV_M1 + "; cp /etc/nebulaos/mcu_application_identify.py " + _LV_M1 + "/; "
+        "sed -i 's/^def get_application_identity(port, baud, timeout=5.0,/def get_application_identity(port, baud, timeout=15.0,/' "
+        + _LV_M1 + "/mcu_application_identify.py; "
+        "grep -n '^def get_application_identity' " + _LV_M1 + "/mcu_application_identify.py; "
+        "grep -q 'timeout=15.0, klippy_lib_path' " + _LV_M1 + "/mcu_application_identify.py || { echo PATCH_FAILED; exit 4; }; "
+        "echo \"decide_call=$(grep -n 'identify_fn(port, baud)' /etc/nebulaos/mcu_lifecycle.py)\"; P=/dev/ttyS1; "
+        "for i in 1 2 3 4 5; do " + _ID + " warm-patched-$i 230400 $P " + _LV_M1 + "; done; "
+        "for i in 1 2 3; do sync; echo 3 > /proc/sys/vm/drop_caches; " + _ID + " cold-patched-$i 230400 $P " + _LV_M1 + "; done; "
+        "yes > /dev/null & H1=$!; yes > /dev/null & H2=$!; "
+        "for i in 1 2 3 4; do for v in image patched; do M=; [ $v = patched ] && M=" + _LV_M1 + "; "
+        + _M1 + " setbaud 9600; sync; echo 3 > /proc/sys/vm/drop_caches; "
+        + _ID + " stress-9600-$v-$i 230400 $P $M; done; done; kill $H1 $H2; H1=; H2=; " + _M1 + " snap after-stress; "
+        + _ID + " fail-wrongbaud-patched 115200 $P " + _LV_M1 + "; echo \"holders_after=[$(" + _M1 + " holders)]\"; "
+        + _ID + " fail-noport-patched 230400 /dev/nebulaos-live-verify-noport " + _LV_M1 + "; "
+        + _ID + " fail-wrongbaud-image 115200 $P; "
+        + _ID + " final-ok-patched 230400 $P " + _LV_M1 + "; " + _M1 + " snap end",
+        "[ -n \"${H1:-}\" ] && kill $H1 $H2 2>/dev/null; rm -rf " + _LV_M1 + "; " + _KLIPPY_RESTORE.replace(_QM, _M1),
+        900),
+    "live-s1-s03": (
+        ". $T/lv_s1.sh",
+        "/etc/init.d/S03nebulaos-diskswap disable > /dev/null 2>&1; rm -f " + _LV + "/S03-patched; "
+        "echo \"undo: swapfile_in_swaps=$(grep -c swapfile /proc/swaps)\"",
+        600),
+    "live-s2-s97": (
+        ". $T/lv_s2.sh",
+        "rm -rf " + _LV + "/S97-patched " + _LV + "/ndq-wrap.sh " + _LV + "/s2conf " + _LV + "/s2-insert " + _LV + "/s2marker.*",
+        300),
+    "live-g5-debugfs": (
+        ". $T/lv_g5.sh",
+        "[ -n \"${G5M:-}\" ] && umount /sys/kernel/debug; rm -f " + _LV + "/ndq-wrap-g5.sh " + _LV + "/g5-synthetic-qc1 " + _LV + "/g5marker; "
+        "echo \"undo: debugfs_mounted=$(grep -c ' /sys/kernel/debug debugfs ' /proc/mounts)\"",
+        180),
+    "live-s3-s4-camera": (
+        ". $T/lv_cam.sh",
+        "[ -n \"${V:-}\" ] && kill $V 2>/dev/null; if [ -n \"${CAMLV:-}\" ]; then "
+        "[ -x \"$S51\" ] && \"$S51\" stop > /dev/null 2>&1; curl -s -o /dev/null --max-time 5 http://127.0.0.1:8080/resume; "
+        "if [ \"$SF0\" = absent ]; then rm -f $SF; else printf '%s' \"$SF0\" > $SF; fi; "
+        "rm -f " + _LV + "/cam-lib.sh " + _LV + "/S51-patched " + _LV + "/s4-stop; fi; "
+        "echo \"undo: state=$(cat /var/run/nebulaos-camera-idle-state 2>/dev/null || echo absent) "
+        "controllers=$(ps | grep -cE '[c]amera-idle-controller|[S]51-patched')\"",
+        1500),
+    "live-g6-dhcp": (". $T/lv_g6.sh", "rm -f " + _LV + "/g6script " + _LV + "/g6.log " + _LV + "/g6.err", 180),
+    "live-g7-klippy": (
+        _IDLE_GUARD + "KS=1; . $T/lv_g7.sh",
+        "rm -f " + _LV + "/g7poll.py; for s in moonraker guppyscreen; do p=$(cat /var/run/$s.pid 2>/dev/null); "
+        "[ -n \"$p\" ] && [ -d /proc/$p ] || /etc/init.d/S5*$s start; done; " + _KLIPPY_RESTORE,
+        1200),
+    "live-g8-seeder": (". $T/lv_g8.sh", "rm -f " + _LV + "/g8dry.py " + _LV + "/g8-marker.json", 240),
+    "live-g9-ext4": (". $T/lv_g9.sh", ":", 120),
+    "live-g10-diskswap": (
+        ". $T/lv_g10.sh",
+        "/etc/init.d/S03nebulaos-diskswap disable > /dev/null 2>&1; echo \"undo: swapfile_in_swaps=$(grep -c swapfile /proc/swaps)\"",
+        300),
+    # The end state the mission must prove: no override left anywhere.
+    "live-verify-cleanup": (
+        "echo \"before: $(ls -A " + _LV + " 2>/dev/null | tr '\\n' ' ')\"; rm -rf " + _LV + " /usr/data/nebulaos/maintenance/live-verify; "
+        "echo \"lv_dir=$(ls -d " + _LV + " 2>/dev/null || echo absent) lv_persistent=$(ls -d /usr/data/nebulaos/maintenance/live-verify 2>/dev/null || echo absent)\"",
+        ":",
+        60),
+})
+CAPTURE_PROFILES["live-pristine"] = (
+    "echo \"lv_dir=$(ls -A " + _LV + " 2>/dev/null | wc -l) lv_persistent=$(ls -d /usr/data/nebulaos/maintenance/live-verify 2>/dev/null || echo absent)\"; "
+    "echo \"bind_or_overlay_on_image_paths=$(grep -cE ' /(etc|usr/libexec|usr/bin|opt/nebulaos)[/ ]' /proc/mounts)\"; "
+    "grep -E ' /(etc|usr/libexec|usr/bin|opt/nebulaos)[/ ]' /proc/mounts; "
+    "echo \"debugfs=$(grep -c ' /sys/kernel/debug debugfs ' /proc/mounts) swaps=$(tail -n +2 /proc/swaps | awk '{print $1}' | tr '\\n' ' ')\"; "
+    "echo \"camera_marker=$(cat /usr/data/nebulaos/maintenance/camera-idle-mode 2>/dev/null || echo absent) "
+    "camera_state=$(cat /var/run/nebulaos-camera-idle-state 2>/dev/null || echo absent) "
+    "camera_controllers=$(ps | grep -cE '[c]amera-idle-controller|[S]51-patched')\"; "
+    "echo \"locks=[$(ls -A /usr/data/nebulaos/updates/locks 2>/dev/null | tr '\\n' ' ')] "
+    "wifi_marker=$(ls /usr/data/nebulaos/maintenance/wifi-boot-wait-mode 2>/dev/null || echo absent) "
+    "diskswap_request=$(ls /usr/data/nebulaos/maintenance/diskswap-next-boot 2>/dev/null || echo absent)\"; "
+    "echo \"stray_processes=$(ps | grep -cE '[y]es$|[g]7poll|[g]8dry|[u]dhcpc -i wlan0 -f')\"; "
+    "for f in /etc/init.d/S03nebulaos-diskswap /etc/init.d/S97nebulaos-display-qualified-apply /etc/init.d/S51nebulaos-camera-idle-controller "
+    "/etc/nebulaos-camera-idle-controller.sh /etc/nebulaos/mcu_application_identify.py /etc/nebulaos/mcu_lifecycle.py; do "
+    "echo \"$(sha256sum $f)\"; done; cat /etc/nebulaos-release 2>/dev/null | head -5; "
+    "echo \"mcu_guard=$(grep -h '^MCU_GUARD_RESULT=' /run/nebulaos-mcu-guard.state 2>/dev/null)\"; "
+    "wget -q -T 3 -O - http://127.0.0.1:7125/server/info 2>/dev/null | grep -o '\"klippy_state\": *\"[a-z]*\"'",
+    False, None, 60)
+
 # Exercises that embed a tracked hwcap probe, the same way captures do.
 EXERCISE_PROBES = {"ktimers-ab": ("timerlat.py",), "ttyflip-ab": ("ptyrtt.py",),
                    "uart-fe-probe": ("qualmcu.py",), "mcu-link-bench": ("qualmcu.py",),
-                   "mcu-identify-repeat": ("qualmcu.py",)}
+                   "mcu-identify-repeat": ("qualmcu.py",), "live-m1-identify": ("lv_m1.py",),
+                   "live-s1-s03": ("lv_s1.sh",), "live-s2-s97": ("lv_s2.sh",), "live-g5-debugfs": ("lv_g5.sh",),
+                   "live-s3-s4-camera": ("lv_cam.sh",), "live-g6-dhcp": ("lv_g6.sh",), "live-g7-klippy": ("lv_g7.sh",),
+                   "live-g8-seeder": ("lv_g8.sh",), "live-g9-ext4": ("lv_g9.sh",), "live-g10-diskswap": ("lv_g10.sh",)}
 
 
 def exercise_script(name):

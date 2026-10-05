@@ -39,6 +39,16 @@ HOST=(
   tools/hwcap/adxl_overflows.py
   tools/hwcap/klipper-dict-board.json
   tools/hwcap/kduty.py
+  tools/hwcap/lv_cam.sh
+  tools/hwcap/lv_g10.sh
+  tools/hwcap/lv_g5.sh
+  tools/hwcap/lv_g6.sh
+  tools/hwcap/lv_g7.sh
+  tools/hwcap/lv_g8.sh
+  tools/hwcap/lv_g9.sh
+  tools/hwcap/lv_m1.py
+  tools/hwcap/lv_s1.sh
+  tools/hwcap/lv_s2.sh
   tools/hwcap/ptyrtt.py
   tools/hwcap/qualmcu.py
   tools/hwcap/schedsnap.py
