@@ -590,6 +590,13 @@ CAPTURE_PROFILES["boot-forensics"] = (
     "echo '== memguard'; tail -n 25 /usr/data/nebulaos/logs/memguard.log 2>/dev/null",
     False, None, 120)
 
+CAPTURE_PROFILES["cam-state"] = (
+    "echo \"marker=$(cat /usr/data/nebulaos/maintenance/camera-idle-mode 2>/dev/null || echo absent) "
+    "state_file=$(cat /var/run/nebulaos-camera-idle-state 2>/dev/null || echo absent)\"; "
+    "ps | grep '[c]amera-idle-controller' | head -3; curl -s --max-time 3 http://127.0.0.1:8080/state | tr -d ' \\n' | cut -c1-500; echo; "
+    "for d in usb1 1-1 1-1.1 1-1.2; do echo \"pm $d $(cat /sys/bus/usb/devices/$d/power/runtime_status 2>/dev/null)\"; done",
+    False, None, 60)
+
 EXERCISE_PROFILES.update({
     # BOOT-02 qualification: arm the one-shot event-driven Wi-Fi selector for
     # the NEXT boot only (S01wifi consumes it before acting on it).
