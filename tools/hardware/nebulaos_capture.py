@@ -80,6 +80,9 @@ _BOOT_TIMING = (
     "echo \"boot_id=$(cat /proc/sys/kernel/random/boot_id)\"; "
     "echo '== boot-timing-log'; cat /var/run/nebulaos-boot-timing.log 2>/dev/null || echo NO_BOOT_TIMING_LOG; "
     "echo '== boot-scripts-log'; cat /run/nebulaos-boot-scripts.log 2>/dev/null || echo NO_BOOT_SCRIPTS_LOG; "
+    "echo '== swaps'; cat /proc/swaps; echo '== wifi-boot-wait-result'; cat /run/nebulaos-wifi-boot-wait.result 2>/dev/null || echo NO_RESULT; "
+    "ls -la /usr/data/nebulaos/maintenance/ 2>/dev/null; echo '== venv-validation'; ls -la /usr/data/nebulaos/system/venv-validation/ 2>/dev/null; "
+    "echo \"migrate_refused_backups=$(ls /usr/data/nebulaos/system/migration-backups/printer-cfg-migration-refused 2>/dev/null | wc -l)\"; "
     "echo '== cmdline'; cat /proc/cmdline; echo '== mounts'; cat /proc/mounts; "
     "echo '== proc-start (field22 ticks, USER_HZ=100)'; "
     "for p in /proc/[0-9]*; do s=$(cat $p/stat 2>/dev/null) || continue; r=${s##*) }; set -- $r; "
@@ -557,6 +560,89 @@ EXERCISE_PROFILES.update({
         ":",
         300),
 })
+
+# --- Final pre-baseline validation (2026-10-05) ------------------------------
+# Read-only boot forensics: S97's four health gates re-evaluated now, debugfs,
+# the display configuration, disk writes and CPU after readiness, errors.
+CAPTURE_PROFILES["boot-forensics"] = (
+    "echo \"uptime=$(cut -d' ' -f1 /proc/uptime)\"; echo '== swaps'; cat /proc/swaps; "
+    "echo '== swapfile'; ls -le /usr/data/nebulaos/system/swapfile 2>&1; "
+    "echo '== app-generation'; cat /usr/data/nebulaos/system/app-generation.json 2>/dev/null; "
+    "grep -o '\"migration_version\"[^,}]*' /opt/nebulaos-seeds/seed-manifest.json; "
+    "echo '== venv-validation'; ls -le /usr/data/nebulaos/system/venv-validation/ 2>&1; "
+    "echo '== migration-log'; tail -n 30 /usr/data/nebulaos/system/diagnostics/migration.log 2>/dev/null; "
+    "echo '== activation-log'; tail -n 16 /usr/data/nebulaos/system/diagnostics/activation.log 2>/dev/null; "
+    "echo '== refused-backups'; ls -le /usr/data/nebulaos/system/migration-backups/printer-cfg-migration-refused 2>&1 | tail -4; "
+    "echo '== debugfs'; grep debugfs /proc/mounts || echo DEBUGFS_NOT_MOUNTED; "
+    "ls -l /sys/kernel/debug/nebulaos_backlight_final/status 2>&1; "
+    "echo '== S97 gates now'; /etc/nebulaos-healthcheck.sh stage2 2>&1 | tail -8; "
+    "p=$(cat /var/run/guppyscreen.pid 2>/dev/null); [ -n \"$p\" ] && [ -d /proc/$p ] && echo GATE_GUPPYSCREEN=ok || echo GATE_GUPPYSCREEN=fail; "
+    "ip -4 -o addr show scope global | grep -q . && echo GATE_NETWORK=ok || echo GATE_NETWORK=fail; "
+    "[ -r /sys/kernel/debug/nebulaos_backlight_final/status ] && echo GATE_DISPLAY=ok || echo GATE_DISPLAY=fail; "
+    "echo '== display config'; cat /usr/data/nebulaos/display-qualified.conf 2>&1 | head -30; "
+    "echo '== display controllers'; ls /var/run/*display* /run/nebulaos-display* 2>&1; "
+    "for f in /var/run/nebulaos-display-sleep-wake-controller.pid; do p=$(cat $f 2>/dev/null); echo \"$f pid=$p alive=$([ -n \"$p\" ] && [ -d /proc/$p ] && echo yes || echo no)\"; done; "
+    "echo '== disk writes 10s'; a=$(awk '$3==\"mmcblk0\"{print $10}' /proc/diskstats); sleep 10; b=$(awk '$3==\"mmcblk0\"{print $10}' /proc/diskstats); "
+    "echo \"mmcblk0_sectors_written_10s=$((b - a))\"; awk '$3 ~ /^mmcblk0p/ {print $3, \"reads=\"$4, \"sectors_written=\"$10}' /proc/diskstats; "
+    "echo '== vmstat'; grep -E '^(pswpin|pswpout|pgmajfault|oom_kill) ' /proc/vmstat; head -3 /proc/meminfo; "
+    "echo '== errors dmesg'; dmesg | grep -iE 'error|fail|warn|bug|oops|timeout|reset' | grep -viE 'loglevel|ignoring' | tail -40; "
+    "echo '== errors syslog'; grep -iE 'error|fail|segfault|killed|respawn' /var/log/messages 2>/dev/null | grep -v dropbear | tail -40; "
+    "echo '== memguard'; tail -n 25 /usr/data/nebulaos/logs/memguard.log 2>/dev/null",
+    False, None, 120)
+
+EXERCISE_PROFILES.update({
+    # BOOT-02 qualification: arm the one-shot event-driven Wi-Fi selector for
+    # the NEXT boot only (S01wifi consumes it before acting on it).
+    "wifi-eventdriven-arm": (
+        "M=/usr/data/nebulaos/maintenance/wifi-boot-wait-mode; mkdir -p ${M%/*}; printf 'event-driven\\n' > $M; sync; "
+        "echo \"armed=$(cat $M)\"; ls -l $M",
+        ":",
+        60),
+    # BOOT-08: explicit maintenance enable/disable of the eMMC swap tier, and
+    # memguard's defensive swapoff outside maintenance.
+    "diskswap-cycle": (
+        "D=/etc/init.d/S03nebulaos-diskswap; F=/usr/data/nebulaos/system/swapfile; echo '== before'; cat /proc/swaps; "
+        "$D enable; echo \"enable_rc=$?\"; cat /proc/swaps; grep -q \"^$F \" /proc/swaps && echo SWAPFILE_ACTIVE=yes || echo SWAPFILE_ACTIVE=no; "
+        "echo \"status=$($D status)\"; echo '== memguard defensive policy (no maintenance lock)'; "
+        "i=0; while grep -q \"^$F \" /proc/swaps && [ $i -lt 90 ]; do sleep 2; i=$((i + 2)); done; "
+        "echo \"memguard_swapoff_after_s=$i still_active=$(grep -c \"^$F \" /proc/swaps)\"; "
+        "grep -E 'disk swap|DISKSWAP' /usr/data/nebulaos/logs/memguard.log | tail -3; "
+        "echo '== explicit enable/disable'; $D enable >/dev/null; grep -c \"^$F \" /proc/swaps; $D disable; echo \"disable_rc=$?\"; "
+        "$D disable; echo \"disable_again_rc=$?\"; echo \"status=$($D status)\"; cat /proc/swaps",
+        "/etc/init.d/S03nebulaos-diskswap disable >/dev/null 2>&1; cat /proc/swaps",
+        300),
+})
+
+# CAM-01R / CAM-05: opt into C2, measure the paused camera, viewer-triggered
+# resume, repeated cycles; the undo removes the marker and resumes (C0).
+_CAM_UST = ("ust(){ p=$(cat /var/run/ustreamer.pid); a=$(awk '{print $14+$15}' /proc/$p/stat); "
+            "w=$(for q in /proc/[0-9]*; do case \"$(cat $q/comm 2>/dev/null)\" in irq/9-*) awk '{print $14+$15}' $q/stat;; esac; done | awk '{s+=$1} END{print s+0}'); "
+            "sleep 20; b=$(awk '{print $14+$15}' /proc/$p/stat); "
+            "x=$(for q in /proc/[0-9]*; do case \"$(cat $q/comm 2>/dev/null)\" in irq/9-*) awk '{print $14+$15}' $q/stat;; esac; done | awk '{s+=$1} END{print s+0}'); "
+            "awk -v d=$((b - a)) -v w=$((x - w)) -v l=\"$1\" 'BEGIN{printf \"CPU %s ustreamer=%.2f%% dwc2_irq_thread=%.2f%% (of one CPU, 20 s)\\n\", l, d/20, w/20}'; }; ")
+_CAM_PM = ("pm(){ for d in usb1 1-1 1-1.1 1-1.2; do echo \"pm $d $(cat /sys/bus/usb/devices/$d/power/runtime_status 2>/dev/null)\"; done; }; ")
+_CAM_WAIT = ("waitstate(){ i=0; while [ \"$(cat $SF 2>/dev/null)\" != \"$1\" ] && [ $i -lt $2 ]; do sleep 1; i=$((i + 1)); done; "
+             "echo \"state=$(cat $SF 2>/dev/null) after_s=$i\"; }; ")
+_CAM_ONLINE = ("online(){ curl -s --max-time 2 http://127.0.0.1:8080/state | tr -d ' \\n' | grep -o '\"online\":[a-z]*' | head -1; }; ")
+EXERCISE_PROFILES["camera-c2-qualify"] = (
+    "M=/usr/data/nebulaos/maintenance/camera-idle-mode; S51=/etc/init.d/S51nebulaos-camera-idle-controller; "
+    "SF=/var/run/nebulaos-camera-idle-state; " + _CAM_UST + _CAM_PM + _CAM_WAIT + _CAM_ONLINE +
+    "echo \"default_marker=$(cat $M 2>/dev/null || echo absent) default_state=$(cat $SF 2>/dev/null || echo absent) \"; "
+    "ps | grep -c '[n]ebulaos-camera-idle' | sed 's/^/controller_processes=/'; ust idle-C0; " + _IRQ_RATE + "; pm; "
+    "printf 'C2\\n' > $M; sync; C2SET=1; $S51 start; t0=$(cut -d. -f1 /proc/uptime); waitstate paused 150; "
+    "echo \"pause_after_s=$(( $(cut -d. -f1 /proc/uptime) - t0 ))\"; sleep 5; ust paused-C2; " + _IRQ_RATE + "; pm; online; "
+    "curl -s -o $T/snap.jpg --max-time 5 http://127.0.0.1:8080/snapshot; echo \"paused_snapshot_bytes=$(wc -c < $T/snap.jpg)\"; "
+    "for c in 1 2 3; do echo \"== cycle $c: viewer\"; ms0=$(awk '{printf \"%d\", $1*1000}' /proc/uptime); "
+    "curl -s --max-time 25 -o /dev/null -w \"stream_bytes=%{size_download} Bps=%{speed_download}\\n\" http://127.0.0.1:8080/stream & V=$!; "
+    "k=0; until online | grep -q true || [ $k -ge 200 ]; do sleep 0.1; k=$((k + 1)); done; "
+    "echo \"viewer_resume_ms=$(( $(awk '{printf \"%d\", $1*1000}' /proc/uptime) - ms0 ))\"; sleep 15; "
+    "echo \"fps=$(curl -s --max-time 2 http://127.0.0.1:8080/state | tr -d ' \\n' | grep -o '\"captured_fps\":[0-9]*' | head -1)\"; "
+    "wait $V; V=; waitstate paused 150; done; ust paused-after-cycles; "
+    "dmesg | tail -40 | grep -ciE 'usb .*disconnect|uvc.*error' | sed 's/^/usb_errors_tail=/'",
+    "[ -n \"${V:-}\" ] && kill $V 2>/dev/null; if [ -n \"${C2SET:-}\" ]; then rm -f $M; sync; fi; "
+    "$S51 stop >/dev/null 2>&1; curl -s -o /dev/null --max-time 5 http://127.0.0.1:8080/resume; "
+    "echo \"restored marker=$(cat $M 2>/dev/null || echo absent) state=$(cat $SF 2>/dev/null || echo absent)\"",
+    1200)
 
 # Exercises that embed a tracked hwcap probe, the same way captures do.
 EXERCISE_PROBES = {"ktimers-ab": ("timerlat.py",), "ttyflip-ab": ("ptyrtt.py",),
