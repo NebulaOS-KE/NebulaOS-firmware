@@ -38,7 +38,7 @@ awk -v lib=$LIB -v ins=$L/s4-stop '{gsub("/etc/nebulaos-camera-idle-controller.s
 chmod 755 $S51
 echo "== patch"; sed -n '/^nebulaos_camera_idle_requested_mode/,/^}/p' $LIB; grep -c "$LIB" $S51 | sed 's/^/S51_sources_patched_lib=/'
 SF0=$(cat $SF 2>/dev/null || echo absent); CAMLV=1
-echo "before: marker=$(cat $M 2>/dev/null || echo absent) state=$SF0 controllers=$(ps | grep -c '[c]amera-idle-controller')"
+echo "before: marker=$(cat $M 2>/dev/null || echo absent) state=$SF0 (image S51 stop leaves its last state: G4) controller_pidfile=$(cat /var/run/nebulaos-camera-idle-controller.pid 2>/dev/null || echo absent)"
 
 echo "== S3 mode table (image lib | patched lib)"
 for c in absent C0 C2 garbage empty; do
@@ -52,7 +52,8 @@ ust() { p=$(cat /var/run/ustreamer.pid); a=$(awk '{print $14+$15}' /proc/$p/stat
 	awk -v d=$((b - a)) -v l=$1 'BEGIN{printf "CPU %s ustreamer=%.2f%% (20 s)\n", l, d/20}'; }
 online() { curl -s --max-time 2 http://127.0.0.1:8080/state | tr -d ' \n' | grep -o '"online":[a-z]*' | head -1; }
 waitstate() { i=0; while [ "$(cat $SF 2>/dev/null)" != "$1" ] && [ $i -lt $2 ]; do sleep 1; i=$((i + 1)); done; echo "state=$(cat $SF 2>/dev/null || echo absent) after_s=$i"; }
-nctl() { ps | grep -c '[S]51-patched __run'; }
+# controller loops by exact argv ("sh <script> __run"); never matches this script itself
+nctl() { for c in /proc/[0-9]*/cmdline; do tr '\0' ' ' < $c 2>/dev/null; echo; done | grep -cE '(idle-controller|S51-patched) __run $'; }
 show() { echo "  $1: state=$(cat $SF 2>/dev/null || echo absent) $(online) controllers=$(nctl)"; }
 
 echo "== S3 live: default start (no marker)"; $S51 start; show started; waitstate paused 150; sleep 3; ust paused; show paused
@@ -68,4 +69,4 @@ t0=$(ms); $S51 stop > /dev/null; show "stopped while active (stop_ms=$(( $(ms) -
 echo "== S4: restart cycle from paused"; $S51 start > /dev/null; waitstate paused 150
 t0=$(ms); $S51 restart > /dev/null; show "restart (ms=$(( $(ms) - t0 )))"; waitstate paused 150; show "paused again"
 t0=$(ms); $S51 stop > /dev/null; show "final stop (stop_ms=$(( $(ms) - t0 )))"
-echo "orphans=$(ps | grep -cE '[c]amera-idle-controller|[S]51-patched')"
+echo "orphans=$(nctl) pidfile=$(cat /var/run/nebulaos-camera-idle-controller.pid 2>/dev/null || echo absent)"

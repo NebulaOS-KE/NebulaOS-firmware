@@ -725,7 +725,7 @@ EXERCISE_PROFILES.update({
         "if [ \"$SF0\" = absent ]; then rm -f $SF; else printf '%s' \"$SF0\" > $SF; fi; "
         "rm -f " + _LV + "/cam-lib.sh " + _LV + "/S51-patched " + _LV + "/s4-stop; fi; "
         "echo \"undo: state=$(cat /var/run/nebulaos-camera-idle-state 2>/dev/null || echo absent) "
-        "controllers=$(ps | grep -cE '[c]amera-idle-controller|[S]51-patched')\"",
+        "controller_loops=$(for c in /proc/[0-9]*/cmdline; do tr '\\0' ' ' < $c 2>/dev/null; echo; done | grep -cE '(idle-controller|S51-patched) __run $')\"",
         1500),
     "live-g6-dhcp": (". $T/lv_g6.sh", "rm -f " + _LV + "/g6script " + _LV + "/g6.log " + _LV + "/g6.err", 180),
     "live-g7-klippy": (
@@ -753,11 +753,11 @@ CAPTURE_PROFILES["live-pristine"] = (
     "echo \"debugfs=$(grep -c ' /sys/kernel/debug debugfs ' /proc/mounts) swaps=$(tail -n +2 /proc/swaps | awk '{print $1}' | tr '\\n' ' ')\"; "
     "echo \"camera_marker=$(cat /usr/data/nebulaos/maintenance/camera-idle-mode 2>/dev/null || echo absent) "
     "camera_state=$(cat /var/run/nebulaos-camera-idle-state 2>/dev/null || echo absent) "
-    "camera_controllers=$(ps | grep -cE '[c]amera-idle-controller|[S]51-patched')\"; "
+    "camera_controller_loops=$(for c in /proc/[0-9]*/cmdline; do tr '\\0' ' ' < $c 2>/dev/null; echo; done | grep -cE '(idle-controller|S51-patched) __run $')\"; "
     "echo \"locks=[$(ls -A /usr/data/nebulaos/updates/locks 2>/dev/null | tr '\\n' ' ')] "
     "wifi_marker=$(ls /usr/data/nebulaos/maintenance/wifi-boot-wait-mode 2>/dev/null || echo absent) "
     "diskswap_request=$(ls /usr/data/nebulaos/maintenance/diskswap-next-boot 2>/dev/null || echo absent)\"; "
-    "echo \"stray_processes=$(ps | grep -cE '[y]es$|[g]7poll|[g]8dry|[u]dhcpc -i wlan0 -f')\"; "
+    "echo \"stray_processes=$(for c in /proc/[0-9]*/cmdline; do tr '\\0' ' ' < $c 2>/dev/null; echo; done | grep -cE '^(yes |python3 [^ ]*(g7poll|g8dry)|udhcpc -i wlan0 -f)')\"; "
     "for f in /etc/init.d/S03nebulaos-diskswap /etc/init.d/S97nebulaos-display-qualified-apply /etc/init.d/S51nebulaos-camera-idle-controller "
     "/etc/nebulaos-camera-idle-controller.sh /etc/nebulaos/mcu_application_identify.py /etc/nebulaos/mcu_lifecycle.py; do "
     "echo \"$(sha256sum $f)\"; done; cat /etc/nebulaos-release 2>/dev/null | head -5; "
