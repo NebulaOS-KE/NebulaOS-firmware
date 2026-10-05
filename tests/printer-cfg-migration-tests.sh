@@ -642,6 +642,47 @@ else
 	fail "case D: migrate_moonraker_pin_include reported success for unrecognized legacy content"
 fi
 
+# --- BOOT-07: the managed-tree generation is already migrated -----------
+# The shipped steady state on every migrated device (seen live on ke-dev,
+# 2026-10-04): relative nebulaos/*.cfg includes. Must be a silent no-op:
+# rc 0, file byte-identical, no refusal backup, no ERROR line.
+for variant in full no-macros; do
+	tMT="$WORK/managed-$variant"; mkdir -p "$tMT/config" "$tMT/system"
+	{
+		echo '# NebulaOS Ender-3 V3 KE - managed-tree printer.cfg (live shape)'
+		for x in platform machine prtouch z_offset_probe calibration homing print filament camera beeper; do
+			echo "[include nebulaos/$x.cfg]"
+		done
+		[ "$variant" = full ] && { echo; echo '[include macros/*.cfg]'; }
+		echo
+		echo '#*# <---------------------- SAVE_CONFIG ---------------------->'
+		echo '#*# [bltouch]'
+		echo '#*# z_offset = 2.100'
+	} > "$tMT/config/printer.cfg"
+	cp "$tMT/config/printer.cfg" "$tMT/original.cfg"
+	logMT="$WORK/managed-$variant.log"
+	run_fn "$tMT/config" "$tMT/system" migrate_printer_cfg "$logMT"
+	[ "$(rc_of "$logMT")" = "0" ] && pass "BOOT-07 ($variant): managed-tree printer.cfg returns 0" \
+		|| fail "BOOT-07 ($variant): managed-tree printer.cfg returned $(rc_of "$logMT")"
+	cmp -s "$tMT/config/printer.cfg" "$tMT/original.cfg" && pass "BOOT-07 ($variant): printer.cfg byte-identical" \
+		|| fail "BOOT-07 ($variant): printer.cfg was modified"
+	[ -z "$(find "$tMT/system" -path '*printer-cfg-migration-refused*' -type f 2>/dev/null)" ] \
+		&& pass "BOOT-07 ($variant): no refusal backup written" \
+		|| fail "BOOT-07 ($variant): a refusal backup was written"
+	grep -q 'ERROR' "$logMT" && fail "BOOT-07 ($variant): an ERROR was logged ($(cat "$logMT"))" \
+		|| pass "BOOT-07 ($variant): no ERROR logged"
+done
+
+# Only half of the managed shape (platform without filament) is NOT taken as
+# migrated - it still falls through to the existing refusal.
+tMH="$WORK/managed-half"; mkdir -p "$tMH/config" "$tMH/system"
+printf '%s\n' '# half-managed fixture' '[include nebulaos/platform.cfg]' '[include nebulaos/machine.cfg]' > "$tMH/config/printer.cfg"
+cp "$tMH/config/printer.cfg" "$tMH/original.cfg"
+run_fn "$tMH/config" "$tMH/system" migrate_printer_cfg "$WORK/managed-half.log"
+[ "$(rc_of "$WORK/managed-half.log")" != "0" ] && cmp -s "$tMH/config/printer.cfg" "$tMH/original.cfg" \
+	&& pass "BOOT-07: a partial managed shape is still refused, untouched" \
+	|| fail "BOOT-07: a partial managed shape was accepted or modified ($(cat "$WORK/managed-half.log"))"
+
 echo ""
 echo "printer-cfg-migration-tests: $PASS passed, $FAIL failed, $SKIP skipped"
 [ "$FAIL" -eq 0 ]

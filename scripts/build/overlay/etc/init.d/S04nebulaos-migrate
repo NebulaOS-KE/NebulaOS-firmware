@@ -989,6 +989,19 @@ migrate_printer_cfg() {
 		&& grep -qxF '[include /etc/nebulaos/klipper/filament.cfg]' "$f" \
 		&& return 0
 
+	# BOOT-07 (2026-10-05): the generation after Case D is the managed tree
+	# migrate_printer_cfg_to_managed_tree() writes - the same includes made
+	# relative ([include nebulaos/*.cfg]). It is newer than anything this
+	# function migrates, so it is "already migrated" by the same two-line
+	# test. Without this, every managed-tree device (the shipped steady
+	# state) fell through to the refusal below: a false ERROR and a fresh
+	# timestamped backup of printer.cfg on every boot. Whether the
+	# nebulaos/*.cfg files exist is materialize_active_config()'s business,
+	# which runs right after this.
+	grep -qxF '[include nebulaos/platform.cfg]' "$f" \
+		&& grep -qxF '[include nebulaos/filament.cfg]' "$f" \
+		&& return 0
+
 	# Only a file that looks like one of this mission's own known old
 	# shapes is migrated automatically. Recognized by: it does NOT yet
 	# have the full new include set (checked above), the anchor line
