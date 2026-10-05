@@ -74,6 +74,7 @@ seed_log() {
 }
 APPS="${APPS:-/usr/data/nebulaos/apps}"
 SYSTEM="${SYSTEM:-/usr/data/nebulaos/system}"
+ENVS="${ENVS:-/usr/data/nebulaos/envs}"
 LOCKDIR="${LOCKDIR:-/usr/data/nebulaos/updates/locks}"
 # Overridable for tests (points fixtures at the same real, tracked shared
 # gate this script actually ships - see that file's own header).
@@ -356,14 +357,14 @@ try_venv_seed() {
 }
 
 setup_moonraker_env() {
-	envdir=/usr/data/nebulaos/envs/moonraker
+	envdir="$ENVS/moonraker"
 	# streaming_form_data.targets, not the bare package: that is the module
 	# Moonraker imports, and the one that imports smart_open. The bare
 	# `import streaming_form_data` passed on an image missing smart_open while
 	# Moonraker died at import.
 	moonraker_smoke="import tornado, numpy, streaming_form_data.targets"
 	recover_torn_venv "$envdir" "$moonraker_smoke"
-	if venv_is_usable "$envdir" "$moonraker_smoke"; then
+	if venv_validated_usable "$envdir" "$moonraker_smoke"; then
 		log "moonraker venv already present and matches this image's python ($envdir) - skipping"
 		return 0
 	fi
@@ -405,10 +406,10 @@ setup_moonraker_env() {
 # package installs, matching S56moonraker's own identical venv pattern
 # (S55klipper prefers this venv's python the same way).
 setup_klipper_env() {
-	envdir=/usr/data/nebulaos/envs/klipper
+	envdir="$ENVS/klipper"
 	klipper_smoke="import greenlet, cffi, jinja2, serial, can"
 	recover_torn_venv "$envdir" "$klipper_smoke"
-	if venv_is_usable "$envdir" "$klipper_smoke"; then
+	if venv_validated_usable "$envdir" "$klipper_smoke"; then
 		log "klipper venv already present and matches this image's python ($envdir) - skipping"
 		return 0
 	fi
@@ -475,6 +476,16 @@ EOF
 start() {
 	[ -d "$APPS" ] || { log "namespace not present yet ($APPS missing) - S02 should have created it, skipping"; exit 0; }
 
+	# BOOT-03: an explicit revalidation request (maintenance/revalidate-venvs)
+	# discards every venv validation stamp, so this boot and S05 run the full
+	# import checks. One-shot: consumed here, the stamps it removed are
+	# rewritten only by checks that pass.
+	if [ -e "$VENV_REVALIDATE_MARKER" ]; then
+		log "revalidation requested - discarding venv validation stamps"
+		venv_validation_reset
+		rm -f "$VENV_REVALIDATE_MARKER" 2>/dev/null || true
+	fi
+
 	# Nothing to do - already fully seeded from a prior boot. Skip the
 	# gate/pause/resume dance entirely rather than pausing services for
 	# no reason on every normal boot after the first.
@@ -487,8 +498,8 @@ start() {
 	# namespace is a state this device can genuinely be in.
 	if [ -e "$APPS/klipper/.git" ] && [ -e "$APPS/nebulaos-klipper-extensions/.git" ] \
 		&& [ -e "$APPS/moonraker/.git" ] && [ -e "$APPS/mainsail/index.html" ] \
-		&& venv_is_usable /usr/data/nebulaos/envs/moonraker "import tornado, numpy, streaming_form_data.targets" \
-		&& venv_is_usable /usr/data/nebulaos/envs/klipper "import greenlet, cffi, jinja2, serial, can"; then
+		&& venv_validated_usable "$ENVS/moonraker" "import tornado, numpy, streaming_form_data.targets" \
+		&& venv_validated_usable "$ENVS/klipper" "import greenlet, cffi, jinja2, serial, can"; then
 		log "all components already seeded - nothing to do"
 		return 0
 	fi

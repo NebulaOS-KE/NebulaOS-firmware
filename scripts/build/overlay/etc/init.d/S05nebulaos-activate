@@ -127,6 +127,7 @@ if [ -n "${NEBULAOS_VENV_LIB:-}" ] && [ -r "$NEBULAOS_VENV_LIB" ]; then
 else
 	log "WARNING: nebulaos-venv-lib.sh not found - treating the klipper venv as unusable"
 	venv_is_usable() { return 1; }
+	venv_validated_usable() { return 1; }
 fi
 
 # Records one app's activation decision. Appended as simple key=value lines
@@ -354,7 +355,11 @@ start() {
 	# in BOTH directions), and bind-mounting such a venv onto /root/klippy-env
 	# is worse than leaving it unmounted: Moonraker's update_manager would
 	# then infer a klipper venv that cannot execute.
-	if venv_is_usable "$NEBULAOS_ROOT/envs/klipper" "import greenlet, cffi, jinja2, serial, can"; then
+	# BOOT-04: the same stamp S04 maintains - this boot's S04 normally just
+	# validated (or stamp-matched) this exact environment, so the 2.6 s import
+	# check runs again only if its identity changed or no passing check is on
+	# record.
+	if venv_validated_usable "$NEBULAOS_ROOT/envs/klipper" "import greenlet, cffi, jinja2, serial, can"; then
 		bind_if_not_already "$NEBULAOS_ROOT/envs/klipper" /root/klippy-env
 	else
 		log "klipper venv at $NEBULAOS_ROOT/envs/klipper is absent or not usable by this image's python - leaving /root/klippy-env unmounted (S04nebulaos-factory-seed provisions/replaces it on the next seeding pass)"
