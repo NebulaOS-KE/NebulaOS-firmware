@@ -232,7 +232,8 @@ printf '#!/bin/sh\necho "wpa_state=COMPLETED"\n' > "$SB/bin/wpa_cli"
 chmod +x "$SB/bin/"*
 s01() { env PATH="$SB/bin:$PATH" NEBULAOS_WIFI_BOOT_WAIT_MARKER="$SB/maint/wifi-boot-wait-mode" \
 	NEBULAOS_WIFI_BOOT_WAIT_RESULT="$SB/result" NEBULAOS_WIFI_BOOT_WAIT_MIN=0 NEBULAOS_WIFI_BOOT_WAIT_FIXED_SLEEP=0 \
-	NEBULAOS_WIFI_UPTIME_SRC=/proc/uptime IFUP_RC="${IFUP_RC:-0}" sh "$SB/S01wifi" start > "$SB/out" 2>&1; }
+	NEBULAOS_WIFI_UPTIME_SRC=/proc/uptime IFUP_RC="${IFUP_RC:-0}" NEBULAOS_WLAN_SYSFS="${WLAN_SYSFS:-$SB}" \
+	NEBULAOS_WLAN_WAIT_TENTHS="${WLAN_TENTHS:-100}" sh "$SB/S01wifi" start > "$SB/out" 2>&1; }
 printf 'event-driven\n' > "$SB/maint/wifi-boot-wait-mode"
 IFUP_RC=0; s01; rc=$?
 [ $rc -eq 0 ] && grep -qx 'MODE=event-driven' "$SB/result" && grep -qx 'OUTCOME=associated' "$SB/result" \
@@ -243,6 +244,15 @@ IFUP_RC=1; s01; rc=$?; IFUP_RC=0
 [ $rc -eq 0 ] && grep -qx 'IFUP=failed-reported' "$SB/result" && pass || fail "S01 with failing ifup did not report safely (rc=$rc)"
 [ "$(grep -c '^ifup wlan0' "$SB/calls")" = 3 ] && pass || fail "S01 did not run exactly one ifup per boot"
 grep -hv '^[[:space:]]*#' "$SB/S01wifi" "$LIB" | grep -qw 'reboot' && fail "S01/lib can reboot" || pass
+# BOOT-06: wlan0 appears late -> S01 waits for it (bounded), then proceeds
+rm -rf "$SB/late-wlan0"; ( sleep 0.4; mkdir -p "$SB/late-wlan0" ) &
+WLAN_SYSFS="$SB/late-wlan0"; s01; rc=$?; WLAN_SYSFS=
+[ $rc -eq 0 ] && grep -q 'waited 0\.[3-9] s for wlan0' "$SB/out" && grep -c '^ssd -S' "$SB/calls" | grep -qx 4 && pass \
+	|| fail "S01 did not wait for a late wlan0 ($(cat "$SB/out"))"
+# wlan0 never appears -> bounded, boot continues, wpa_supplicant still started once
+s0=$(date +%s); WLAN_SYSFS="$SB/never-wlan0"; WLAN_TENTHS=5; s01; rc=$?; WLAN_SYSFS=; WLAN_TENTHS=; s1=$(date +%s)
+[ $rc -eq 0 ] && grep -q 'wlan0 did not appear' "$SB/out" && [ $((s1 - s0)) -le 3 ] && pass \
+	|| fail "S01 missing-wlan0 case not bounded/safe (rc=$rc $((s1 - s0))s, $(cat "$SB/out"))"
 
 echo ""
 echo "$PASS passed, $FAIL failed"

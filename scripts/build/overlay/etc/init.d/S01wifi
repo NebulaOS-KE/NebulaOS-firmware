@@ -106,6 +106,22 @@ start() {
 		echo "S01wifi: no usable Wi-Fi config path, skipping"
 		return 0
 	fi
+	# BOOT-06: brcmfmac registers wlan0 asynchronously, and the kernel no
+	# longer holds root for 2 s after the SDIO insert, so userspace can get
+	# here first (measured before the change: wlan0 up at ~1.7 s, root at
+	# 3.1 s; after it root mounts at ~1.1 s). Wait for the interface, bounded
+	# to 10 s; never hold the boot on Wi-Fi.
+	_wlan_sysfs="${NEBULAOS_WLAN_SYSFS:-/sys/class/net/wlan0}"
+	_wlan_wait=0
+	while [ ! -e "$_wlan_sysfs" ] && [ "$_wlan_wait" -lt "${NEBULAOS_WLAN_WAIT_TENTHS:-100}" ]; do
+		sleep 0.1
+		_wlan_wait=$((_wlan_wait + 1))
+	done
+	if [ -e "$_wlan_sysfs" ]; then
+		[ "$_wlan_wait" -gt 0 ] && echo "S01wifi: waited $((_wlan_wait / 10)).$((_wlan_wait % 10)) s for wlan0"
+	else
+		echo "S01wifi: wlan0 did not appear within $((_wlan_wait / 10)) s - continuing (Wi-Fi may be unavailable this boot)"
+	fi
 	if [ -f /etc/nebulaos-stable-mac.sh ]; then
 		. /etc/nebulaos-stable-mac.sh
 		nebulaos_stabilize_iface_mac wlan0 || true
