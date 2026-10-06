@@ -126,7 +126,9 @@ check_vendor_pin pellcorp-creality "$PELLCORP_CREALITY_PIN" \
 # $(TOPDIR)/local.mk, so it genuinely has nowhere else to live.
 #
 # Anything else appearing here is an UNMET migration goal, not something to
-# add to this list.
+# add to this list. NebulaOS changes to Buildroot packages go through
+# br2-external/patches/<package>/<version>/ (BR2_GLOBAL_PATCH_DIR, NG1), never
+# through edits of this tree.
 check_vendor_pin buildroot-x2000 "$BUILDROOT_PIN" \
 	"$BUILDROOT_REPO" 0 \
 	local.mk
@@ -1865,7 +1867,7 @@ if [ -n "$SEED_MAINSAIL_MACROS_CONTENT" ]; then
 fi
 
 # --- Boot/camera optimization test build (2026-10-05): read back from the image ---
-echo "=== BOOT-01..09 / CAM-01R / CAM-05 in the built rootfs ==="
+echo "=== BOOT-01..09 / CAM-05 / M1 / S1-S4 in the built rootfs ==="
 _img_cat() { debugfs -R "cat $1" ${IMAGES}/rootfs.ext2 2>/dev/null; }
 _img_has() { # label path fixed-string [absent]
 	if _img_cat "$2" | grep -qF -- "$3"; then
@@ -1890,12 +1892,28 @@ _img_has "BOOT-05: S56 runs the update_manager check in the background" /etc/ini
 _img_has "BOOT-07: migrate accepts the managed-tree printer.cfg" /etc/init.d/S04nebulaos-migrate "grep -qxF '[include nebulaos/platform.cfg]' \"\$f\" \\"
 _img_has "BOOT-08: S03 enables the eMMC swap only for maintenance boots" /etc/init.d/S03nebulaos-diskswap "boot_maintenance_reason()"
 _img_has "BOOT-09: rcS writes per-script timing" /etc/init.d/rcS "/run/nebulaos-boot-scripts.log"
-if _img_cat /etc/nebulaos-camera-idle-controller.sh | sed -n '/^nebulaos_camera_idle_requested_mode()/,/^}/p' | grep -q "printf 'C2'" \
-	&& ! _img_cat /etc/nebulaos-camera-idle-controller.sh | sed -n '/^nebulaos_camera_idle_requested_mode()/,/^}/p' | grep -q '! -e "$marker"'; then
-	echo "OK   CAM-01R: camera idle pause is opt-in (no marker -> C0)"
+# S3 (2026-10-05): run the shipped mode function itself - no marker must
+# give C2, a "C0" marker C0.
+_s3_fn=$(_img_cat /etc/nebulaos-camera-idle-controller.sh | sed -n '/^nebulaos_camera_idle_requested_mode()/,/^}/p')
+_s3_tmp=$(mktemp -d)
+printf 'C0\n' > "$_s3_tmp/c0"
+_s3_none=$(sh -c "$_s3_fn"'
+nebulaos_camera_idle_requested_mode "$1"' s3 "$_s3_tmp/absent" 2>/dev/null)
+_s3_c0=$(sh -c "$_s3_fn"'
+nebulaos_camera_idle_requested_mode "$1"' s3 "$_s3_tmp/c0" 2>/dev/null)
+rm -rf "$_s3_tmp"
+if [ "$_s3_none" = C2 ] && [ "$_s3_c0" = C0 ]; then
+	echo "OK   S3: camera idle auto-pause is the default (no marker -> C2, C0 marker -> C0)"
 else
-	echo "MISS CAM-01R: camera idle default is not C0"
+	echo "MISS S3: camera idle default wrong (no marker -> '$_s3_none', C0 marker -> '$_s3_c0')"
 fi
+_img_has "S4: S51 stop waits for the controller loop" /etc/init.d/S51nebulaos-camera-idle-controller 'while [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && [ "$i" -lt 20 ]; do'
+_img_has "S4: S51 stop clears the idle state after a successful resume" /etc/init.d/S51nebulaos-camera-idle-controller 'rm -f "${NEBULAOS_CAMERA_IDLE_STATE_FILE:-/var/run/nebulaos-camera-idle-state}"'
+_img_has "M1: MCU identify budget default 15 s" /etc/nebulaos/mcu_application_identify.py "DEFAULT_APP_IDENTIFY_TIMEOUT = 15.0"
+_img_has "M1: get_application_identity uses the budget" /etc/nebulaos/mcu_application_identify.py "def get_application_identity(port, baud, timeout=None, klippy_lib_path=None):"
+_img_has "S1: S03 sizes the swapfile with ls -ln" /etc/init.d/S03nebulaos-diskswap 'actual_size=$(ls -ln "$SWAPFILE" 2>/dev/null | awk '"'"'{print $5}'"'"')'
+_img_has "S1: S03 never reads the swapfile with wc -c" /etc/init.d/S03nebulaos-diskswap 'wc -c < "$SWAPFILE"' absent
+_img_has "S2: S97 exits without a qualification_complete=1 config" /etc/init.d/S97nebulaos-display-qualified-apply 'is not qualification_complete=1 - nothing to apply'
 _cam05_img=$(debugfs -R "cat /usr/bin/ustreamer" ${IMAGES}/rootfs.ext2 2>/dev/null | sha256sum | cut -d' ' -f1)
 _cam05_built="$REPO_ROOT/vendor/k1-ustreamer/build/ustreamer-src/src/ustreamer.bin"
 if [ -f "$_cam05_built" ] && [ "$_cam05_img" = "$(sha256sum "$_cam05_built" | cut -d' ' -f1)" ] \
@@ -1903,6 +1921,30 @@ if [ -f "$_cam05_built" ] && [ "$_cam05_img" = "$(sha256sum "$_cam05_built" | cu
 	echo "OK   CAM-05: /usr/bin/ustreamer is the binary built from the patched source ($_cam05_img)"
 else
 	echo "MISS CAM-05: /usr/bin/ustreamer does not match the CAM-05 patched build"
+fi
+
+# NG1 (2026-10-05): Buildroot's python-tornado 6.4.2 CVE-2025-67724 backport
+# needs httputil._ABNF; without NebulaOS's 0004 patch every Moonraker HTTP
+# error with a reason never reaches the client. REQUIRED: the patch was
+# applied by Buildroot (global patch dir), the built source defines
+# _ABNF.reason_phrase, the validation in web.py is still there, and the
+# shipped bytecode carries both.
+echo "=== NG1 python-tornado _ABNF ==="
+_ng1_bd=$(ls -d "$REPO_ROOT"/vendor/buildroot-x2000/output/build/python-tornado-* 2>/dev/null | head -1)
+_ng1_ok=1
+grep -q '/0004-httputil-add-_ABNF-reason_phrase-for-CVE-2025-67724-backport.patch$' "$_ng1_bd/.applied_patches_list" 2>/dev/null || _ng1_ok=0
+grep -q '^class _ABNF:' "$_ng1_bd/tornado/httputil.py" 2>/dev/null || _ng1_ok=0
+grep -q '^    reason_phrase = re.compile(' "$_ng1_bd/tornado/httputil.py" 2>/dev/null || _ng1_ok=0
+grep -q '_ABNF.reason_phrase.fullmatch' "$_ng1_bd/tornado/web.py" 2>/dev/null || _ng1_ok=0
+_ng1_pyc=$(_img_cat /usr/lib/python3.12/site-packages/tornado/httputil.pyc | strings)
+printf '%s\n' "$_ng1_pyc" | grep -qx '_ABNF' || _ng1_ok=0
+printf '%s\n' "$_ng1_pyc" | grep -qx 'reason_phrase' || _ng1_ok=0
+_img_cat /usr/lib/python3.12/site-packages/tornado/web.pyc | strings | grep -qx 'reason_phrase' || _ng1_ok=0
+if [ "$_ng1_ok" = 1 ]; then
+	echo "OK   NG1: python-tornado 0004 applied; _ABNF.reason_phrase in the built source and the shipped bytecode; web.py validation intact"
+else
+	echo "MISS NG1: python-tornado 0004 _ABNF fix not verified in $_ng1_bd / the image   <== REQUIRED"
+	MISS_REQUIRED=$((MISS_REQUIRED + 1))
 fi
 
 if [ "$MISS_REQUIRED" -gt 0 ]; then

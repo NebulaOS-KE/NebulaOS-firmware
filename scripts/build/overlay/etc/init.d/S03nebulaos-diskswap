@@ -84,7 +84,7 @@ prepare_swapfile() {
 	# etc.). Recreate from scratch if anything looks wrong.
 	valid=false
 	if [ -f "$SWAPFILE" ]; then
-		actual_size=$(wc -c < "$SWAPFILE" 2>/dev/null)
+		actual_size=$(ls -ln "$SWAPFILE" 2>/dev/null | awk '{print $5}')
 		owner=$(ls -ldn "$SWAPFILE" 2>/dev/null | awk '{print $3":"$4}')
 		perms=$(ls -ld "$SWAPFILE" 2>/dev/null | cut -c1-10)
 		if [ "$actual_size" = "$SWAP_SIZE_BYTES" ] && [ "$owner" = "${SWAP_OWNER:-0:0}" ] && [ "$perms" = "-rw-------" ]; then
@@ -112,7 +112,7 @@ prepare_swapfile() {
 		fi
 		chmod 600 "$SWAPFILE"
 
-		actual_size=$(wc -c < "$SWAPFILE" 2>/dev/null)
+		actual_size=$(ls -ln "$SWAPFILE" 2>/dev/null | awk '{print $5}')
 		if [ "$actual_size" != "$SWAP_SIZE_BYTES" ]; then
 			log "ERROR: $SWAPFILE allocated as $actual_size bytes, expected $SWAP_SIZE_BYTES - removing, no disk swap tier"
 			rm -f "$SWAPFILE"

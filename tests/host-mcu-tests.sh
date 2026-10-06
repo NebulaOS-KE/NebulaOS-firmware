@@ -164,7 +164,9 @@ if command -v git >/dev/null 2>&1 && git -C "$REPO_ROOT" rev-parse --git-dir >/d
     # uncommitted edit - still fails.
     #   3a7a81762b68: pyserial-3.5-compatible open in the MCU guard's hardware
     #   fallback (ke-dev 2026-10-03, final qualification test build).
-    GD32_REVIEWED="3a7a81762b6804e2cedda495112802da25850ed6"
+    #   f0e87e08d2ee: M1 identify budget 15 s (live-verified on ke-dev
+    #   2026-10-05, _scratch/LIVE-FINAL-FIX-VERIFICATION.md; approved).
+    GD32_REVIEWED="3a7a81762b6804e2cedda495112802da25850ed6 f0e87e08d2ee8430e1a1dfe59d473527f8fe8463"
     if [ -n "$MERGE_BASE" ]; then
         UNREVIEWED=""
         for c in $(git -C "$REPO_ROOT" rev-list "$MERGE_BASE"..HEAD -- $GD32_FILES 2>/dev/null); do

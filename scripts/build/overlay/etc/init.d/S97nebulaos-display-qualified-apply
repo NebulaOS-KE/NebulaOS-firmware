@@ -148,6 +148,21 @@ start() {
 	fi
 	touch "$MARKER"
 
+	# S2 (2026-10-05): nothing to apply without a qualification_complete=1
+	# configuration - exit before the health wait instead of polling for
+	# HEALTH_RETRIES * HEALTH_DELAY (65 s on every boot of every device that
+	# has never been display-qualified, live-measured on ke-dev). The
+	# qualified path below is unchanged; ndq_apply_all still validates the
+	# whole file before touching anything.
+	if [ ! -f "$NDQ_CONFIG_FILE" ]; then
+		log "no display-qualified configuration ($NDQ_CONFIG_FILE) - nothing to apply"
+		exit 0
+	fi
+	if [ "$(ndq_get_field "$NDQ_CONFIG_FILE" qualification_complete 2>/dev/null)" != "1" ]; then
+		log "$NDQ_CONFIG_FILE is not qualification_complete=1 - nothing to apply"
+		exit 0
+	fi
+
 	if ! wait_for_health; then
 		log "printer stack (Klipper/Moonraker), GuppyScreen, networking, or the display itself never confirmed healthy after $((HEALTH_RETRIES * HEALTH_DELAY))s - doing nothing, both drivers remain at their own safe boot defaults"
 		exit 0

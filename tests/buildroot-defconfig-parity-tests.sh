@@ -168,9 +168,13 @@ assert_val BR2_ROOTFS_OVERLAY "\"$X/overlay\""
 assert_val BR2_ROOTFS_POST_BUILD_SCRIPT "\"$X/post-build.sh\""
 assert_val BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES "\"$X/nebulaos-kernel-buildenv.config\""
 assert_val BR2_PACKAGE_BUSYBOX_CONFIG_FRAGMENT_FILES "\"$X/halley5-nebulaos-busybox-fragment.config\""
+# NG1 (2026-10-05): the global patch dir is back, scoped to br2-external and
+# carrying only version-scoped NebulaOS package patches (python-tornado/6.4.2:
+# the missing _ABNF of Buildroot's CVE-2025-67724 backport). 02-configure
+# refuses a version directory that no longer matches the package.
+assert_val BR2_GLOBAL_PATCH_DIR '"$(BR2_EXTERNAL_NEBULAOS_PATH)/patches"'
 # Deliberately dropped by the migration - asserted so their removal is a tested
 # fact rather than an edit that can regress.
-assert_empty BR2_GLOBAL_PATCH_DIR
 assert_empty BR2_ROOTFS_POST_IMAGE_SCRIPT
 assert_empty BR2_ROOTFS_POST_SCRIPT_ARGS
 

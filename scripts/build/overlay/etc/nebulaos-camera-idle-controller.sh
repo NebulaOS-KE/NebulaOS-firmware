@@ -13,14 +13,13 @@
 # can never take down the already-hardware-proven crash-recovery S50webcam
 # provides.
 #
-# Default state: C0 (idle pause OFF; CAM-01R, 2026-10-05). The 2026-10-03
-# session showed a paused camera lets the camera, hub and root port
-# runtime-suspend and resumes in 1.26 s (HWDP-DWC-4/6), but the 2026-10-04
-# qualification measured the paused ustreamer at 36 % of one CPU (it
-# re-renders and software-encodes its 1080p placeholder every second)
-# against 0.7 % unpaused and idle - net-negative. Writing C2 to the
-# maintenance marker opts in. CAM-05 caches that placeholder; the default
-# only flips back after CAM-05 is measured on hardware.
+# Default state: C2 (idle auto-pause ON; S3, 2026-10-05). CAM-01R had made
+# C0 the default on 2026-10-05 because the paused ustreamer re-encoded its
+# 1080p placeholder every second (36 % of one CPU, 2026-10-04). CAM-05
+# caches that placeholder; measured on ke-dev the paused ustreamer then uses
+# 0.10 % against 0.65 % unpaused-idle, the camera, hub and root port
+# runtime-suspend, and a viewer resumes it in 0.06-1.4 s. A maintenance
+# marker containing exactly "C0" opts out.
 #
 # Viewer-activity signal: rather than depend on a live client-count query
 # from ustreamer (unconfirmed to exist from source - see the source
@@ -58,16 +57,17 @@ NEBULAOS_CAMERA_IDLE_RESUME_RETRIES="${NEBULAOS_CAMERA_IDLE_RESUME_RETRIES:-5}"
 NEBULAOS_CAMERA_IDLE_RESUME_BACKOFF_BASE="${NEBULAOS_CAMERA_IDLE_RESUME_BACKOFF_BASE:-1}"
 NEBULAOS_CAMERA_IDLE_STATE_FILE="${NEBULAOS_CAMERA_IDLE_STATE_FILE:-/var/run/nebulaos-camera-idle-state}"
 
-# Prints the requested mode. No marker -> "C0" (the default, CAM-01R). A
-# marker containing exactly "C2" opts in; "C0", any other content, or a
-# marker path that exists but cannot be read as a file gives "C0" (camera
-# always active).
+# Prints the requested mode. S3 (2026-10-05): idle auto-pause is the
+# product default - no marker, or any marker content other than exactly "C0",
+# gives "C2". Only a marker containing exactly "C0" opts out (camera always
+# active). Live on ke-dev: paused ustreamer 0.10 % CPU vs 0.65 % idle-active,
+# DWC2 IRQ thread ~0.75 % -> ~0.05 %, viewer resume 0.06-1.4 s, 1080p30.
 nebulaos_camera_idle_requested_mode() {
 	marker="${1:-$NEBULAOS_CAMERA_IDLE_MARKER}"
-	if [ -f "$marker" ] && [ "$(cat "$marker" 2>/dev/null)" = "C2" ]; then
-		printf 'C2'
-	else
+	if [ -f "$marker" ] && [ "$(cat "$marker" 2>/dev/null)" = "C0" ]; then
 		printf 'C0'
+	else
+		printf 'C2'
 	fi
 }
 

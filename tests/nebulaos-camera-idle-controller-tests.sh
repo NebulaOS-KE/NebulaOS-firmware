@@ -65,43 +65,34 @@ reset_curl_log() { : > "$FAKE_CURL_LOG"; echo "200" > "$FAKE_CURL_CODE_FILE"; }
 # Mode marker parsing
 # ============================================================
 
-# --- no marker -> C0 (idle pause OFF, the default since CAM-01R). ---
-mode=$(nebulaos_camera_idle_requested_mode "$WORK/marker-absent")
-[ "$mode" = "C0" ] && pass || fail "no marker produced '$mode', expected C0 (default off)"
-
-# --- fresh image: the shipped default marker path is absent -> C0. ---
-mode=$(NEBULAOS_CAMERA_IDLE_MARKER="$WORK/fresh/maintenance/camera-idle-mode" nebulaos_camera_idle_requested_mode)
-[ "$mode" = "C0" ] && pass || fail "fresh image (no marker at the default path) produced '$mode', expected C0"
-# --- the image ships no marker that would turn it on ---
+# S3 (2026-10-05): idle auto-pause is the default. Only a marker containing
+# exactly "C0" opts out; anything else (absent, C2, garbage, empty, a
+# directory) is the product default C2.
+for c in absent fresh c2 garbage empty dir c0; do
+	m="$WORK/marker-$c"; rm -rf "$m"
+	case $c in
+	c0) printf 'C0\n' > "$m"; want=C0 ;;
+	c2) printf 'C2\n' > "$m"; want=C2 ;;
+	garbage) printf 'banana\n' > "$m"; want=C2 ;;
+	empty) : > "$m"; want=C2 ;;
+	dir) mkdir -p "$m"; want=C2 ;;
+	*) want=C2 ;;
+	esac
+	if [ $c = fresh ]; then
+		mode=$(NEBULAOS_CAMERA_IDLE_MARKER="$WORK/fresh/maintenance/camera-idle-mode" nebulaos_camera_idle_requested_mode)
+	else
+		mode=$(nebulaos_camera_idle_requested_mode "$m")
+	fi
+	[ "$mode" = "$want" ] && pass || fail "S3: marker '$c' produced '$mode', expected $want"
+done
+# a "C0" with trailing whitespace inside the line is not an opt-out (exact match, as C2 was before)
+printf 'C0 \n' > "$WORK/marker-c0sp"
+[ "$(nebulaos_camera_idle_requested_mode "$WORK/marker-c0sp")" = C2 ] && pass || fail "S3: 'C0 ' was treated as the opt-out"
+# --- the image ships no marker (a shipped C0 would silently disable the default) ---
 [ ! -e "$SCRIPT_DIR/../scripts/build/overlay/usr/data/nebulaos/maintenance/camera-idle-mode" ] && pass \
 	|| fail "the overlay ships a camera-idle-mode marker"
 
-# --- marker containing C0 -> C0 (explicit disable). ---
-printf 'C0\n' > "$WORK/marker-c0"
-mode=$(nebulaos_camera_idle_requested_mode "$WORK/marker-c0")
-[ "$mode" = "C0" ] && pass || fail "a C0 marker produced '$mode', expected C0 (opt-out)"
-
-# --- marker containing C2 -> C2 (explicit opt-in still honoured). ---
-printf 'C2\n' > "$WORK/marker-c2"
-mode=$(nebulaos_camera_idle_requested_mode "$WORK/marker-c2")
-[ "$mode" = "C2" ] && pass || fail "a C2 marker produced '$mode', expected C2"
-
-# --- unrecognized marker content fails safe to C0. ---
-printf 'banana\n' > "$WORK/marker-garbage"
-mode=$(nebulaos_camera_idle_requested_mode "$WORK/marker-garbage")
-[ "$mode" = "C0" ] && pass || fail "a garbage marker produced '$mode', expected C0 (fail-safe)"
-
-# --- empty marker file fails safe to C0. ---
-: > "$WORK/marker-empty"
-mode=$(nebulaos_camera_idle_requested_mode "$WORK/marker-empty")
-[ "$mode" = "C0" ] && pass || fail "an empty marker produced '$mode', expected C0 (fail-safe)"
-
-# --- a marker path that exists but is not a readable file fails safe to C0. ---
-mkdir -p "$WORK/marker-dir"
-mode=$(nebulaos_camera_idle_requested_mode "$WORK/marker-dir")
-[ "$mode" = "C0" ] && pass || fail "a directory at the marker path produced '$mode', expected C0 (fail-safe)"
-
-# --- S51 init script: default does not start the controller, C2 does, C0 does not, restart stops with a resume. ---
+# --- S51 init script: default starts the controller, C2 does, C0 does not, restart stops with a resume. ---
 S51="$SCRIPT_DIR/../scripts/build/overlay/etc/init.d/S51nebulaos-camera-idle-controller"
 SSD_LOG="$WORK/ssd.log"
 cat > "$FAKE_BIN/start-stop-daemon" <<'EOF'
@@ -116,7 +107,7 @@ run_s51() { # marker action
 }
 : > "$SSD_LOG"; reset_curl_log
 run_s51 "$WORK/marker-absent" start
-[ ! -s "$SSD_LOG" ] && pass || fail "S51 start with no marker launched the controller (default must be off)"
+grep -q '^ssd -S .* __run' "$SSD_LOG" && pass || fail "S3: S51 start with no marker did not launch the controller (default C2)"
 : > "$SSD_LOG"
 run_s51 "$WORK/marker-c2" start
 grep -q '^ssd -S .* __run' "$SSD_LOG" && pass || fail "S51 start with a C2 marker did not launch the controller (opt-in)"
@@ -130,6 +121,54 @@ if grep -q '^ssd -K' "$SSD_LOG" && grep -q '^ssd -S .* __run' "$SSD_LOG" && grep
 else
 	fail "S51 restart must stop (with a resume) and start the controller again"
 fi
+reset_curl_log
+
+# --- S4 (2026-10-05): stop waits for the loop, resumes, then clears the state ---
+# Fake loop: on TERM it finishes its "tick" 1.5 s later and writes "paused"
+# (the race the old stop() lost), then exits. ssd -K sends it TERM.
+cat > "$FAKE_BIN/start-stop-daemon" <<'EOF2'
+#!/bin/sh
+echo "ssd $*" >> "$SSD_LOG"
+case " $* " in *" -K "*) p=; prev=; for a; do [ "$prev" = -p ] && p=$a; prev=$a; done
+	[ -n "$p" ] && [ -f "$p" ] && kill -TERM "$(cat "$p")" 2>/dev/null ;; esac
+exit 0
+EOF2
+chmod +x "$FAKE_BIN/start-stop-daemon"
+S4PID="$WORK/s4.pid"; S4SF="$WORK/s4-state"
+s4_loop() { # writes $S4PID
+	sh -c 'trap "sleep 1.5; printf paused > \"$1\"; exit 0" TERM; while :; do sleep 0.1; done' s4 "$S4SF" &
+	echo $! > "$S4PID"; sleep 0.3
+}
+s4_stop() {
+	_t0=$(date +%s)
+	( NEBULAOS_CAMERA_IDLE_MARKER="$WORK/marker-absent" NEBULAOS_CAMERA_IDLE_PIDFILE="$S4PID" \
+	  NEBULAOS_CAMERA_IDLE_STATE_FILE="$S4SF"; set -- stop; . "$S51" ) >/dev/null 2>&1
+	S4_SECS=$(( $(date +%s) - _t0 ))
+}
+# paused stop, resume OK -> state cleared after the loop exited, pidfile gone, no orphan
+printf paused > "$S4SF"; s4_loop; lp=$(cat "$S4PID"); reset_curl_log
+s4_stop
+[ ! -e "$S4SF" ] && pass || fail "S4: state after stop while paused is '$(cat "$S4SF" 2>/dev/null)', expected cleared"
+[ ! -e "$S4PID" ] && pass || fail "S4: pidfile left behind"
+kill -0 "$lp" 2>/dev/null && fail "S4: controller loop still running after stop" || pass
+grep -q '/resume' "$FAKE_CURL_LOG" && pass || fail "S4: stop did not resume the camera"
+[ "$S4_SECS" -le 4 ] && pass || fail "S4: stop took ${S4_SECS}s"
+# active stop -> cleared as well
+printf active > "$S4SF"; s4_loop; reset_curl_log; s4_stop
+[ ! -e "$S4SF" ] && pass || fail "S4: state after stop while active is '$(cat "$S4SF" 2>/dev/null)', expected cleared"
+# resume fails -> truthful state kept
+printf paused > "$S4SF"; s4_loop; reset_curl_log; echo 500 > "$FAKE_CURL_CODE_FILE"; s4_stop
+[ "$(cat "$S4SF" 2>/dev/null)" = paused ] && pass || fail "S4: failed resume did not keep the truthful 'paused' state"
+reset_curl_log
+# a loop that ignores TERM: stop is bounded (~10 s) and still resumes
+sh -c 'trap "" TERM; while :; do sleep 0.1; done' & hung=$!; echo $hung > "$S4PID"; printf paused > "$S4SF"
+s4_stop; kill -9 $hung 2>/dev/null
+[ "$S4_SECS" -ge 9 ] && [ "$S4_SECS" -le 13 ] && [ ! -e "$S4SF" ] && pass || fail "S4: stop with a stuck loop took ${S4_SECS}s / state '$(cat "$S4SF" 2>/dev/null)'"
+# no pidfile at all (controller never started, C0): stop is immediate and harmless
+rm -f "$S4PID" "$S4SF"; s4_stop
+[ "$S4_SECS" -le 1 ] && pass || fail "S4: stop without a controller took ${S4_SECS}s"
+# after stop, the next run starts from "active" (grace honoured), not a stale "paused"
+[ "$(NEBULAOS_CAMERA_IDLE_STATE_FILE="$S4SF" nebulaos_camera_idle_read_state)" = active ] && pass || fail "S4: next start would not begin active"
 reset_curl_log
 
 # --- no camera-idle code path opens the video node to detect the camera. ---

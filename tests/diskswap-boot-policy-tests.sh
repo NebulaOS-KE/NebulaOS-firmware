@@ -153,5 +153,66 @@ MG="$OVERLAY/usr/libexec/nebulaos-memguard"
 grep -q 'MG_DISKSWAP_POLICY="${MG_DISKSWAP_POLICY:-maintenance}"' "$MG" && pass || fail "memguard default diskswap policy changed"
 grep -q 'mg_diskswap_reconcile' "$MG" && pass || fail "memguard reconcile removed"
 
+# --- S1 (2026-10-05): size from metadata, never by reading the file ---------
+# The image's BusyBox has no `stat` (and no `timeout`); `wc -c <file` reads the
+# whole 128 MiB swapfile on every boot (2.9 s live). Size comes from `ls -ln`.
+grep -n 'actual_size=' "$S03" | grep -v 'ls -ln "$SWAPFILE"' | grep -q . && fail "S03 sizes the swapfile without ls -ln" || pass
+[ "$(grep -c 'actual_size=$(ls -ln "$SWAPFILE" 2>/dev/null | awk '"'"'{print $5}'"'"')' "$S03")" = 2 ] && pass || fail "S03 does not use the ls -ln size check in both places"
+grep -nE '(^|[^a-z_])(wc -c|stat |timeout )' "$S03" | grep -v '^\s*[0-9]*:\s*#' | grep -q . && fail "S03 uses wc -c/stat/timeout (not in the image BusyBox or reads the file)" || pass
+# poisoned PATH: stat and wc fail loudly if anything calls them
+mkdir -p "$WORK/poison"
+for t in stat wc timeout; do printf '#!/bin/sh\necho "%s $*" >> "$POISON_LOG"\nexit 97\n' "$t" > "$WORK/poison/$t"; chmod +x "$WORK/poison/$t"; done
+runp() { # args...
+	env PATH="$WORK/poison:$PATH" POISON_LOG="$C/poison" NEBULAOS_ROOT="$NB" DATA_MOUNT="$C/data" SEEDS="$C/seeds" \
+		PROC_SWAPS="$C/swaps" PROC_MOUNTS="$C/mounts" SWAP_SIZE_BYTES=1048576 SWAP_OWNER="${CASE_OWNER:-$OWNER}" \
+		SWAPON="$WORK/bin/fswapon" SWAPOFF="$WORK/bin/fswapoff" MKSWAP="$WORK/bin/fmkswap" CALLS="$C/calls" \
+		sh "$S03" "$@" > "$C/out" 2>&1
+}
+sz() { ls -ln "$1" | awk '{print $5}'; }
+F=
+s1case() { # name setup-kind expect(keep|recreate|refuse)
+	new_case "s1-$1"; F="$NB/system/swapfile"; CASE_OWNER=
+	case $2 in
+	missing) ;;
+	valid) head -c 1048576 /dev/zero > "$F"; chmod 600 "$F" ;;
+	short) head -c 524288 /dev/zero > "$F"; chmod 600 "$F" ;;
+	long) head -c 2097152 /dev/zero > "$F"; chmod 600 "$F" ;;
+	empty) : > "$F"; chmod 600 "$F" ;;
+	perms) head -c 1048576 /dev/zero > "$F"; chmod 644 "$F" ;;
+	owner) head -c 1048576 /dev/zero > "$F"; chmod 600 "$F"; CASE_OWNER="4242:4242" ;;
+	sparse) : > "$F"; truncate -s 1048576 "$F" 2>/dev/null || head -c 1048576 /dev/zero > "$F"; chmod 600 "$F" ;;
+	dir) mkdir "$F" ;;
+	symlink) head -c 1048576 /dev/zero > "$C/real"; chmod 600 "$C/real"; ln -s "$C/real" "$F" ;;
+	esac
+	runp enable; rc=$?
+	[ ! -s "$C/poison" ] && pass || fail "S1 $1: called $(cat "$C/poison")"
+	case $3 in
+	keep) [ $rc -eq 0 ] && [ "$(calls mkswap)" = 0 ] && ! grep -q creating "$C/out" && active && pass \
+		|| fail "S1 $1: valid file was not kept as is (rc=$rc, $(cat "$C/out"))" ;;
+	recreate) [ $rc -eq 0 ] && [ "$(calls mkswap)" = 1 ] && grep -q creating "$C/out" && [ -f "$F" ] && [ ! -L "$F" ] \
+		&& [ "$(sz "$F")" = 1048576 ] && [ "$(ls -ln "$F" | cut -c1-10)" = "-rw-------" ] && active && pass \
+		|| fail "S1 $1: not recreated correctly (rc=$rc, $(cat "$C/out"))" ;;
+	refuse) [ $rc -ne 0 ] && [ -d "$F" ] && [ "$(calls mkswap)" = 0 ] && ! active && pass \
+		|| fail "S1 $1: non-regular path not refused (rc=$rc)" ;;
+	esac
+}
+s1case valid valid keep
+s1case missing missing recreate
+s1case short short recreate
+s1case long long recreate
+s1case empty empty recreate
+s1case perms perms recreate
+s1case owner owner recreate
+s1case sparse sparse keep
+s1case dir dir refuse
+s1case symlink symlink recreate
+# normal boot with the poisoned PATH: prepared, left OFF, nothing read
+new_case s1-boot; runp start; rc=$?
+[ $rc -eq 0 ] && ! active && [ "$(sz "$NB/system/swapfile")" = 1048576 ] && [ ! -s "$C/poison" ] && pass \
+	|| fail "S1 normal boot changed (rc=$rc active=$(active && echo yes || echo no))"
+runp start; [ "$(calls mkswap)" = 1 ] && ! active && [ ! -s "$C/poison" ] && pass || fail "S1 second boot recreated or activated the valid file"
+runp enable; active && pass || fail "S1 maintenance enable failed"
+runp disable; ! active && pass || fail "S1 maintenance disable failed"
+
 echo "diskswap-boot-policy-tests: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]

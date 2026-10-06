@@ -854,6 +854,61 @@ rc=$?
 [ ! -s "$NDQ_TOUCH_MODE_FILE" ] && [ ! -s "$NDQ_BACKLIGHT_CMD_FILE" ] && pass \
 	|| fail "S97 mutated a debugfs file even though the display's own backlight status file was never confirmed readable"
 
+# --- S2 (2026-10-05): no qualification_complete=1 config -> S97 exits at
+# once, before the health wait (65 s per boot on ke-dev before), touching
+# nothing. Health is made to fail and the real 20 x 3 s budget is kept, so a
+# case that wrongly reaches wait_for_health would take 60 s, not < 2 s. ---
+reset_fake_kernel
+echo 999999999 > "$GUPPY_PIDFILE"
+S2_CONF="$WORK/s2-display-qualified.conf"
+s2_run() { # marker -> rc; elapsed seconds in S2_SECS
+	_t0=$(date +%s)
+	(
+		PATH="$FAKE_ETC:$PATH"
+		export PATH
+		NDQ_LIB="$LIB" NDQ_HEALTHCHECK_LIB="$HEALTHCHECK_LIB" \
+		MARKER="$1" GUPPYSCREEN_PIDFILE="$GUPPY_PIDFILE" \
+		HEALTH_RETRIES="${S2_RETRIES:-20}" HEALTH_DELAY="${S2_DELAY:-3}" \
+		NDQ_CONFIG_FILE="$S2_CONF" \
+		NDQ_TOUCH_MODE_FILE="$NDQ_TOUCH_MODE_FILE" NDQ_TOUCH_STATUS_FILE="$NDQ_TOUCH_STATUS_FILE" \
+		NDQ_BACKLIGHT_CMD_FILE="$NDQ_BACKLIGHT_CMD_FILE" NDQ_BACKLIGHT_STATUS_FILE="$NDQ_BACKLIGHT_STATUS_FILE" \
+		sh "$APPLY_SCRIPT" start
+	) > "$WORK/s2.out" 2>&1
+	_rc=$?
+	S2_SECS=$(( $(date +%s) - _t0 ))
+	return $_rc
+}
+for c in absent qc0 malformed emptyvalue emptyfile last0; do
+	rm -f "$S2_CONF"
+	case $c in
+	absent) ;;
+	qc0) ndq_render_config qualification_complete=0 > "$S2_CONF" ;;
+	malformed) printf 'this is not a config\n\001\002\n' > "$S2_CONF" ;;
+	emptyvalue) printf 'qualification_complete=\n' > "$S2_CONF" ;;
+	emptyfile) : > "$S2_CONF" ;;
+	last0) printf 'qualification_complete=1\nqualification_complete=0\n' > "$S2_CONF" ;;
+	esac
+	s2_run "$WORK/s2-marker-$c"; rc=$?
+	[ "$rc" -eq 0 ] && [ "$S2_SECS" -le 2 ] && pass || fail "S2 $c: rc=$rc took ${S2_SECS}s (expected immediate exit 0)"
+	grep -q 'nothing to apply' "$WORK/s2.out" && ! grep -q 'never confirmed healthy' "$WORK/s2.out" && pass \
+		|| fail "S2 $c: did not take the fast exit: $(cat "$WORK/s2.out")"
+	[ ! -s "$NDQ_TOUCH_MODE_FILE" ] && [ ! -s "$NDQ_BACKLIGHT_CMD_FILE" ] && pass || fail "S2 $c: a display command file was written"
+	[ -f "$WORK/s2-marker-$c" ] && pass || fail "S2 $c: once-per-boot marker not created"
+done
+# qualification_complete=1 (last value wins) still goes through the health gates
+printf 'qualification_complete=0\n' > "$S2_CONF"
+ndq_render_config qualification_complete=1 touch_mode=irq-assist touch_trigger=pendown-gpio-edge \
+	release_stable_samples=3 idle_safety_poll_ms=250 touch_fallback_enabled=1 \
+	backlight_mode=fixed-safe-on >> "$S2_CONF"
+S2_RETRIES=2 S2_DELAY=1 s2_run "$WORK/s2-marker-qc1"; rc=$?
+[ "$rc" -eq 0 ] && grep -q 'never confirmed healthy' "$WORK/s2.out" && [ "$S2_SECS" -ge 2 ] && pass \
+	|| fail "S2 qc=1: did not reach the health gates (${S2_SECS}s): $(cat "$WORK/s2.out")"
+[ ! -s "$NDQ_TOUCH_MODE_FILE" ] && [ ! -s "$NDQ_BACKLIGHT_CMD_FILE" ] && pass || fail "S2 qc=1 unhealthy: a display command file was written"
+# marker rerun stays a skip even with a qualified config
+s2_run "$WORK/s2-marker-qc1"; grep -q 'already ran this boot' "$WORK/s2.out" && [ "$S2_SECS" -le 2 ] && pass \
+	|| fail "S2 marker rerun is not a skip"
+echo $$ > "$GUPPY_PIDFILE"
+
 # --- regression test (Pinctrl/Display Baseline Closeout Mission,
 # 2026-08-03): the REAL default value of NDQ_BACKLIGHT_CMD_FILE/
 # NDQ_BACKLIGHT_STATUS_FILE - with NO override, exactly as a real boot

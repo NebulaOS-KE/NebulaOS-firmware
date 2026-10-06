@@ -93,6 +93,33 @@ if [ ! -d "$BUILDROOT_DIR/.git" ]; then
 	exit 1
 fi
 
+# NG1 (2026-10-05): BR2_GLOBAL_PATCH_DIR points at br2-external/patches. Every
+# patch there lives in <package>/<version>/, and Buildroot silently falls back
+# to <package>/ (empty) when the package version changes - the patch would just
+# stop being applied. Refuse that instead: each version directory must equal
+# the pinned Buildroot's <PKG>_VERSION, and no patch may sit unversioned.
+nebulaos_check_global_patch_versions() {
+	_pd="$BR2_EXT/patches"
+	[ -d "$_pd" ] || return 0
+	_loose=$(find "$_pd" -mindepth 1 -maxdepth 2 -type f -name '*.patch')
+	if [ -n "$_loose" ]; then
+		echo "FATAL: unversioned patch(es) in $_pd (must be <package>/<version>/*.patch): $_loose" >&2
+		return 1
+	fi
+	for _vd in "$_pd"/*/*/; do
+		[ -d "$_vd" ] || continue
+		_pkg=$(basename "$(dirname "$_vd")"); _ver=$(basename "$_vd")
+		_var=$(printf '%s' "$_pkg" | tr 'a-z-' 'A-Z_')_VERSION
+		_have=$(sed -n "s/^${_var}[[:space:]]*=[[:space:]]*//p" "$BUILDROOT_DIR/package/$_pkg/$_pkg.mk" 2>/dev/null | head -1)
+		if [ "$_have" != "$_ver" ]; then
+			echo "FATAL: stale NebulaOS patch dir br2-external/patches/$_pkg/$_ver: Buildroot's $_pkg is '${_have:-absent}' - re-evaluate or remove the patch" >&2
+			return 1
+		fi
+		echo "OK   br2-external/patches/$_pkg/$_ver matches $_var"
+	done
+}
+nebulaos_check_global_patch_versions || exit 1
+
 # Buildroot 2025.02.18 migration (2026-09-27): the configuration is now
 # produced by Buildroot's own defconfig workflow from a minimal, maintainable
 # input, instead of copying a 4258-line frozen .config over the tree.
