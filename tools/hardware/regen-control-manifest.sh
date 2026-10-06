@@ -50,6 +50,7 @@ HOST=(
   tools/hwcap/lv_ng1.py
   tools/hwcap/lv_s1.sh
   tools/hwcap/lv_s2.sh
+  tools/hwcap/pf_cam.sh
   tools/hwcap/ptyrtt.py
   tools/hwcap/qualmcu.py
   tools/hwcap/schedsnap.py

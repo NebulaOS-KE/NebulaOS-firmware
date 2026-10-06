@@ -28,7 +28,7 @@ FW_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 HWCAP_DIR = os.path.join(FW_ROOT, "tools", "hwcap")
 
 PROBES = ("schedsnap.py", "timerlat.py", "ptyrtt.py", "kduty.py", "adxl_overflows.py", "qualmcu.py",
-          "lv_m1.py", "lv_s1.sh", "lv_s2.sh", "lv_g5.sh", "lv_cam.sh", "lv_g6.sh", "lv_g7.sh", "lv_g8.sh", "lv_g9.sh", "lv_g10.sh", "lv_ng1.py")
+          "lv_m1.py", "lv_s1.sh", "lv_s2.sh", "lv_g5.sh", "lv_cam.sh", "lv_g6.sh", "lv_g7.sh", "lv_g8.sh", "lv_g9.sh", "lv_g10.sh", "lv_ng1.py", "pf_cam.sh")
 # Pinned data files embedded compressed (dropbear refuses a command longer than
 # MAX_CMD_LEN = 9000 bytes, so a whole profile must stay under SCRIPT_LIMIT).
 DATA_FILES = ("klipper-dict-board.json",)
@@ -784,13 +784,39 @@ CAPTURE_PROFILES["live-pristine"] = (
     "wget -q -T 3 -O - http://127.0.0.1:7125/server/info 2>/dev/null | grep -o '\"klippy_state\": *\"[a-z]*\"'",
     False, None, 60)
 
+# --- Pre-final acceptance (2026-10-07) ----------------------------------------
+# S3/S4 against the installed image's own camera policy (no marker, no patch).
+EXERCISE_PROFILES["pf-camera"] = (
+    _IDLE_GUARD + ". $T/pf_cam.sh",
+    "[ -n \"${V:-}\" ] && kill $V 2>/dev/null; p=$(cat /var/run/nebulaos-camera-idle-controller.pid 2>/dev/null); "
+    "[ -n \"$p\" ] && [ -d /proc/$p ] || /etc/init.d/S51nebulaos-camera-idle-controller start > /dev/null 2>&1; "
+    "echo \"undo: controller_pid=$(cat /var/run/nebulaos-camera-idle-controller.pid 2>/dev/null)\"",
+    1500)
+# NG1 through the real Moonraker: missing-key reads answer at once, no _ABNF
+# traceback since boot, the boot-time seeder run, normal API health.
+CAPTURE_PROFILES["pf-ng1"] = (
+    "U=http://127.0.0.1:7125; L=/opt/printer_data/logs/moonraker.log; "
+    "for q in 'namespace=mainsail&key=macros.macrogroups.nebulaos_calibration' "
+    "'namespace=mainsail&key=nebulaos_prefinal_absent_key' 'namespace=nebulaos_prefinal_absent_ns&key=x'; do "
+    "echo \"GET $q -> $(curl -s -o $T/b -m 30 -w 'http=%{http_code} seconds=%{time_total}' \"$U/server/database/item?$q\") body=$(head -c 140 $T/b 2>/dev/null)\"; done; "
+    "echo \"GET /no/such/endpoint -> $(curl -s -o /dev/null -m 30 -w 'http=%{http_code} seconds=%{time_total}' $U/no/such/endpoint)\"; "
+    "echo \"GET /server/files/metadata?filename=nebulaos-absent.gcode -> $(curl -s -o /dev/null -m 30 -w 'http=%{http_code} seconds=%{time_total}' \"$U/server/files/metadata?filename=nebulaos-absent.gcode\")\"; "
+    "for e in /server/info /printer/info '/server/database/list' '/printer/objects/query?webhooks&print_stats'; do "
+    "echo \"GET $e -> $(curl -s -o /dev/null -m 10 -w 'http=%{http_code} seconds=%{time_total}' \"$U$e\")\"; done; "
+    "echo \"moonraker_log_ABNF_errors=$(grep -c \"has no attribute '_ABNF'\" $L) send_error_tracebacks=$(grep -c 'in send_error' $L)\"; "
+    "echo '== seed log, last run'; S=/usr/data/nebulaos/maintenance/logs/mainsail-macros-seed.log; "
+    "awk '/attempt 1\\//{buf=\"\"} {buf=buf $0 \"\\n\"} END{printf \"%s\", buf}' $S | tail -n 25 | cut -c1-300; "
+    "echo \"timed_out_lines_total=$(grep -c 'timed out' $S)\"; "
+    "echo '== marker'; cat /usr/data/nebulaos/system/default-mainsail-macros-seeded.json",
+    False, None, 200)
+
 # Exercises that embed a tracked hwcap probe, the same way captures do.
 EXERCISE_PROBES = {"ktimers-ab": ("timerlat.py",), "ttyflip-ab": ("ptyrtt.py",),
                    "uart-fe-probe": ("qualmcu.py",), "mcu-link-bench": ("qualmcu.py",),
                    "mcu-identify-repeat": ("qualmcu.py",), "live-m1-identify": ("lv_m1.py",),
                    "live-s1-s03": ("lv_s1.sh",), "live-s2-s97": ("lv_s2.sh",), "live-g5-debugfs": ("lv_g5.sh",),
                    "live-s3-s4-camera": ("lv_cam.sh",), "live-g6-dhcp": ("lv_g6.sh",), "live-g7-klippy": ("lv_g7.sh",),
-                   "live-g8-seeder": ("lv_g8.sh",), "live-g9-ext4": ("lv_g9.sh",), "live-g10-diskswap": ("lv_g10.sh",), "live-ng1-tornado": ("lv_ng1.py",)}
+                   "live-g8-seeder": ("lv_g8.sh",), "live-g9-ext4": ("lv_g9.sh",), "live-g10-diskswap": ("lv_g10.sh",), "live-ng1-tornado": ("lv_ng1.py",), "pf-camera": ("pf_cam.sh",)}
 
 
 def exercise_script(name):
