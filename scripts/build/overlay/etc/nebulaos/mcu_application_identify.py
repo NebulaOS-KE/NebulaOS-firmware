@@ -40,6 +40,27 @@ import sys
 
 KLIPPY_LIB_PATH = os.environ.get("KLIPPY_LIB_PATH", "/opt/klipper/klippy")
 
+# M1 (2026-10-05): the whole application-identify connect gets 15 s, not 5 s.
+# Klipper's connect_uart() itself waits 5 s per identify session and then
+# retries, so a 5 s budget left no room for a second session: one slow or
+# garbled first session at boot (cold caches, the port's first open, a busy
+# CPU) ended in identify_handshake_timeout and the bootloader fallback. Live on
+# ke-dev a boot-like stressed identify took 8.86 s. A healthy MCU still answers
+# in ~2-3 s; only a dead or absent MCU now takes ~15 s (bounded) before the
+# unchanged fallback. Overridable for tests/diagnosis: MCU_APP_IDENTIFY_TIMEOUT.
+DEFAULT_APP_IDENTIFY_TIMEOUT = 15.0
+
+
+def app_identify_timeout(environ=None):
+    """The identify budget in seconds: MCU_APP_IDENTIFY_TIMEOUT when it is a
+    positive number, else DEFAULT_APP_IDENTIFY_TIMEOUT."""
+    raw = (os.environ if environ is None else environ).get("MCU_APP_IDENTIFY_TIMEOUT", "")
+    try:
+        value = float(raw)
+    except ValueError:
+        return DEFAULT_APP_IDENTIFY_TIMEOUT
+    return value if 0 < value <= 120 else DEFAULT_APP_IDENTIFY_TIMEOUT
+
 
 class ApplicationIdentifyError(Exception):
     pass
@@ -216,11 +237,14 @@ def run_connected(port, baud, action_fn, timeout=5.0, klippy_lib_path=None,
     return outcome.get("result")
 
 
-def get_application_identity(port, baud, timeout=5.0, klippy_lib_path=None):
+def get_application_identity(port, baud, timeout=None, klippy_lib_path=None):
     """Connect to the MCU at the application baud rate, complete the
     identify handshake, and return (version, build_versions). Raises
     ApplicationIdentifyError on any failure (port unopenable, handshake
-    timeout, malformed dictionary). Always disconnects before returning."""
+    timeout, malformed dictionary). Always disconnects before returning.
+    timeout=None means app_identify_timeout() (15 s unless overridden)."""
+    if timeout is None:
+        timeout = app_identify_timeout()
 
     def _read_version(serial_reader):
         version, build_versions = serial_reader.get_msgparser().get_version_info()
