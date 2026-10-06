@@ -1936,10 +1936,14 @@ grep -q '/0004-httputil-add-_ABNF-reason_phrase-for-CVE-2025-67724-backport.patc
 grep -q '^class _ABNF:' "$_ng1_bd/tornado/httputil.py" 2>/dev/null || _ng1_ok=0
 grep -q '^    reason_phrase = re.compile(' "$_ng1_bd/tornado/httputil.py" 2>/dev/null || _ng1_ok=0
 grep -q '_ABNF.reason_phrase.fullmatch' "$_ng1_bd/tornado/web.py" 2>/dev/null || _ng1_ok=0
+# marshalled names carry a trailing type byte (e.g. "_ABNFz"), so match the
+# name as a prefix of a strings line, not the whole line; the class docstring
+# from 0004 is matched exactly.
 _ng1_pyc=$(_img_cat /usr/lib/python3.12/site-packages/tornado/httputil.pyc | strings)
-printf '%s\n' "$_ng1_pyc" | grep -qx '_ABNF' || _ng1_ok=0
-printf '%s\n' "$_ng1_pyc" | grep -qx 'reason_phrase' || _ng1_ok=0
-_img_cat /usr/lib/python3.12/site-packages/tornado/web.pyc | strings | grep -qx 'reason_phrase' || _ng1_ok=0
+printf '%s\n' "$_ng1_pyc" | grep -q '^_ABNF' || _ng1_ok=0
+printf '%s\n' "$_ng1_pyc" | grep -q '^reason_phrase' || _ng1_ok=0
+printf '%s\n' "$_ng1_pyc" | grep -qF 'reason-phrase validation (CVE-2025-67724 backport) uses' || _ng1_ok=0
+_img_cat /usr/lib/python3.12/site-packages/tornado/web.pyc | strings | grep -q '^reason_phrase' || _ng1_ok=0
 if [ "$_ng1_ok" = 1 ]; then
 	echo "OK   NG1: python-tornado 0004 applied; _ABNF.reason_phrase in the built source and the shipped bytecode; web.py validation intact"
 else
