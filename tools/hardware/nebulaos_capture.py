@@ -803,6 +803,8 @@ CAPTURE_PROFILES["pf-ng1"] = (
     "echo \"GET /server/files/metadata?filename=nebulaos-absent.gcode -> $(curl -s -o /dev/null -m 30 -w 'http=%{http_code} seconds=%{time_total}' \"$U/server/files/metadata?filename=nebulaos-absent.gcode\")\"; "
     "for e in /server/info /printer/info '/server/database/list' '/printer/objects/query?webhooks&print_stats'; do "
     "echo \"GET $e -> $(curl -s -o /dev/null -m 10 -w 'http=%{http_code} seconds=%{time_total}' \"$U$e\")\"; done; "
+    "MP=$(tr '\\0' '\\n' < /proc/$(cat /var/run/moonraker.pid)/cmdline | head -1); "
+    "echo \"moonraker_python=$MP tornado=$($MP -c 'import tornado, tornado.httputil as h; print(tornado.version, tornado.__file__, h._ABNF.reason_phrase.pattern)' 2>&1 | tail -1)\"; "
     "echo \"moonraker_log_ABNF_errors=$(grep -c \"has no attribute '_ABNF'\" $L) send_error_tracebacks=$(grep -c 'in send_error' $L)\"; "
     "echo '== seed log, last run'; S=/usr/data/nebulaos/maintenance/logs/mainsail-macros-seed.log; "
     "awk '/attempt 1\\//{buf=\"\"} {buf=buf $0 \"\\n\"} END{printf \"%s\", buf}' $S | tail -n 25 | cut -c1-300; "
