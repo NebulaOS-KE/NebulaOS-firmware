@@ -62,9 +62,22 @@ seed_once() {
 	cp -a "$src" "$dst"
 }
 
+# G9 phase 1 (2026-10-07): boot check policy and clean shutdown for
+# /usr/data - see /usr/libexec/nebulaos-datafs.sh. Without the library the
+# mount is exactly the old one.
+NEBULAOS_DATAFS_LIB="${NEBULAOS_DATAFS_LIB:-/usr/libexec/nebulaos-datafs.sh}"
+# shellcheck disable=SC1090
+[ -r "$NEBULAOS_DATAFS_LIB" ] && . "$NEBULAOS_DATAFS_LIB"
+
 start() {
 	mkdir -p /usr/data
-	mount -t ext4 /dev/mmcblk0p10 /usr/data
+	if command -v ndf_precheck >/dev/null 2>&1; then
+		ndf_precheck
+		ndf_mount
+		ndf_record
+	else
+		mount -t ext4 /dev/mmcblk0p10 /usr/data
+	fi
 
 	mkdir -p "$DATA_ROOT"
 
@@ -163,6 +176,11 @@ start() {
 case "$1" in
 	start)
 		start
+		;;
+	stop)
+		# Runs last in rcK (S01persistent-datastore sorts after every other
+		# S01-S99 script in reverse order), after all services are stopped.
+		command -v ndf_shutdown >/dev/null 2>&1 && ndf_shutdown
 		;;
 	*)
 		;;

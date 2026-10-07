@@ -172,6 +172,10 @@ assert_val BR2_PACKAGE_BUSYBOX_CONFIG_FRAGMENT_FILES "\"$X/halley5-nebulaos-busy
 # carrying only version-scoped NebulaOS package patches (python-tornado/6.4.2:
 # the missing _ABNF of Buildroot's CVE-2025-67724 backport). 02-configure
 # refuses a version directory that no longer matches the package.
+# G9 phase 1 (2026-10-07): e2fsck/dumpe2fs for the /usr/data boot check
+# (S01persistent-datastore); the e2fsprogs fsck wrapper stays off (BusyBox fsck).
+assert_val BR2_PACKAGE_E2FSPROGS y
+assert_empty BR2_PACKAGE_E2FSPROGS_FSCK
 assert_val BR2_GLOBAL_PATCH_DIR '"$(BR2_EXTERNAL_NEBULAOS_PATH)/patches"'
 # Deliberately dropped by the migration - asserted so their removal is a tested
 # fact rather than an edit that can regress.

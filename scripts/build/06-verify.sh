@@ -1923,6 +1923,25 @@ else
 	echo "MISS CAM-05: /usr/bin/ustreamer does not match the CAM-05 patched build"
 fi
 
+# G9 phase 1 (2026-10-07): /usr/data boot check and clean shutdown. REQUIRED:
+# the checker tools exist in the image, S01 runs the policy and the shutdown.
+echo "=== G9 /usr/data policy ==="
+_g9_ok=1
+for _g9_t in e2fsck fsck.ext4 dumpe2fs; do
+	_g9_found=
+	for _g9_d in /sbin /usr/sbin; do debugfs -R "stat $_g9_d/$_g9_t" ${IMAGES}/rootfs.ext2 2>/dev/null | grep -q '^Inode:' && _g9_found=1; done
+	[ -n "$_g9_found" ] || { echo "MISS G9: $_g9_t not in /sbin or /usr/sbin"; _g9_ok=0; }
+done
+_img_cat /usr/libexec/nebulaos-datafs.sh | grep -q '^ndf_precheck()' || _g9_ok=0
+_img_cat /etc/init.d/S01persistent-datastore | grep -q 'ndf_shutdown' || _g9_ok=0
+_img_cat /etc/init.d/S01persistent-datastore | grep -q 'ndf_precheck' || _g9_ok=0
+if [ "$_g9_ok" = 1 ]; then
+	echo "OK   G9: e2fsck, fsck.ext4 and dumpe2fs present; S01 runs the boot check policy and the clean shutdown"
+else
+	echo "MISS G9: e2fsck tools or the S01 boot check/shutdown missing from the image   <== REQUIRED"
+	MISS_REQUIRED=$((MISS_REQUIRED + 1))
+fi
+
 # NG1 (2026-10-05): Buildroot's python-tornado 6.4.2 CVE-2025-67724 backport
 # needs httputil._ABNF; without NebulaOS's 0004 patch every Moonraker HTTP
 # error with a reason never reaches the client. REQUIRED: the patch was
