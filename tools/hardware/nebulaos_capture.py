@@ -799,7 +799,8 @@ EXERCISE_PROFILES["pf-camera"] = (
 CAPTURE_PROFILES["pf-klippy-start"] = (
     "L=/opt/printer_data/logs/klippy.log; n=$(grep -n 'Start printer at' $L | tail -1 | cut -d: -f1); "
     "echo \"start_line=$n uptime=$(cut -d' ' -f1 /proc/uptime)\"; "
-    "tail -n +$n $L | grep -vE '^(\\[|[a-z_0-9]+ *[:=]|#|$| )' | head -n 150 | cut -c1-220; "
+    "tail -n +$n $L | awk 'NR==1{print} /^=======================$/{on=1; next} on' | grep -vE '^Stats [0-9]' | head -n 120 | cut -c1-220; "
+    "echo '== stats'; tail -n +$n $L | grep -E '^Stats [0-9]' | sed -n '1,3p' | cut -c1-200; "
     "echo '== s95'; ls -l --full-time /run/mcu-boot-recovery-attempted 2>&1; "
     "grep -aE 'S95|mcu-boot-recovery|mcu_boot_recovery' /var/log/messages 2>/dev/null | tail -20; "
     "echo '== uart'; cat '/proc/tty/driver/INGENIC serial' 2>/dev/null | sed -n '2,3p'",
