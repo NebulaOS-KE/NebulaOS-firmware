@@ -10,7 +10,7 @@
 9690c4b144d80abb028a8f4e45db8fbf6527590c23a54a23aee714d8a81a13e5  host  tools/attest/nebulaos-attest.py
 f2e1c2a7cca56006ae760a0ebe000aacb20869f5ddc44c17c71ad967e11cf8cb  host  tools/emmc/nebulaos_layout.py
 5dd6e5dc568f7b6433d9ad802e57fbc7c8abf1add04c0e3810a1103000369601  host  tools/hardware/nebulaos_agent.py
-57e6a58ae1bf5537d355ff3d0b601372f4658b13232a4b5cc68ae8722512b624  host  tools/hardware/nebulaos_capture.py
+b22de67c005d16291713877ba7b70e20d8c41f441bfd9d63cf28fcfd386fd6d0  host  tools/hardware/nebulaos_capture.py
 6c22308c8d8e04d1b4cafdfb4a35085be137eff980f92a4f34aa72f820d22dcc  host  tools/hardware/nebulaos_control.py
 85a309dd2ae731268687c8b7c4ac34555120c02b37c8ea764cd7be0bcb4149e9  host  tools/hardware/nebulaos_device.py
 aef1b5fc8cf52522b29a583c6453a75b15d54e5381e2e402c9cc9e4ccee9e273  host  tools/hardware/nebulaos_evidence.py
@@ -22,6 +22,8 @@ f32fa1d9e75a98383797e52f219f79049897e43499e08355984ac4c45b86c49b  host  tools/ha
 528dcbd091b127e356e7f3a8b341131613c4619a2840a79caf98e46e177f6b1b  host  tools/hardware/nebulaos_verify.py
 c0131b14e0917f4740ebb2827c971828cbe7b9ad9b3d1f4e17de27f766511dc8  host  tools/hwcap/adxl_overflows.py
 808a598b41e8768ea5997ddf5e671dbe088055b3e2971c0939216ba891b7b406  host  tools/hwcap/klipper-dict-board.json
+19f336c5f89f6086b72ec66ccdecc6a2876a8c3245c30c92276e3639b65aac82  host  tools/hwcap/fb_cam10.sh
+27d09732bd0699d3d2ced39c3d080548abe5d062a1e10453ad9a8c1983fa4131  host  tools/hwcap/fb_ng3.sh
 a95c06a67dbb2c4398988f4b7159fe5cd3e8a7681a17c18873138e616334a1a4  host  tools/hwcap/kduty.py
 546277b53a1ca96557ecbd11ec1dab1be928188cf0479edad9b48a45d3e04245  host  tools/hwcap/lv_cam.sh
 da6cd6f73f89dbb80cd4d35c3c789e11b0eb675d57951274f28205d52f5e0f75  host  tools/hwcap/lv_g10.sh

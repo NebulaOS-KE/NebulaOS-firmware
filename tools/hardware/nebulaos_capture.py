@@ -28,7 +28,7 @@ FW_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 HWCAP_DIR = os.path.join(FW_ROOT, "tools", "hwcap")
 
 PROBES = ("schedsnap.py", "timerlat.py", "ptyrtt.py", "kduty.py", "adxl_overflows.py", "qualmcu.py",
-          "lv_m1.py", "lv_s1.sh", "lv_s2.sh", "lv_g5.sh", "lv_cam.sh", "lv_g6.sh", "lv_g7.sh", "lv_g8.sh", "lv_g9.sh", "lv_g10.sh", "lv_ng1.py", "pf_cam.sh")
+          "lv_m1.py", "lv_s1.sh", "lv_s2.sh", "lv_g5.sh", "lv_cam.sh", "lv_g6.sh", "lv_g7.sh", "lv_g8.sh", "lv_g9.sh", "lv_g10.sh", "lv_ng1.py", "pf_cam.sh", "fb_ng3.sh", "fb_cam10.sh")
 # Pinned data files embedded compressed (dropbear refuses a command longer than
 # MAX_CMD_LEN = 9000 bytes, so a whole profile must stay under SCRIPT_LIMIT).
 DATA_FILES = ("klipper-dict-board.json",)
@@ -871,13 +871,25 @@ CAPTURE_PROFILES["pf-ng1"] = (
     "echo '== marker'; cat /usr/data/nebulaos/system/default-mainsail-macros-seeded.json",
     False, None, 200)
 
+# --- Final blockers (2026-10-07) -------------------------------------------------
+EXERCISE_PROFILES["fb-ng3-handoff"] = (
+    _IDLE_GUARD + "KS=1; . $T/fb_ng3.sh",
+    "[ -n \"${H:-}\" ] && kill $H 2>/dev/null; " + _KLIPPY_RESTORE.replace(_QM, "python3 $T/lv_m1.py"),
+    2400)
+EXERCISE_PROFILES["fb-camera-10"] = (
+    _IDLE_GUARD + ". $T/fb_cam10.sh",
+    "[ -n \"${V:-}\" ] && kill $V 2>/dev/null; p=$(cat /var/run/nebulaos-camera-idle-controller.pid 2>/dev/null); "
+    "[ -n \"$p\" ] && [ -d /proc/$p ] || /etc/init.d/S51nebulaos-camera-idle-controller start > /dev/null 2>&1; "
+    "echo \"undo: controller_pid=$(cat /var/run/nebulaos-camera-idle-controller.pid 2>/dev/null)\"",
+    2400)
+
 # Exercises that embed a tracked hwcap probe, the same way captures do.
 EXERCISE_PROBES = {"ktimers-ab": ("timerlat.py",), "ttyflip-ab": ("ptyrtt.py",),
                    "uart-fe-probe": ("qualmcu.py",), "mcu-link-bench": ("qualmcu.py",),
                    "mcu-identify-repeat": ("qualmcu.py",), "live-m1-identify": ("lv_m1.py",),
                    "live-s1-s03": ("lv_s1.sh",), "live-s2-s97": ("lv_s2.sh",), "live-g5-debugfs": ("lv_g5.sh",),
                    "live-s3-s4-camera": ("lv_cam.sh",), "live-g6-dhcp": ("lv_g6.sh",), "live-g7-klippy": ("lv_g7.sh",),
-                   "live-g8-seeder": ("lv_g8.sh",), "live-g9-ext4": ("lv_g9.sh",), "live-g10-diskswap": ("lv_g10.sh",), "live-ng1-tornado": ("lv_ng1.py",), "pf-camera": ("pf_cam.sh",)}
+                   "live-g8-seeder": ("lv_g8.sh",), "live-g9-ext4": ("lv_g9.sh",), "live-g10-diskswap": ("lv_g10.sh",), "live-ng1-tornado": ("lv_ng1.py",), "pf-camera": ("pf_cam.sh",), "fb-ng3-handoff": ("lv_m1.py", "fb_ng3.sh"), "fb-camera-10": ("fb_cam10.sh",)}
 
 
 def exercise_script(name):
