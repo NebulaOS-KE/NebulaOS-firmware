@@ -832,6 +832,15 @@ CAPTURE_PROFILES["pf-after-load"] = (
     "echo '== klippy'; grep -oE 'bytes_(retransmit|invalid)=[0-9]+' " + KLIPPY_LOG + " | tail -2; grep -cE 'Timer too close|MCU .* shutdown|Lost communication' " + KLIPPY_LOG + "; "
     "wget -q -T 3 -O - http://127.0.0.1:7125/server/info | grep -o '\"klippy_state\": *\"[a-z]*\"'",
     False, None, 120)
+# S50webcam supervisor and memguard camera shed, read only.
+CAPTURE_PROFILES["pf-webcam-sup"] = (
+    "for f in /var/run/webcam*.pid /var/run/ustreamer.pid /var/run/S50webcam*.pid; do [ -f $f ] || continue; p=$(cat $f); "
+    "echo \"$f pid=$p alive=$([ -d /proc/$p ] && echo yes || echo no) start_ticks=$(cut -d')' -f2 /proc/$p/stat 2>/dev/null | awk '{print $20}') "
+    "cmd=$(tr '\\0' ' ' < /proc/$p/cmdline 2>/dev/null | cut -c1-80)\"; done; "
+    "echo \"supervisors=$(for c in /proc/[0-9]*/cmdline; do tr '\\0' ' ' < $c 2>/dev/null; echo; done | grep -c 'S50webcam __supervise')\"; "
+    "echo '== syslog webcam/shed'; grep -aE 'S50webcam|shed' /var/log/messages 2>/dev/null | tail -20; "
+    "echo '== shed dir'; ls -la /run/nebulaos/shed/ 2>&1; echo \"uptime=$(cut -d' ' -f1 /proc/uptime)\"",
+    False, None, 60)
 CAPTURE_PROFILES["pf-ng1"] = (
     "U=http://127.0.0.1:7125; L=/opt/printer_data/logs/moonraker.log; "
     "for q in 'namespace=mainsail&key=macros.macrogroups.nebulaos_calibration' "
