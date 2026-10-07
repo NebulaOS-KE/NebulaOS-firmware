@@ -794,6 +794,16 @@ EXERCISE_PROFILES["pf-camera"] = (
     1500)
 # NG1 through the real Moonraker: missing-key reads answer at once, no _ABNF
 # traceback since boot, the boot-time seeder run, normal API health.
+# Klippy's last start, read only: the log from the last "Start printer at",
+# without the large config dump, plus S95's recovery marker and syslog lines.
+CAPTURE_PROFILES["pf-klippy-start"] = (
+    "L=/opt/printer_data/logs/klippy.log; n=$(grep -n 'Start printer at' $L | tail -1 | cut -d: -f1); "
+    "echo \"start_line=$n uptime=$(cut -d' ' -f1 /proc/uptime)\"; "
+    "tail -n +$n $L | grep -vE '^(\\[|[a-z_0-9]+ *[:=]|#|$| )' | head -n 150 | cut -c1-220; "
+    "echo '== s95'; ls -l --full-time /run/mcu-boot-recovery-attempted 2>&1; "
+    "grep -aE 'S95|mcu-boot-recovery|mcu_boot_recovery' /var/log/messages 2>/dev/null | tail -20; "
+    "echo '== uart'; cat '/proc/tty/driver/INGENIC serial' 2>/dev/null | sed -n '2,3p'",
+    False, None, 60)
 CAPTURE_PROFILES["pf-ng1"] = (
     "U=http://127.0.0.1:7125; L=/opt/printer_data/logs/moonraker.log; "
     "for q in 'namespace=mainsail&key=macros.macrogroups.nebulaos_calibration' "
