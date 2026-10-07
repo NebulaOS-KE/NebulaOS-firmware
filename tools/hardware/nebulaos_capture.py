@@ -843,6 +843,16 @@ CAPTURE_PROFILES["pf-webcam-sup"] = (
     "echo '== syslog webcam/shed'; grep -aE 'S50webcam|shed' /var/log/messages 2>/dev/null | tail -20; "
     "echo '== shed dir'; ls -la /run/nebulaos/shed/ 2>&1; echo \"uptime=$(cut -d' ' -f1 /proc/uptime)\"",
     False, None, 60)
+# Wi-Fi loss over time: 16 windows of 30 s (150 pings at 0.2 s) to the gateway,
+# each stamped with uptime, memguard state and the camera shed marker.
+CAPTURE_PROFILES["pf-ping-windows"] = (
+    "G=$(ip route | awk '/^default/{print $3; exit}'); echo \"gateway=$G\"; "
+    "for w in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16; do t0=$(cut -d' ' -f1 /proc/uptime); "
+    "r=$(ping -q -c 150 -i 0.2 -W 1 $G 2>&1 | grep -oE '[0-9]+ packets received|[0-9.]+% packet loss|= [0-9./]+ ms' | tr '\\n' ' '); "
+    "echo \"W$w t0=$t0 mg=$(cat /run/nebulaos/memguard/state 2>/dev/null) shed=$(ls /run/nebulaos/shed 2>/dev/null | tr '\\n' ,) "
+    "load=$(cut -d' ' -f1 /proc/loadavg) cpu_psi=$(sed -n 's/^some avg10=\\([0-9.]*\\).*/\\1/p' /proc/pressure/cpu) "
+    "ma=$(awk '/MemAvailable/{print $2}' /proc/meminfo) $r\"; done",
+    False, None, 700)
 CAPTURE_PROFILES["pf-ng1"] = (
     "U=http://127.0.0.1:7125; L=/opt/printer_data/logs/moonraker.log; "
     "for q in 'namespace=mainsail&key=macros.macrogroups.nebulaos_calibration' "
