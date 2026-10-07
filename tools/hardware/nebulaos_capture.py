@@ -837,7 +837,9 @@ CAPTURE_PROFILES["pf-webcam-sup"] = (
     "for f in /var/run/webcam*.pid /var/run/ustreamer.pid /var/run/S50webcam*.pid; do [ -f $f ] || continue; p=$(cat $f); "
     "echo \"$f pid=$p alive=$([ -d /proc/$p ] && echo yes || echo no) start_ticks=$(cut -d')' -f2 /proc/$p/stat 2>/dev/null | awk '{print $20}') "
     "cmd=$(tr '\\0' ' ' < /proc/$p/cmdline 2>/dev/null | cut -c1-80)\"; done; "
-    "echo \"supervisors=$(for c in /proc/[0-9]*/cmdline; do tr '\\0' ' ' < $c 2>/dev/null; echo; done | grep -c 'S50webcam __supervise')\"; "
+    "echo \"supervisor_pidfile=$(cat /var/run/ustreamer-supervisor.pid 2>/dev/null)\"; "
+    "for d in /proc/[0-9]*; do c=$(tr '\\0' ' ' < $d/cmdline 2>/dev/null); case \"$c\" in *'S50webcam __supervise'*|*'idle-controller __run'*) "
+    "echo \"proc pid=${d#/proc/} ppid=$(awk '{print $4}' $d/stat 2>/dev/null) start=$(cut -d')' -f2 $d/stat 2>/dev/null | awk '{print $20}') cmd=$c\";; esac; done; "
     "echo '== syslog webcam/shed'; grep -aE 'S50webcam|shed' /var/log/messages 2>/dev/null | tail -20; "
     "echo '== shed dir'; ls -la /run/nebulaos/shed/ 2>&1; echo \"uptime=$(cut -d' ' -f1 /proc/uptime)\"",
     False, None, 60)
