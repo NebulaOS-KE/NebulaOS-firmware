@@ -809,6 +809,13 @@ CAPTURE_PROFILES["pf-klippy-start"] = (
     "grep -aE 'S95|mcu-boot-recovery|mcu_boot_recovery' /var/log/messages 2>/dev/null | tail -20; "
     "echo '== uart'; cat '/proc/tty/driver/INGENIC serial' 2>/dev/null | sed -n '2,3p'",
     False, None, 60)
+# When the _ABNF tracebacks in moonraker.log were written (log persists across images).
+CAPTURE_PROFILES["pf-ng1-abnf-times"] = (
+    "L=/opt/printer_data/logs/moonraker.log; echo \"log_first=$(head -c 23 $L) log_lines=$(wc -l < $L) boot_utc=$(date -u -d @$(( $(date +%s) - $(cut -d. -f1 /proc/uptime) )) +%Y-%m-%dT%H:%M:%S)\"; "
+    "grep -n \"has no attribute '_ABNF'\" $L | cut -d: -f1 | while read n; do "
+    "sed -n \"1,${n}p\" $L | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2} ' | tail -1 | cut -c1-23; done | sort | uniq -c; "
+    "echo \"moonraker_starts=$(grep -c 'Starting Moonraker' $L) last_start=$(grep 'Starting Moonraker' $L | tail -1 | cut -c1-23)\"",
+    False, None, 120)
 CAPTURE_PROFILES["pf-ng1"] = (
     "U=http://127.0.0.1:7125; L=/opt/printer_data/logs/moonraker.log; "
     "for q in 'namespace=mainsail&key=macros.macrogroups.nebulaos_calibration' "
