@@ -816,6 +816,22 @@ CAPTURE_PROFILES["pf-ng1-abnf-times"] = (
     "sed -n \"1,${n}p\" $L | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2} ' | tail -1 | cut -c1-23; done | sort | uniq -c; "
     "echo \"moonraker_starts=$(grep -c 'Starting Moonraker' $L) last_start=$(grep 'Starting Moonraker' $L | tail -1 | cut -c1-23)\"",
     False, None, 120)
+# After a load run, read only: memguard decisions, kernel and Wi-Fi state.
+CAPTURE_PROFILES["pf-after-load"] = (
+    "echo \"uptime=$(cut -d' ' -f1 /proc/uptime) now=$(date -u +%H:%M:%S)\"; "
+    "echo '== memguard (last 60 lines, no adj/snapshot)'; grep -vE ' adj [0-9]+ | snapshot ' /usr/data/nebulaos/logs/memguard.log | tail -n 60; "
+    "echo '== memguard state'; cat /run/nebulaos/memguard/state 2>/dev/null; ls /run/nebulaos/shed 2>/dev/null; "
+    "echo '== dmesg tail'; dmesg | tail -n 60 | cut -c1-200; "
+    "echo '== wifi'; iw dev wlan0 link 2>/dev/null; iw dev wlan0 station dump 2>/dev/null | grep -E 'tx (retries|failed)|rx drop|signal|beacon loss|tx bitrate'; "
+    "cat /proc/net/dev | grep wlan0; grep -E 'wlan|brcm|sdio|mmc1' /proc/interrupts; "
+    "echo '== camera idle'; cat /var/run/nebulaos-camera-idle-state 2>/dev/null; echo; "
+    "echo '== services'; for f in klippy moonraker guppyscreen ustreamer nebulaos-camera-idle-controller; do p=$(cat /var/run/$f.pid 2>/dev/null); "
+    "echo \"$f pid=$p alive=$([ -n \"$p\" ] && [ -d /proc/$p ] && echo yes || echo no)\"; done; "
+    "echo '== swaps'; cat /proc/swaps; grep -E '^(pswpin|pswpout|oom_kill) ' /proc/vmstat; head -3 /proc/meminfo; "
+    "echo '== uart'; cat '/proc/tty/driver/INGENIC serial' 2>/dev/null | sed -n '2p'; "
+    "echo '== klippy'; grep -oE 'bytes_(retransmit|invalid)=[0-9]+' " + KLIPPY_LOG + " | tail -2; grep -cE 'Timer too close|MCU .* shutdown|Lost communication' " + KLIPPY_LOG + "; "
+    "wget -q -T 3 -O - http://127.0.0.1:7125/server/info | grep -o '\"klippy_state\": *\"[a-z]*\"'",
+    False, None, 120)
 CAPTURE_PROFILES["pf-ng1"] = (
     "U=http://127.0.0.1:7125; L=/opt/printer_data/logs/moonraker.log; "
     "for q in 'namespace=mainsail&key=macros.macrogroups.nebulaos_calibration' "
