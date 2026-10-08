@@ -44,9 +44,11 @@ NebulaOS-firmware/tools/product-inputs.py current-build # is an existing build s
 tools/run-nebulaos-hardware.sh --device <id> --control <C> install <X> <ximage> <rootfs>
 ```
 
-The enrolled printer is **`ke-dev`**. Baseline: **Buildroot 2025.02** on firmware `main` (merged
-from `buildroot-2025.02-migration`; build `9cba50f` installed and PART1-verified 2026-10-02). All
-new work builds on `main`. "flash" / "install" means: if `product-inputs.py current-build` says
+The enrolled printer is **`ke-dev`**. Canonical development baseline (adopted 2026-10-08):
+firmware **`b62fa18`**, tag `nebulaos-canonical-baseline-2026-10-08-b62fa18`, recorded in
+`NebulaOS-firmware/docs/BASELINE-MANIFEST.txt` (Buildroot 2025.02; hardware-tested, not a
+fully qualified release). All new work starts from it on `main`; older candidates (`ba3501a`,
+`f97e472`, `9cba50f`) are evidence only. "flash" / "install" means: if `product-inputs.py current-build` says
 `PRODUCT_BUILD_CURRENT=NO`, build firmware HEAD first; then install it on `--device ke-dev` with
 `<X>` = the build's commit, the hashes from its run's `.nebulaos-build-verified`, and `<C>` = full
 40-hex firmware HEAD. Do not ask the human for these. Past runs are journaled in

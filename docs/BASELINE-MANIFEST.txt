@@ -1,0 +1,95 @@
+# NebulaOS canonical development baseline manifest
+#
+# The single tracked record of which build is the starting source for all
+# NebulaOS development. Host-side documentation only (docs/ is not a product
+# input). Superseding this baseline means recording a new one here, in its own
+# reviewed commit, with a new tag - never editing these identities in place.
+#
+# This file is NOT the build gates' reference: assert-baseline-config.sh and
+# baseline-difference-gate.sh compare against QUALIFIED_BASELINE_TAG in
+# manifests/dependencies.conf, which is unchanged by this baseline.
+
+BASELINE_NAME=NebulaOS-b62fa18
+BASELINE_DATE=2026-10-08
+BASELINE_TYPE=CANONICAL_DEVELOPMENT_BASELINE
+BASELINE_TAG=nebulaos-canonical-baseline-2026-10-08-b62fa18
+
+CANONICAL_DEVELOPMENT_BASELINE=YES
+FORMALLY_FULLY_QUALIFIED_RELEASE=NO
+
+# --- source identity (from manifests/dependencies.conf at FIRMWARE_HEAD) ---
+FIRMWARE_HEAD=b62fa188eb0abacc5065f3d1ec981d7200133975
+FIRMWARE_REPO=https://github.com/coreflake1/NebulaOS-firmware.git
+KERNEL_PIN=56f9f82305c99d105516ec3023cf844a1e794944
+KERNEL_REPO=https://github.com/coreflake1/NebulaOS-kernel.git (branch openke)
+EXTENSIONS_PIN=9ca9d6084102c16240abcf243e7e8ec093757b91
+EXTENSIONS_REPO=https://github.com/coreflake1/NebulaOS-klipper-extensions.git (branch production)
+HOST_KLIPPER_PIN=58bd67db3ce1be1951c3e4a6d1156a79903d4edc
+HOST_KLIPPER_REPO=https://github.com/Klipper3d/klipper.git (official upstream, unpatched)
+MOONRAKER_PIN=d5ee17128bb88434aacdab90c2e9e990e2b64e4a
+MOONRAKER_REPO=https://github.com/Arksine/moonraker.git
+GUPPYSCREEN_PIN=5f1911ac938451bb00439e8c55c87ef60b4a1566
+GUPPYSCREEN_REPO=https://github.com/coreflake1/NebulaOS-guppyscreen.git
+USTREAMER_PIN=18e30bb313d54b1b01dd995bd31ce5a3d5adffd6
+USTREAMER_REPO=https://github.com/pellcorp/k1-ustreamer.git (submodules: ustreamer@7fe8c873b382777da015dc475a706a04c1e3200b, jpeg-9d@541f5a573b5cf1c2a1b67c33a6c83e964e6a1913; NebulaOS CAM-05 patch sha256 2d7544ba7ac01ddef41d081d6d686c42e5fb486e209f1172fb4f138b064b95d1)
+BUILDROOT_PIN=d030e36bbc9669230c015be971b14b6e062cfdde
+BUILDROOT_VERSION=2025.02.18
+BUILDROOT_REPO=https://github.com/buildroot/buildroot.git
+TORNADO=python-tornado 6.4.2 (Buildroot) + NebulaOS br2-external/patches/python-tornado/6.4.2/0004-httputil-add-_ABNF-reason_phrase-for-CVE-2025-67724-backport.patch (sha256 6f26363dad1549b7fb18e196c7cd9230ea98bd95e41045e54d2260bf60a7ca49)
+MAINSAIL_TAG=v2.18.2
+PELLCORP_CREALITY_PIN=d18d354456a89c20507e574feaa34d6389e679ca
+BUILD_IMAGE_DIGEST=sha256:a6ba57c69fa1ea630b037a1d1f55cf0c044a7f5a403bde9b155ea54bca1cceba
+
+# --- build artifacts (DEV build of FIRMWARE_HEAD) ---
+BUILD_MODE=dev
+BUILD_RUN=/var/tmp/nebulaos-build/b62fa188eb0abacc5065f3d1ec981d7200133975/run-20261007T214143Z-2624338
+XIMAGE_SHA256=3a2a296132b6b1ff27736737dabe01fc414e135088f6c404900890ebd7e4a2c8
+XIMAGE_SIZE=4968512
+ROOTFS_SHA256=2f6d547387143b02b4e9029436df03266883e25fe88d5b597bfafa42ba82f8d5
+ROOTFS_SIZE=130146304
+BUILD_MANIFEST=<BUILD_RUN>/artifacts/buildroot-halley5-v30-image/build-manifest.txt (sha256 e2980cb7bd126eeb9858700c597cb81d958563fde994c457e084f080bb6355e8)
+BUILD_ATTESTATION=<BUILD_RUN>/.nebulaos-build-verified (sha256 b324e7d49ae942f5b6d4da0b9c38dc976ba79aae9b2b8157af94296140ca0912; BUILD_VERIFIED=YES, ATTESTED_AT=2026-10-07T22:27:36Z)
+KERNEL_CONFIG_SHA256=4c4df161c3befa76cad09250d51b292d0b2d41eb67aa74ff29968327120c7be6
+BUILDROOT_CONFIG_SHA256=a9a9749dc3ea814b8b4fbee347c4d537020c99ce20cf54f9d2891b100ff71052
+
+# --- what the baseline contains (relative to ba3501a) ---
+QUALIFIED_FIXES=M1,S1,S2,S3,S4,NG1,G9_PHASE1
+#   M1         MCU guard application-identify budget 15 s
+#   S1         S03 swapfile size validated from metadata (ls -ln), no 128 MiB read
+#   S2         S97 exits at once without a qualification_complete=1 display config
+#   S3         camera idle auto-pause default ON (C2); a "C0" marker opts out
+#   S4         camera idle state reset when the controller stops
+#   NG1        Tornado _ABNF.reason_phrase: Moonraker HTTP error responses work again
+#   G9_PHASE1  /usr/data clean shutdown + bounded e2fsck -p boot policy (read-only on damage)
+
+# --- hardware evidence (ke-dev, DEV install, no motion/heat/print) ---
+#   flash: kernel2/rootfs2 read back with the hashes above; installer PART1 17/17
+#   MCU guard PASS on every boot (~3 s); Klipper READY ~30 s; Moonraker ~27 s;
+#   boot complete ~30-32 s; S03 ~0.08 s; S97 ~0.03 s
+#   G9: first boot e2fsck -p rc=1 (5.1 s, rw); every later normal reboot CLEAN, no fsck,
+#   no "mounting unchecked fs"
+#   NG1: Moonraker 404 in ~0.02 s, 0 _ABNF errors, macro seeder clean
+#   The fixes M1/S1/S2/S3/S4/NG1 are byte-identical to pre-final build f97e472, whose
+#   extended acceptance (10/10 reboots, camera cycles, synthetic regression) passed.
+EVIDENCE_DIR=/home/tim/workspace/NebulaOS/_scratch/final-baseline-20261007/
+EVIDENCE_REPORTS=_scratch/FINAL-BASELINE-CHANGESET.md, _scratch/PRE-FINAL-HARDWARE-ACCEPTANCE.md, _scratch/PRE-FINAL-BASELINE-BUILD.md, _scratch/NG1-TORNADO-PATCH-ARCHITECTURE.md, _scratch/FINAL-BASELINE-DEFERRED-GAPS-INVESTIGATION.md, _scratch/prefinal-acceptance-20261007/
+
+# --- deferred work (not baseline blockers) ---
+DEFERRED=G5,G6,G7,NG4
+#   G5   display qualification / debugfs status interface
+#   G6   DHCP startup optimization
+#   G7   Klippy startup optimization
+#   NG4  Wi-Fi loss under pathological full-system saturation
+
+# --- release-qualification boundary ---
+# Not claimed by this baseline; may later promote this same source identity to a
+# fully qualified release if no source change is needed:
+#   physical motion acceptance, homing/probing, heating, a representative real print,
+#   any desired extended formal qualification of b62fa18 itself (10-reboot, camera,
+#   synthetic regression), power-loss corruption/recovery testing.
+
+# --- development rule ---
+# All new NebulaOS development after 2026-10-08 starts from b62fa18 unless an explicit
+# migration/baseline supersession decision is recorded here. ba3501a, f97e472 and other
+# earlier candidates are evidence/reference points only, never the starting source for
+# new feature or bug-fix branches.

@@ -98,6 +98,16 @@ REPOSITORY_HEAD != SHIPPING_PIN
 
 The firmware manifest decides what ships. A pin that trails its repository HEAD is normal.
 
+**Canonical development baseline.** All new NebulaOS development after 2026-10-08 starts from
+canonical baseline `b62fa18` (tag `nebulaos-canonical-baseline-2026-10-08-b62fa18`, identities in
+`NebulaOS-firmware/docs/BASELINE-MANIFEST.txt`), unless an explicit migration or baseline
+supersession decision is recorded there. Historical candidates such as `ba3501a` and `f97e472` are
+evidence and reference points only and must not be the starting source for new feature or bug-fix
+branches. The baseline is a development baseline: it does not claim supervised physical
+qualification (motion, heating, a real print, power-loss recovery), and it is not the
+`QUALIFIED_BASELINE_TAG` the build gates compare against - promoting it to a qualified release is a
+separate, explicit step.
+
 ## 5. Extensions `main` vs `production`
 
 - `main` — development branch, checked out here.
