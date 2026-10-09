@@ -101,9 +101,23 @@ rm -f "$APP/moonraker/components/nebulaos.py"; echo upstream > "$APP/moonraker/c
 compose_moonraker_component "$APP" >/dev/null
 check "upstream file of the same name is not replaced" '[ ! -L "$APP/moonraker/components/nebulaos.py" ] && grep -qx upstream "$APP/moonraker/components/nebulaos.py"'
 
+# machine.services allow list (GuppyScreen "Restart GuppyScreen").
+D="$T/data"; mkdir -p "$D"
+allow_moonraker_service "$D" guppyscreen
+check "allow list created with the service" '[ "$(cat "$D/moonraker.asvc")" = guppyscreen ]'
+allow_moonraker_service "$D" guppyscreen
+check "allow list: idempotent" '[ "$(grep -cx guppyscreen "$D/moonraker.asvc")" = 1 ]'
+printf 'crowsnest\nmy_service' > "$D/moonraker.asvc"
+allow_moonraker_service "$D" guppyscreen
+check "allow list: user entries kept, no glued line" '[ "$(cat "$D/moonraker.asvc")" = "$(printf "crowsnest\nmy_service\nguppyscreen")" ]'
+allow_moonraker_service "$T/no-such-dir" guppyscreen
+check "allow list: missing data dir is a no-op" '[ ! -e "$T/no-such-dir" ]'
+
 # Wiring.
 check "S56 start_daemon composes before starting" \
 	'awk "/^start_daemon\\(\\)/{s=1} s&&/compose_component/{c=NR} s&&/start-stop-daemon -S/{print (c&&c<NR)?\"ok\":\"bad\"; exit}" "$S56" | grep -qx ok'
+check "S56 allows guppyscreen in the data path" \
+	'grep -q "allow_moonraker_service \"\$DATAPATH\" guppyscreen" "$S56"'
 check "S05 composes before the bind mount" \
 	'awk "/compose_moonraker_component \"\\\$NEBULAOS_ROOT\\/apps\\/moonraker\"/{c=NR} /bind_if_not_already \"\\\$NEBULAOS_ROOT\\/apps\\/moonraker\"/{print (c&&c<NR)?\"ok\":\"bad\"; exit}" "$S05" | grep -qx ok'
 

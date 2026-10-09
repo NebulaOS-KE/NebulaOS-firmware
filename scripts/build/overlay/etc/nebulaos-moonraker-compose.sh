@@ -46,3 +46,22 @@ compose_moonraker_component() {
 	fi
 	return 0
 }
+
+# Lets Moonraker's machine.services.* act on a NebulaOS service (GuppyScreen's
+# "Restart GuppyScreen" uses machine.services.restart). Moonraker only manages
+# services listed in <data path>/moonraker.asvc, and reads it once at start.
+# Adds the name when missing (creates the file when absent - Moonraker's own
+# default list names services this image does not have); never removes
+# anything a user added. Idempotent, never fails its caller.
+allow_moonraker_service() {
+	_asvc="$1/moonraker.asvc"
+	_svc="$2"
+	[ -d "$1" ] || return 0
+	grep -qxF "$_svc" "$_asvc" 2>/dev/null && return 0
+	if [ -s "$_asvc" ] && [ -n "$(tail -c 1 "$_asvc" 2>/dev/null)" ]; then
+		echo >> "$_asvc" 2>/dev/null
+	fi
+	echo "$_svc" >> "$_asvc" 2>/dev/null \
+		|| echo "moonraker-compose: could not allow service $_svc in $_asvc"
+	return 0
+}
