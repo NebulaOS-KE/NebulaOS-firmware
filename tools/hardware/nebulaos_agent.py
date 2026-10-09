@@ -289,7 +289,14 @@ def op_inspect(args):
                 say("PROBE=%s@%s unreachable (%s)" % (which, address, str(exc)[:100]))
                 continue
             try:
-                identity = session.probe_identity()
+                # The session connects lazily: an address that is down only
+                # fails here. Try the next enrolled address (what the other
+                # operations already do in op_verify()), never crash.
+                try:
+                    identity = session.probe_identity()
+                except device.DeviceError as exc:
+                    say("PROBE=%s@%s unreachable (%s)" % (which, address, str(exc)[:100]))
+                    continue
                 ok, why = profile.identity_matches(identity)
                 say("PROBE=%s@%s reachable" % (which, address))
                 say(identity.describe())

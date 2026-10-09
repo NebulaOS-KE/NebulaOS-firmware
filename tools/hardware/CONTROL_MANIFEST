@@ -9,7 +9,7 @@
 5c9479c10b70f9bc26309ab02a7b7bb0346cbff9802f514670a6d4b10655bfbb  on-device  scripts/flash-spare-slot.sh
 9690c4b144d80abb028a8f4e45db8fbf6527590c23a54a23aee714d8a81a13e5  host  tools/attest/nebulaos-attest.py
 f2e1c2a7cca56006ae760a0ebe000aacb20869f5ddc44c17c71ad967e11cf8cb  host  tools/emmc/nebulaos_layout.py
-5dd6e5dc568f7b6433d9ad802e57fbc7c8abf1add04c0e3810a1103000369601  host  tools/hardware/nebulaos_agent.py
+8159fe271e46b8d7657f4ed8bbf3828bdfc75801316e19b7cc4ce4ab84bbe297  host  tools/hardware/nebulaos_agent.py
 91ee1e8661716e59281e36483393169a950d226181b656c4b3fd079fbde0424b  host  tools/hardware/nebulaos_capture.py
 6c22308c8d8e04d1b4cafdfb4a35085be137eff980f92a4f34aa72f820d22dcc  host  tools/hardware/nebulaos_control.py
 85a309dd2ae731268687c8b7c4ac34555120c02b37c8ea764cd7be0bcb4149e9  host  tools/hardware/nebulaos_device.py
