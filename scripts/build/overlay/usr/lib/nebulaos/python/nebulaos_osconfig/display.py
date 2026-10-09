@@ -6,8 +6,8 @@
 #                          boot restore, and the S98 touch-wake gate)
 #
 # Hardware is driven only through /usr/libexec/nebulaos/nebulaos-backlight
-# (one implementation of the controller sequences). The kernel controller
-# offers debugfs commands only - see that library's header (G5 stays open).
+# over the kernel controller's standard backlight class device
+# (/sys/class/backlight/nebulaos_backlight) - see that library's header.
 import os
 
 from . import common
@@ -75,13 +75,13 @@ def hardware_status():
     st = {"available": kv.get("available") == "1"}
     if st["available"]:
         level = kv.get("level", "")
+        selected = kv.get("selected", "")
         st.update({
-            "controller_state": kv.get("state") or None,
+            "interface": kv.get("interface") or None,
             "level": int(level) if level.isdigit() else None,
+            "selected_level": int(selected) if selected.isdigit() else None,
             "asleep": kv.get("asleep") == "1",
-            "wake_target": kv.get("wake_target") or None,
             "touch_wake_running": kv.get("touch_wake") == "1",
-            "op_failure_count": kv.get("op_failure_count"),
         })
     elif rc != 0:
         st["error"] = (err or out).strip()[-500:]
@@ -94,9 +94,7 @@ def status():
         "config": cfg,
         "config_error": error,
         "levels": list(LEVELS),
-        "interface": "debugfs",
-        "interface_note": "the kernel controller exposes no /sys/class/backlight "
-                          "device; NebulaOS drives its debugfs command interface (G5)",
+        "interface": "sysfs",
         "backlight": hardware_status(),
     }
 

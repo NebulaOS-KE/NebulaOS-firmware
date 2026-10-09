@@ -6,27 +6,23 @@
 #
 #   status | set <25|50|75|100> | sleep | wake | restore
 #
-# Exit codes follow the library: 0 ok, 1 invalid, 2 failed, 3 asleep (set:
-# nothing done), 4 sleep refused (no touch-wake path).
+# Exit codes follow the library: 0 ok, 1 invalid, 2 failed, 3 off (set: level
+# stored, applied on wake), 4 sleep refused (no touch-wake path).
 
 NBL_LIB="${NBL_LIB:-/etc/nebulaos-backlight.sh}"
 . "$NBL_LIB" || exit 2
 
 case "${1:-}" in
 	status)
-		nbl_ensure_debugfs
 		nbl_status_kv
 		exit 0 ;;
 	set)
-		nbl_ensure_debugfs || exit 2
 		nbl_set_level "${2:-}"
 		exit $? ;;
 	sleep)
-		nbl_ensure_debugfs || exit 2
 		nbl_sleep
 		exit $? ;;
 	wake)
-		nbl_ensure_debugfs || exit 2
 		nbl_wake
 		exit $? ;;
 	restore)

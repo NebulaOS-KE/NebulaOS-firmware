@@ -45,6 +45,9 @@ restore_brightness() {
 }
 
 start_watcher() {
+	# The watcher reads the touch driver's debugfs status (touch_down_count);
+	# debugfs is not mounted on the image by default.
+	[ -f "$NBL_LIB" ] && ( . "$NBL_LIB" && nbl_ensure_debugfs )
 	echo "Starting S98nebulaos-display-sleep-wake-controller (touch-wake watcher)"
 	start-stop-daemon -S -b -m -p "$PIDFILE" -x /bin/sh -- "$0" __run
 }

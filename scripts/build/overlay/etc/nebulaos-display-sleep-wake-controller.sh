@@ -108,7 +108,17 @@ ndq_swc_touch_wake_allowed() {
 # "not asleep" / "unknown, do nothing") on anything else, including an
 # unreadable status file - the safe direction on any doubt, matching this
 # whole mission's own stated philosophy.
+# GUI/service readiness mission (2026-10-09, G5): the controller now has a
+# standard backlight class device. When it exists it is the source of truth
+# (off = actual_brightness 0) and waking clears bl_power; the debugfs path
+# below stays for kernels without it.
+: "${NDQ_BACKLIGHT_SYSFS:=/sys/class/backlight/nebulaos_backlight}"
+
 ndq_swc_backlight_is_asleep() {
+	if [ -r "$NDQ_BACKLIGHT_SYSFS/actual_brightness" ] && [ -z "${1:-}" ]; then
+		[ "$(cat "$NDQ_BACKLIGHT_SYSFS/actual_brightness" 2>/dev/null)" = 0 ]
+		return $?
+	fi
 	status_file="${1:-$NDQ_BACKLIGHT_STATUS_FILE}"
 	[ -r "$status_file" ] || return 1
 	grep -q '^state: asleep$' "$status_file" 2>/dev/null
@@ -131,6 +141,16 @@ ndq_swc_touch_down_count() {
 # spelling, this is the second (and only other) place to fix, right next
 # to ndq_swc_backlight_is_asleep() above.
 ndq_swc_wake() {
+	if [ -w "$NDQ_BACKLIGHT_SYSFS/bl_power" ]; then
+		if printf '0' > "$NDQ_BACKLIGHT_SYSFS/bl_power" 2>/dev/null; then
+			[ "$(cat "$NDQ_BACKLIGHT_SYSFS/brightness" 2>/dev/null)" = 0 ] && \
+				printf '4' > "$NDQ_BACKLIGHT_SYSFS/brightness" 2>/dev/null
+			ndq_swc_log "wake: cleared bl_power on $NDQ_BACKLIGHT_SYSFS"
+			return 0
+		fi
+		ndq_swc_log "wake: write of bl_power on $NDQ_BACKLIGHT_SYSFS failed"
+		return 1
+	fi
 	if [ ! -w "$NDQ_BACKLIGHT_CMD_FILE" ]; then
 		ndq_swc_log "wake: $NDQ_BACKLIGHT_CMD_FILE not present or not writable - cannot wake"
 		return 1

@@ -29,6 +29,10 @@ if TYPE_CHECKING:
     from ..common import WebRequest
 
 DEFAULT_HELPER = "/usr/libexec/nebulaos/nebulaos-osconfig"
+# Moonraker file root for boot-image uploads (server.files.upload
+# root=nebulaos_boot). Its own folder, never the printer config tree.
+BOOT_UPLOAD_ROOT = "nebulaos_boot"
+DEFAULT_BOOT_UPLOAD_DIR = "/usr/data/nebulaos/boot/uploads"
 READ_TIMEOUT = 20.
 # A network change waits for DHCP/ARP verification and a possible revert.
 WRITE_TIMEOUT = 150.
@@ -42,6 +46,15 @@ class NebulaOS:
         # network change that is verifying DHCP.
         self.write_locks: Dict[str, asyncio.Lock] = {}
         self.server.register_notification("nebulaos:settings_changed")
+        self.boot_upload_dir = config.get("boot_upload_dir", DEFAULT_BOOT_UPLOAD_DIR)
+        try:
+            os.makedirs(self.boot_upload_dir, exist_ok=True)
+        except OSError as exc:
+            logging.info(f"nebulaos: cannot create {self.boot_upload_dir}: {exc}")
+        fm = self.server.lookup_component("file_manager", None)
+        if fm is None or not fm.register_directory(
+                BOOT_UPLOAD_ROOT, self.boot_upload_dir, full_access=True):
+            logging.info("nebulaos: boot image upload root not registered")
         routes = [
             ("/machine/nebulaos/info", RequestType.GET, self._info),
             ("/machine/nebulaos/network/status", RequestType.GET, self._net_status),
@@ -65,11 +78,7 @@ class NebulaOS:
 
     def _env(self) -> Dict[str, str]:
         env = dict(os.environ)
-        fm = self.server.lookup_component("file_manager", None)
-        if fm is not None:
-            config_root = fm.get_directory("config")
-            if config_root:
-                env["NEBULAOS_CONFIG_ROOT"] = config_root
+        env["NEBULAOS_BOOT_UPLOAD_DIR"] = self.boot_upload_dir
         return env
 
     async def _exec(self, args: List[str], timeout: float) -> Dict[str, Any]:
@@ -136,8 +145,8 @@ class NebulaOS:
         return await self._write("boot-display", "set-mode", "--mode", mode)
 
     async def _bd_image(self, web_request: WebRequest) -> Dict[str, Any]:
-        path = web_request.get_str("path")
-        return await self._write("boot-display", "set-image", "--path", path)
+        filename = web_request.get_str("filename")
+        return await self._write("boot-display", "set-image", "--file", filename)
 
     async def _bd_reset_image(self, web_request: WebRequest) -> Dict[str, Any]:
         return await self._write("boot-display", "reset-image")

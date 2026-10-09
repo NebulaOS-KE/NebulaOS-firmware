@@ -3,13 +3,15 @@
 #
 #   boot/display.json        source of truth (schema 1): mode, image
 #   boot/display.env         MODE= for S01splash (shell)
-#   boot/custom.png|bmp      validated user image
+#   boot/uploads/            Moonraker root "nebulaos_boot" (GUI uploads here)
+#   boot/custom.png|bmp      validated copy of the selected image
 #   boot/cache/splash.raw    framebuffer-native render (derived)
 #   boot/cache/splash.meta   geometry + source identity of the render
 #
 # Pillow runs only here (a short-lived helper process), never at boot: the
 # boot script blits splash.raw when splash.meta matches the live framebuffer.
 import hashlib
+import re
 import io
 import json
 import os
@@ -31,7 +33,10 @@ ENV = os.path.join(BOOT_DIR, "display.env")
 CACHE_DIR = os.path.join(BOOT_DIR, "cache")
 RAW = os.path.join(CACHE_DIR, "splash.raw")
 META = os.path.join(CACHE_DIR, "splash.meta")
-CONFIG_ROOT = os.environ.get("NEBULAOS_CONFIG_ROOT", "/opt/printer_data/config")
+# Moonraker file root "nebulaos_boot" (registered by the [nebulaos]
+# component): the only place an image may be picked from.
+UPLOAD_DIR = os.environ.get("NEBULAOS_BOOT_UPLOAD_DIR",
+                            os.path.join(BOOT_DIR, "uploads"))
 FB_DEV = os.environ.get("NEBULAOS_FB_DEV", "/dev/fb0")
 FB_SYSFS = os.environ.get("NEBULAOS_FB_SYSFS", "/sys/class/graphics/fb0")
 GUPPY_CONFIG = os.environ.get("NEBULAOS_GUPPY_CONFIG", "/opt/guppyscreen/guppyconfig.json")
@@ -325,18 +330,25 @@ def set_mode(mode):
     return {"result": "APPLIED", "config": cfg, "applies": "next boot"}
 
 
-def resolve_config_path(relpath):
-    if not isinstance(relpath, str) or not relpath or relpath.startswith("/") or "\x00" in relpath:
-        raise invalid("INVALID_PATH", "path must be relative to the config root")
-    root = os.path.realpath(CONFIG_ROOT)
-    full = os.path.realpath(os.path.join(root, relpath))
-    if os.path.commonpath([root, full]) != root:
-        raise invalid("INVALID_PATH", "path escapes the config root")
+_UPLOAD_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+
+
+def resolve_upload(filename):
+    """A plain file name inside the boot upload root - no directories, no
+    traversal, no symlink out of it."""
+    if not isinstance(filename, str) or not _UPLOAD_NAME_RE.match(filename):
+        raise invalid("INVALID_FILENAME",
+                      "give the name of a file uploaded to the nebulaos_boot root "
+                      "(letters, digits, '.', '_', '-'; no folders)")
+    root = os.path.realpath(UPLOAD_DIR)
+    full = os.path.realpath(os.path.join(root, filename))
+    if os.path.dirname(full) != root:
+        raise invalid("INVALID_FILENAME", "file is not inside the boot upload root")
     return full
 
 
-def set_image(relpath):
-    src = resolve_config_path(relpath)
+def set_image(filename):
+    src = resolve_upload(filename)
     fmt, width, height = validate_image_file(src)
     with open(src, "rb") as handle:
         data = handle.read(MAX_FILE_BYTES + 1)

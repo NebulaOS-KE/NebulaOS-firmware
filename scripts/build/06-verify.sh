@@ -1646,6 +1646,7 @@ check /opt/moonraker/moonraker/components/nebulaos.py
 check /etc/nebulaos/moonraker/nebulaos.conf
 check /etc/nebulaos-network.sh
 check /etc/nebulaos-backlight.sh
+check /etc/nebulaos-moonraker-compose.sh
 check /etc/init.d/S01splash
 if debugfs -R "cat /etc/nebulaos/moonraker/klipper-pin.conf" ${IMAGES}/rootfs.ext2 2>/dev/null \
 	| grep -qx '\[include /etc/nebulaos/moonraker/nebulaos.conf\]'; then

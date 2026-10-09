@@ -7,7 +7,7 @@
 #   nebulaos-osconfig network set-ipv4 --json '{"mode":"static",...}'
 #   nebulaos-osconfig boot-display status|reset-image
 #   nebulaos-osconfig boot-display set-mode --mode logo|console|blank
-#   nebulaos-osconfig boot-display set-image --path REL_PATH_IN_CONFIG_ROOT
+#   nebulaos-osconfig boot-display set-image --file NAME_IN_UPLOAD_ROOT
 #   nebulaos-osconfig boot-display render [--if-stale]
 #   nebulaos-osconfig display status|sleep|wake
 #   nebulaos-osconfig display set-brightness --level 25|50|75|100
@@ -66,7 +66,7 @@ def _dispatch(argv):
             if verb == "set-mode":
                 return bootdisplay.set_mode(_opts(rest, {"mode": True}).get("mode"))
             if verb == "set-image":
-                return bootdisplay.set_image(_opts(rest, {"path": True}).get("path"))
+                return bootdisplay.set_image(_opts(rest, {"file": True}).get("file"))
             if verb == "reset-image":
                 _opts(rest, {})
                 return bootdisplay.reset_image()

@@ -51,13 +51,13 @@ class Env(object):
         os.makedirs(self.bin)
         self.netapply = os.path.join(self.bin, "netapply")
         self.backlight = os.path.join(self.bin, "backlight")
-        self.config_root = os.path.join(self.tmp, "config")
+        self.config_root = os.path.join(self.tmp, "uploads")
         os.makedirs(self.config_root)
         os.environ.update({
             "NEBULAOS_ROOT": self.root, "NEBULAOS_OSCONFIG_RUN": self.run,
             "NEBULAOS_NETAPPLY": self.netapply,
             "NEBULAOS_BACKLIGHT_CLI": self.backlight,
-            "NEBULAOS_CONFIG_ROOT": self.config_root,
+            "NEBULAOS_BOOT_UPLOAD_DIR": self.config_root,
             "NEBULAOS_SEED_MANIFEST": os.path.join(self.tmp, "seed.json"),
             "NEBULAOS_GUPPY_CONFIG": os.path.join(self.tmp, "guppy.json"),
             "NEBULAOS_DATA_MOUNT": self.tmp,
@@ -368,13 +368,17 @@ class BootDisplayTests(unittest.TestCase):
             self.b.set_mode("splash; reboot")
         self.assertEqual(self.b.load_config()[0]["mode"], "console")
 
-    def test_path_confinement(self):
-        for bad in ("/etc/passwd", "../x.png", "a/../../x.png", "", None):
-            with self.assertRaises(self.e.common.OsConfigError, msg=repr(bad)):
-                self.b.resolve_config_path(bad)
-        os.symlink("/etc", os.path.join(self.e.config_root, "evil"))
+    def test_upload_name_confinement(self):
+        for bad in ("/etc/passwd", "../x.png", "a/b.png", "sub/../x.png", ".hidden.png",
+                    "", None, "x" * 200, "a b.png", "a;reboot.png"):
+            with self.assertRaises(self.e.common.OsConfigError, msg=repr(bad)) as cm:
+                self.b.resolve_upload(bad)
+            self.assertEqual(cm.exception.code, "INVALID_FILENAME")
+        os.symlink("/etc/hostname", os.path.join(self.e.config_root, "evil.png"))
         with self.assertRaises(self.e.common.OsConfigError):
-            self.b.resolve_config_path("evil/hostname")
+            self.b.resolve_upload("evil.png")
+        self.assertEqual(self.b.resolve_upload("boot-1.png"),
+                         os.path.join(os.path.realpath(self.e.config_root), "boot-1.png"))
 
     def test_image_validation(self):
         good = self._png("ok.png")
@@ -441,11 +445,11 @@ class BootDisplayTests(unittest.TestCase):
                          "RENDERED")
 
     def test_set_image_copies_validates_and_renders(self):
-        self._png("nebulaos/boot.png", colour=(0, 255, 0))
+        self._png("boot.png", colour=(0, 255, 0))
         old = self.b.fb_geometry
         self.b.fb_geometry = lambda: fake_geometry()
         try:
-            r = self.b.set_image("nebulaos/boot.png")
+            r = self.b.set_image("boot.png")
         finally:
             self.b.fb_geometry = old
         self.assertEqual(r["config"]["image"], "custom")
@@ -537,13 +541,14 @@ class ComponentTests(unittest.TestCase):
         self.helper = os.path.join(self.tmp, "helper")
         self.log = os.path.join(self.tmp, "argv")
         write_exe(self.helper, """
-            printf '%%s\\n' "$@" > "%(log)s"; echo "NEBULAOS_CONFIG_ROOT=$NEBULAOS_CONFIG_ROOT" >> "%(log)s"
+            printf '%%s\\n' "$@" > "%(log)s"; echo "NEBULAOS_BOOT_UPLOAD_DIR=$NEBULAOS_BOOT_UPLOAD_DIR" >> "%(log)s"
             case "$1 $2" in
               "display set-brightness") echo '{"ok": false, "error": "INVALID_BRIGHTNESS", "message": "m"}'; exit 1 ;;
               "network set-ipv4") echo '{"ok": false, "error": "GATEWAY_UNREACHABLE_REVERTED", "message": "m"}'; exit 2 ;;
             esac
             echo '{"ok": true, "result": "APPLIED"}'
         """ % {"log": self.log})
+        self.upload_dir = os.path.join(self.tmp, "boot-uploads")
         pkg = types.ModuleType("moonraker")
         pkg.__path__ = []
         comps = types.ModuleType("moonraker.components")
@@ -565,8 +570,9 @@ class ComponentTests(unittest.TestCase):
                 self.status_code = code
 
         class FM(object):
-            def get_directory(self, root):
-                return "/cfg-root"
+            def register_directory(self, root, path, full_access=False):
+                test.registered = (root, path, full_access)
+                return True
 
         class Server(object):
             def __init__(self):
@@ -592,7 +598,8 @@ class ComponentTests(unittest.TestCase):
                 return test.server
 
             def get(self, key, default=None):
-                return test.helper if key == "helper" else default
+                return {"helper": test.helper,
+                        "boot_upload_dir": test.upload_dir}.get(key, default)
 
         self.server = Server()
         self.comp = self.mod.load_component(Config())
@@ -633,7 +640,7 @@ class ComponentTests(unittest.TestCase):
     def test_argv_mapping_no_shell(self):
         self.call("/machine/nebulaos/network/hostname", {"hostname": "a; reboot"})
         self.assertEqual(self.argv()[:4], ["network", "set-hostname", "--hostname", "a; reboot"])
-        self.assertIn("NEBULAOS_CONFIG_ROOT=/cfg-root", self.argv())
+        self.assertIn("NEBULAOS_BOOT_UPLOAD_DIR=" + self.upload_dir, self.argv())
         self.call("/machine/nebulaos/display/wake")
         self.assertEqual(self.argv()[:2], ["display", "wake"])
         self.assertEqual(self.server.events[-1][0], "nebulaos:settings_changed")
@@ -648,6 +655,12 @@ class ComponentTests(unittest.TestCase):
         spec = json.loads(self.argv()[3])
         self.assertEqual(spec, {"mode": "static", "address": "10.0.0.5", "prefix": 24,
                                 "gateway": "10.0.0.1", "dns": ["10.0.0.1"]})
+
+    def test_boot_upload_root_registered(self):
+        self.assertEqual(self.registered, ("nebulaos_boot", self.upload_dir, True))
+        self.assertTrue(os.path.isdir(self.upload_dir))
+        self.call("/machine/nebulaos/boot_display/image", {"filename": "logo.png"})
+        self.assertEqual(self.argv()[:4], ["boot-display", "set-image", "--file", "logo.png"])
 
     def test_invalid_maps_to_400(self):
         with self.assertRaises(Exception) as cm:

@@ -1,0 +1,48 @@
+# shellcheck shell=sh
+#
+# Compose the NebulaOS [nebulaos] Moonraker component into a Moonraker
+# checkout (GUI/service readiness mission, 2026-10-09). Sourced by
+# S05nebulaos-activate and S56moonraker.
+#
+# The component lives on the read-only rootfs (/usr/lib/nebulaos/moonraker/
+# nebulaos.py). Moonraker only imports components from its own package, so the
+# persistent checkout gets a symlink moonraker/components/nebulaos.py listed in
+# that clone's .git/info/exclude - the same no-fork mechanism as the Klipper
+# extras: Moonraker's update_manager still sees a pristine repository.
+#
+# Why S56 runs it too: update_manager's update (git pull), rollback and soft
+# recover (reset --hard / checkout) leave an excluded untracked file alone,
+# but a HARD recover deletes the checkout and re-clones it - symlink and
+# exclude entry gone. Every one of those paths ends in a Moonraker restart
+# through /etc/init.d/S56moonraker (supervisorctl shim, the update
+# supervisor's rollback and liveness restarts), so composing in S56 start()
+# restores the component before Moonraker imports it. tests/
+# moonraker-component-survival-tests.sh replays those git operations.
+#
+# Idempotent. An upstream file of the same name is never replaced (logged;
+# the component is then unavailable). Never fails its caller: Moonraker loads
+# [nebulaos] as an optional component.
+
+NEBULAOS_MOONRAKER_COMPONENT="${NEBULAOS_MOONRAKER_COMPONENT:-/usr/lib/nebulaos/moonraker/nebulaos.py}"
+
+compose_moonraker_component() {
+	_mr="$1"
+	_dst="$_mr/moonraker/components/nebulaos.py"
+	_excl="$_mr/.git/info/exclude"
+	_rel="/moonraker/components/nebulaos.py"
+	[ -d "$_mr/moonraker/components" ] || return 0
+	[ -f "$NEBULAOS_MOONRAKER_COMPONENT" ] || { echo "moonraker-compose: component source missing - not composing"; return 0; }
+	if [ -e "$_dst" ] && [ ! -L "$_dst" ]; then
+		echo "moonraker-compose: $_dst is a real file (upstream collision?) - not replacing it, [nebulaos] unavailable"
+		return 0
+	fi
+	if [ "$(readlink "$_dst" 2>/dev/null)" != "$NEBULAOS_MOONRAKER_COMPONENT" ]; then
+		ln -sfn "$NEBULAOS_MOONRAKER_COMPONENT" "$_dst" 2>/dev/null \
+			|| { echo "moonraker-compose: could not compose the [nebulaos] component"; return 0; }
+	fi
+	if [ -d "$_mr/.git" ]; then
+		mkdir -p "$_mr/.git/info" 2>/dev/null
+		grep -qxF "$_rel" "$_excl" 2>/dev/null || echo "$_rel" >> "$_excl" 2>/dev/null
+	fi
+	return 0
+}
