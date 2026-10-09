@@ -2,8 +2,7 @@
 # GUI/service readiness acceptance (2026-10-09), READ ONLY: the [nebulaos]
 # Moonraker component, network/hostname/mDNS, SFTP, the sudo adapter's
 # refusals, PLR status, boot display and backlight state. Changes nothing:
-# GET requests only, no helper write verb, no mount (S98 mounts debugfs at
-# boot), the SFTP probe is one INIT/VERSION exchange with a local sftp-server
+# GET requests only, no helper write verb, no mount, the SFTP probe is one INIT/VERSION exchange with a local sftp-server
 # process over a pipe, the sudo probe only exercises refusals.
 U=http://127.0.0.1:7125
 echo "uptime=$(cut -d' ' -f1 /proc/uptime)"
@@ -73,14 +72,18 @@ for v in /sys/class/vtconsole/vtcon*; do echo "$v: $(cat $v/name) bind=$(cat $v/
 echo "fbcon_rotate=$(cat /sys/class/graphics/fbcon/rotate 2>/dev/null)"
 dmesg | grep -iE 'fbcon|Console: switching|frame buffer device' | tail -5
 grep -aE 'nebulaos-boot-display' /var/log/messages 2>/dev/null | tail -6 | cut -c1-200
-echo "== backlight"
-grep -c ' /sys/kernel/debug debugfs ' /proc/mounts | sed 's/^/debugfs_mounts=/'
-cat /sys/kernel/debug/nebulaos_backlight_final/status 2>/dev/null | grep -E '^(state|pwm_duty_pct|asleep|wake_target|safe_on_verified|op_failure_count|last_restore_reason):'
+echo "== backlight (sysfs, G5)"
+B=/sys/class/backlight/nebulaos_backlight
+ls /sys/class/backlight/ 2>&1
+for a in max_brightness brightness actual_brightness bl_power type; do echo "$a=$(cat $B/$a 2>/dev/null)"; done
 cat /usr/data/nebulaos/display/display.env 2>/dev/null
 grep -aE 'nebulaos-backlight|sleep-wake-controller' /var/log/messages 2>/dev/null | tail -6 | cut -c1-200
+dmesg | grep -E 'backlight final controller|nebulaos_backlight' | tail -4
+echo "debugfs_mounts=$(grep -c ' /sys/kernel/debug debugfs ' /proc/mounts)"
 p=$(cat /var/run/nebulaos-display-sleep-wake-controller.pid 2>/dev/null); echo "touch_wake_watcher=${p:-none}"
-echo "== touch"
-grep -E '^(mode|touch_down_count):' /sys/kernel/debug/ns2009_final_qualification/status 2>/dev/null
+echo "== boot image upload root"
+ls -la /usr/data/nebulaos/boot/uploads 2>&1 | head -5
+curl -s -m 5 "$U/server/files/roots" | grep -o '"name": *"nebulaos_boot"[^}]*' | head -c 300; echo
 echo "== health"
 curl -s -m 5 "$U/server/info" | grep -oE '"klippy_state": *"[a-z]*"'
 dmesg | grep -cE 'BUG:|WARNING:|Oops' | sed 's/^/kernel_warnings=/'

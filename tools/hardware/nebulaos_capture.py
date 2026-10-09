@@ -893,19 +893,16 @@ EXERCISE_PROFILES["fb-camera-10"] = (
 # refusals, PLR status, boot display, backlight. See tools/hwcap/gs_services.sh.
 CAPTURE_PROFILES["gs-services"] = (". $T/gs_services.sh", False, "gs_services.sh", 240)
 # Self-undoing backlight brightness exercise through nebulaos-osconfig (the GUI
-# path). The undo runs only once gs_display.sh has recorded the starting state:
-# level 100, the original display files (or none), the original persisted
-# level, and boot-preserve again ("disarm") if that is where it started.
+# path, standard backlight device). The undo runs only once gs_display.sh has
+# recorded the starting state: the original sysfs brightness and the original
+# display files (or none).
 EXERCISE_PROFILES["gs-display-brightness"] = (
     _IDLE_GUARD + ". $T/gs_display.sh",
     "if [ \"${GS_STARTED:-0}\" = 1 ]; then "
-    "/usr/libexec/nebulaos/nebulaos-osconfig display set-brightness --level 100 > /dev/null 2>&1; "
+    "printf '%s' \"$B0\" > $B/brightness; "
     "if [ \"$HAD_J\" = 1 ]; then cp $T/display.json $DD/display.json; else rm -f $DD/display.json; fi; "
     "if [ \"$HAD_E\" = 1 ]; then cp $T/display.env $DD/display.env; else rm -f $DD/display.env; fi; "
-    "L=$(sed -n 's/^BRIGHTNESS=\"\\([0-9]*\\)\"$/\\1/p' $DD/display.env 2>/dev/null); "
-    "[ -n \"$L\" ] && [ \"$L\" != 100 ] && /usr/libexec/nebulaos/nebulaos-backlight set $L; "
-    "[ \"$S0\" = boot-preserve ] && printf disarm > /sys/kernel/debug/nebulaos_backlight_final/command; "
-    "echo \"undo: $(grep -E '^(state|pwm_duty_pct):' $ST | tr '\\n' ' ') files: $(ls $DD 2>/dev/null | tr '\\n' ' ')\"; fi",
+    "echo \"undo: $(bl) files: $(ls $DD 2>/dev/null | tr '\\n' ' ')\"; fi",
     300)
 
 # Exercises that embed a tracked hwcap probe, the same way captures do.
