@@ -65,3 +65,24 @@ mode_after=$(stat -c %a "$SHADOW")
 }
 
 echo "== post-build: /etc/shadow root hash pinned (mode $mode_after preserved) =="
+
+# GuppyScreen "Reset GuppyScreen settings" (GUI readiness work, 2026-10-10):
+# at runtime /opt/guppyscreen/guppyconfig.json is bind-mounted over by the
+# persistent copy (S01persistent-datastore), so the shipped default is no
+# longer readable there. Keep a read-only copy of the same file, made here so
+# it can never drift from the seed source; GuppyScreen writes it back over
+# the persistent config in place.
+GUPPY_DEFAULT_SRC="$TARGET_DIR/opt/guppyscreen/guppyconfig.json"
+GUPPY_DEFAULT_DST="$TARGET_DIR/usr/share/nebulaos/guppyscreen/guppyconfig.default.json"
+[ -f "$GUPPY_DEFAULT_SRC" ] || {
+	echo "FATAL: post-build: $GUPPY_DEFAULT_SRC missing" >&2
+	exit 1
+}
+mkdir -p "$(dirname "$GUPPY_DEFAULT_DST")"
+cp "$GUPPY_DEFAULT_SRC" "$GUPPY_DEFAULT_DST"
+chmod 644 "$GUPPY_DEFAULT_DST"
+cmp -s "$GUPPY_DEFAULT_SRC" "$GUPPY_DEFAULT_DST" || {
+	echo "FATAL: post-build: GuppyScreen default config copy differs" >&2
+	exit 1
+}
+echo "== post-build: GuppyScreen default config kept at /usr/share/nebulaos/guppyscreen =="

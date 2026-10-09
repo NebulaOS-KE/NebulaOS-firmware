@@ -1648,6 +1648,7 @@ check /etc/nebulaos-network.sh
 check /etc/nebulaos-backlight.sh
 check /etc/nebulaos-moonraker-compose.sh
 check /etc/init.d/S01splash
+check /usr/share/nebulaos/guppyscreen/guppyconfig.default.json
 if debugfs -R "cat /etc/nebulaos/moonraker/klipper-pin.conf" ${IMAGES}/rootfs.ext2 2>/dev/null \
 	| grep -qx '\[include /etc/nebulaos/moonraker/nebulaos.conf\]'; then
 	echo "OK   klipper-pin.conf chains the nebulaos.conf include"
