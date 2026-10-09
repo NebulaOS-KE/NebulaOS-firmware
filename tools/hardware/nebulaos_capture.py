@@ -28,7 +28,8 @@ FW_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 HWCAP_DIR = os.path.join(FW_ROOT, "tools", "hwcap")
 
 PROBES = ("schedsnap.py", "timerlat.py", "ptyrtt.py", "kduty.py", "adxl_overflows.py", "qualmcu.py",
-          "lv_m1.py", "lv_s1.sh", "lv_s2.sh", "lv_g5.sh", "lv_cam.sh", "lv_g6.sh", "lv_g7.sh", "lv_g8.sh", "lv_g9.sh", "lv_g10.sh", "lv_ng1.py", "pf_cam.sh", "fb_ng3.sh", "fb_cam10.sh")
+          "lv_m1.py", "lv_s1.sh", "lv_s2.sh", "lv_g5.sh", "lv_cam.sh", "lv_g6.sh", "lv_g7.sh", "lv_g8.sh", "lv_g9.sh", "lv_g10.sh", "lv_ng1.py", "pf_cam.sh", "fb_ng3.sh", "fb_cam10.sh",
+          "gs_services.sh", "gs_display.sh")
 # Pinned data files embedded compressed (dropbear refuses a command longer than
 # MAX_CMD_LEN = 9000 bytes, so a whole profile must stay under SCRIPT_LIMIT).
 DATA_FILES = ("klipper-dict-board.json",)
@@ -887,13 +888,34 @@ EXERCISE_PROFILES["fb-camera-10"] = (
     "echo \"undo: controller_pid=$(cat /var/run/nebulaos-camera-idle-controller.pid 2>/dev/null)\"",
     2400)
 
+# --- GUI/service readiness (2026-10-09) -----------------------------------------
+# Read only: [nebulaos] component, network/hostname/mDNS, SFTP, sudo adapter
+# refusals, PLR status, boot display, backlight. See tools/hwcap/gs_services.sh.
+CAPTURE_PROFILES["gs-services"] = (". $T/gs_services.sh", False, "gs_services.sh", 240)
+# Self-undoing backlight brightness exercise through nebulaos-osconfig (the GUI
+# path). The undo runs only once gs_display.sh has recorded the starting state:
+# level 100, the original display files (or none), the original persisted
+# level, and boot-preserve again ("disarm") if that is where it started.
+EXERCISE_PROFILES["gs-display-brightness"] = (
+    _IDLE_GUARD + ". $T/gs_display.sh",
+    "if [ \"${GS_STARTED:-0}\" = 1 ]; then "
+    "/usr/libexec/nebulaos/nebulaos-osconfig display set-brightness --level 100 > /dev/null 2>&1; "
+    "if [ \"$HAD_J\" = 1 ]; then cp $T/display.json $DD/display.json; else rm -f $DD/display.json; fi; "
+    "if [ \"$HAD_E\" = 1 ]; then cp $T/display.env $DD/display.env; else rm -f $DD/display.env; fi; "
+    "L=$(sed -n 's/^BRIGHTNESS=\"\\([0-9]*\\)\"$/\\1/p' $DD/display.env 2>/dev/null); "
+    "[ -n \"$L\" ] && [ \"$L\" != 100 ] && /usr/libexec/nebulaos/nebulaos-backlight set $L; "
+    "[ \"$S0\" = boot-preserve ] && printf disarm > /sys/kernel/debug/nebulaos_backlight_final/command; "
+    "echo \"undo: $(grep -E '^(state|pwm_duty_pct):' $ST | tr '\\n' ' ') files: $(ls $DD 2>/dev/null | tr '\\n' ' ')\"; fi",
+    300)
+
 # Exercises that embed a tracked hwcap probe, the same way captures do.
 EXERCISE_PROBES = {"ktimers-ab": ("timerlat.py",), "ttyflip-ab": ("ptyrtt.py",),
                    "uart-fe-probe": ("qualmcu.py",), "mcu-link-bench": ("qualmcu.py",),
                    "mcu-identify-repeat": ("qualmcu.py",), "live-m1-identify": ("lv_m1.py",),
                    "live-s1-s03": ("lv_s1.sh",), "live-s2-s97": ("lv_s2.sh",), "live-g5-debugfs": ("lv_g5.sh",),
                    "live-s3-s4-camera": ("lv_cam.sh",), "live-g6-dhcp": ("lv_g6.sh",), "live-g7-klippy": ("lv_g7.sh",),
-                   "live-g8-seeder": ("lv_g8.sh",), "live-g9-ext4": ("lv_g9.sh",), "live-g10-diskswap": ("lv_g10.sh",), "live-ng1-tornado": ("lv_ng1.py",), "pf-camera": ("pf_cam.sh",), "fb-ng3-handoff": ("lv_m1.py", "fb_ng3.sh"), "fb-camera-10": ("fb_cam10.sh",)}
+                   "live-g8-seeder": ("lv_g8.sh",), "live-g9-ext4": ("lv_g9.sh",), "live-g10-diskswap": ("lv_g10.sh",), "live-ng1-tornado": ("lv_ng1.py",), "pf-camera": ("pf_cam.sh",), "fb-ng3-handoff": ("lv_m1.py", "fb_ng3.sh"), "fb-camera-10": ("fb_cam10.sh",),
+                   "gs-display-brightness": ("gs_display.sh",)}
 
 
 def exercise_script(name):

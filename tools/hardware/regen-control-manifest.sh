@@ -40,6 +40,8 @@ HOST=(
   tools/hwcap/klipper-dict-board.json
   tools/hwcap/fb_cam10.sh
   tools/hwcap/fb_ng3.sh
+  tools/hwcap/gs_display.sh
+  tools/hwcap/gs_services.sh
   tools/hwcap/kduty.py
   tools/hwcap/lv_cam.sh
   tools/hwcap/lv_g10.sh
