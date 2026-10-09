@@ -87,6 +87,11 @@ start() {
 	seed_once /opt/printer_data "$PDATA"
 	mkdir -p "$PDATA/config/GuppyScreen/scripts"
 	seed_once /opt/guppyscreen/guppyconfig.json "$GUPPY_STATE/guppyconfig.json"
+	# GuppyScreen's shipped thumbnail_path is /opt/guppyscreen/thumbnails, on
+	# the read-only squashfs: the image ships it as a symlink to this
+	# persistent directory, so thumbnail downloads work without touching any
+	# device's saved config (GUI readiness work, 2026-10-10).
+	mkdir -p "$GUPPY_STATE/thumbnails"
 	# Phase 2 final software closure mission (2026-09-09): user MCU
 	# application-firmware upload area, browsable through Mainsail's
 	# ordinary Config Files view (nebulaos-mcu flash resolves a bare
