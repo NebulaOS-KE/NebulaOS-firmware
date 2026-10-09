@@ -1,0 +1,38 @@
+#!/bin/sh
+#
+# NebulaOS sudo ADAPTER - not sudo (GUI/service readiness mission, 2026-10-09).
+#
+# Moonraker's /machine/reboot and /machine/shutdown run `sudo reboot` /
+# `sudo poweroff` (machine.py exec_sudo_command) even when Moonraker itself is
+# root, as every NebulaOS service is. This image has no sudo, so both
+# endpoints failed. This adapter makes exactly those root-to-root calls work
+# and nothing else:
+#
+#   - it is NOT setuid and refuses to run unless the caller is already root,
+#     so it cannot grant any privilege;
+#   - it accepts exactly `reboot`, `poweroff` or `halt` (optionally preceded by
+#     -n), with no further arguments, and execs the BusyBox applet - which
+#     signals init, so rcK stops services and unmounts /usr/data cleanly (G9);
+#   - it never reads stdin (Moonraker only sends a password with -S when one
+#     is configured; NebulaOS configures none);
+#   - everything else exits 1, so Moonraker's check_sudo_access() correctly
+#     reports that there is no general sudo.
+
+if [ "$(id -u)" != 0 ]; then
+	echo "sudo: NebulaOS adapter - only root may use it, and it grants nothing" >&2
+	exit 1
+fi
+
+[ "${1:-}" = "-n" ] && shift
+
+if [ "$#" -eq 1 ]; then
+	case "$1" in
+		reboot|poweroff|halt)
+			logger -t nebulaos-sudo -- "$1 requested" 2>/dev/null
+			exec "/sbin/$1"
+			;;
+	esac
+fi
+
+echo "sudo: NebulaOS adapter - only 'reboot', 'poweroff' and 'halt' are supported" >&2
+exit 1

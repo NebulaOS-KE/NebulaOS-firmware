@@ -1624,6 +1624,36 @@ else
 fi
 rm -rf "$PLR_SMOKE_DIR"
 
+# GUI/service readiness mission (2026-10-09): the OS-settings layer behind
+# Moonraker's [nebulaos] component, mDNS, SFTP, Moonraker reboot/shutdown,
+# userspace boot display and runtime backlight control. Reporting checks: a
+# MISS means a GUI-facing OS feature is unavailable, not that the printer
+# cannot boot, print or update - below the check_required bar above.
+echo "=== GUI/service readiness: OS settings layer ==="
+check /usr/bin/sudo
+check /usr/libexec/sftp-server
+check /usr/libexec/gesftpserver
+check /usr/libexec/nebulaos/nebulaos-osconfig
+check /usr/libexec/nebulaos/nebulaos-netapply
+check /usr/libexec/nebulaos/nebulaos-backlight
+check /usr/libexec/nebulaos/nebulaos-boot-display
+check /usr/lib/nebulaos/python/nebulaos_osconfig/cli.py
+check /usr/lib/nebulaos/python/nebulaos_osconfig/network.py
+check /usr/lib/nebulaos/python/nebulaos_osconfig/display.py
+check /usr/lib/nebulaos/python/nebulaos_osconfig/bootdisplay.py
+check /usr/lib/nebulaos/moonraker/nebulaos.py
+check /opt/moonraker/moonraker/components/nebulaos.py
+check /etc/nebulaos/moonraker/nebulaos.conf
+check /etc/nebulaos-network.sh
+check /etc/nebulaos-backlight.sh
+check /etc/init.d/S01splash
+if debugfs -R "cat /etc/nebulaos/moonraker/klipper-pin.conf" ${IMAGES}/rootfs.ext2 2>/dev/null \
+	| grep -qx '\[include /etc/nebulaos/moonraker/nebulaos.conf\]'; then
+	echo "OK   klipper-pin.conf chains the nebulaos.conf include"
+else
+	echo "MISS klipper-pin.conf does not include /etc/nebulaos/moonraker/nebulaos.conf ([nebulaos]/[zeroconf] not loaded)"
+fi
+
 echo "=== MCU lifecycle import-chain smoke test (extracted files, real import, no mocks) ==="
 MCU_SMOKE_DIR="$(mktemp -d)"
 MCU_SMOKE_OK=1

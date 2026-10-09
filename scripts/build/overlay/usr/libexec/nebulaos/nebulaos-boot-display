@@ -1,0 +1,166 @@
+#!/bin/sh
+#
+# nebulaos-boot-display - userspace boot display (GUI/service readiness
+# mission, 2026-10-09). Shell only: Python never runs on the boot path.
+#
+#   boot     S01splash: show the configured mode (logo | blank | console)
+#   handoff  S58guppyscreen: stop the boot-log mirror and unbind fbcon so
+#            GuppyScreen owns the framebuffer alone
+#
+# Every step is best effort and bounded; any doubt means "do nothing" and the
+# kernel's boot logo simply stays. The backlight is never touched here (the
+# display-qualification/backlight layer owns it).
+
+NBD_BOOT_DIR="${NBD_BOOT_DIR:-/usr/data/nebulaos/boot}"
+NBD_ENV="${NBD_ENV:-$NBD_BOOT_DIR/display.env}"
+NBD_RAW="${NBD_RAW:-$NBD_BOOT_DIR/cache/splash.raw}"
+NBD_META="${NBD_META:-$NBD_BOOT_DIR/cache/splash.meta}"
+NBD_FB="${NBD_FB:-/dev/fb0}"
+NBD_FB_SYSFS="${NBD_FB_SYSFS:-/sys/class/graphics/fb0}"
+NBD_FBCON_SYSFS="${NBD_FBCON_SYSFS:-/sys/class/graphics/fbcon}"
+NBD_VTCON="${NBD_VTCON:-/sys/class/vtconsole}"
+NBD_TTY="${NBD_TTY:-/dev/tty1}"
+NBD_BOOTLOG="${NBD_BOOTLOG:-/run/nebulaos-boot-scripts.log}"
+NBD_RUN="${NBD_RUN:-/run/nebulaos/boot-display}"
+NBD_MIRROR_SECONDS="${NBD_MIRROR_SECONDS:-300}"
+NBD_RENDER_DELAY="${NBD_RENDER_DELAY:-120}"
+NBD_OSCONFIG="${NBD_OSCONFIG:-/usr/libexec/nebulaos/nebulaos-osconfig}"
+
+nbd_log() {
+	echo "nebulaos-boot-display: $*"
+	command -v logger >/dev/null 2>&1 && logger -t nebulaos-boot-display -- "$*" 2>/dev/null
+	return 0
+}
+
+nbd_mode() {
+	_m=$(sed -n 's/^MODE="\{0,1\}\([a-z]*\)"\{0,1\}$/\1/p' "$NBD_ENV" 2>/dev/null | head -n1)
+	case "$_m" in
+		logo|console|blank) echo "$_m" ;;
+		*) echo logo ;;
+	esac
+}
+
+nbd_meta() {
+	sed -n "s/^$1=\"\{0,1\}\([^\"]*\)\"\{0,1\}\$/\1/p" "$NBD_META" 2>/dev/null | head -n1
+}
+
+nbd_is_uint() {
+	case "$1" in ''|*[!0-9]*) return 1 ;; esac
+	return 0
+}
+
+# Live geometry: XRES YRES BPP STRIDE YOFF, or nothing.
+nbd_geometry() {
+	_vs=$(cat "$NBD_FB_SYSFS/virtual_size" 2>/dev/null)
+	_bpp=$(cat "$NBD_FB_SYSFS/bits_per_pixel" 2>/dev/null)
+	_stride=$(cat "$NBD_FB_SYSFS/stride" 2>/dev/null)
+	_pan=$(cat "$NBD_FB_SYSFS/pan" 2>/dev/null)
+	_yoff=${_pan#*,}
+	nbd_is_uint "$_bpp" && nbd_is_uint "$_stride" && nbd_is_uint "$_yoff" || return 1
+	case "$_vs" in *,*) ;; *) return 1 ;; esac
+	nbd_is_uint "${_vs%,*}" || return 1
+	echo "$_bpp $_stride $_yoff"
+}
+
+nbd_logo() {
+	[ -f "$NBD_RAW" ] && [ -f "$NBD_META" ] || { nbd_log "logo: no rendered image yet - kernel logo stays"; return 0; }
+	_g=$(nbd_geometry) || { nbd_log "logo: framebuffer geometry unreadable - nothing drawn"; return 0; }
+	# shellcheck disable=SC2086
+	set -- $_g
+	_bpp=$1; _stride=$2; _yoff=$3
+	_yres=$(nbd_meta YRES)
+	_size=$(nbd_meta SIZE)
+	nbd_is_uint "$_yres" && nbd_is_uint "$_size" || { nbd_log "logo: render metadata malformed - nothing drawn"; return 0; }
+	if [ "$(nbd_meta BPP)" != "$_bpp" ] || [ "$(nbd_meta STRIDE)" != "$_stride" ]; then
+		nbd_log "logo: render geometry differs from the framebuffer - nothing drawn (re-rendered later)"
+		return 0
+	fi
+	_actual=$(wc -c < "$NBD_RAW" 2>/dev/null)
+	if [ "$_actual" != "$_size" ] || [ "$_size" -ne $((_stride * _yres)) ]; then
+		nbd_log "logo: rendered image size mismatch - nothing drawn"
+		return 0
+	fi
+	dd if="$NBD_RAW" of="$NBD_FB" bs="$_stride" seek="$_yoff" count="$_yres" conv=notrunc 2>/dev/null \
+		&& nbd_log "logo: $(nbd_meta KIND) image shown" \
+		|| nbd_log "logo: framebuffer write failed"
+}
+
+nbd_blank() {
+	_g=$(nbd_geometry) || return 0
+	# shellcheck disable=SC2086
+	set -- $_g
+	# Clear only the visible frame: yres of the current mode.
+	_yres=$(nbd_visible_yres) || return 0
+	dd if=/dev/zero of="$NBD_FB" bs="$2" seek="$3" count="$_yres" conv=notrunc 2>/dev/null \
+		&& nbd_log "blank: screen cleared"
+}
+
+# Visible rows: modes is "U:480x272p-60"-style; fall back to nothing.
+nbd_visible_yres() {
+	_mode=$(head -n1 "$NBD_FB_SYSFS/mode" 2>/dev/null)
+	_y=${_mode#*x}; _y=${_y%%[!0-9]*}
+	nbd_is_uint "$_y" && [ "$_y" -gt 0 ] || return 1
+	echo "$_y"
+}
+
+nbd_console() {
+	if [ ! -c "$NBD_TTY" ]; then
+		nbd_log "console: $NBD_TTY missing - kernel logo stays"
+		return 0
+	fi
+	mkdir -p "$NBD_RUN" 2>/dev/null
+	# The first output takes over the framebuffer (deferred fbcon takeover);
+	# then turn the text the same way up as GuppyScreen and clear.
+	printf '\033c' > "$NBD_TTY" 2>/dev/null
+	[ -w "$NBD_FBCON_SYSFS/rotate_all" ] && echo 2 > "$NBD_FBCON_SYSFS/rotate_all" 2>/dev/null
+	printf '\033c' > "$NBD_TTY" 2>/dev/null
+	{
+		echo "NebulaOS - boot log"
+		dmesg 2>/dev/null | tail -n 40
+		echo "---- services ----"
+	} > "$NBD_TTY" 2>/dev/null
+	tail -n +1 -f "$NBD_BOOTLOG" > "$NBD_TTY" 2>/dev/null &
+	_tail=$!
+	echo "$_tail" > "$NBD_RUN/mirror.pid"
+	# Bounded: the mirror ends at handoff or after NBD_MIRROR_SECONDS.
+	( sleep "$NBD_MIRROR_SECONDS"; kill "$_tail" 2>/dev/null ) >/dev/null 2>&1 &
+	nbd_log "console: boot log on $NBD_TTY"
+}
+
+nbd_unbind_fbcon() {
+	for _v in "$NBD_VTCON"/vtcon*; do
+		[ -f "$_v/name" ] || continue
+		case "$(cat "$_v/name" 2>/dev/null)" in
+			*"frame buffer"*)
+				if [ "$(cat "$_v/bind" 2>/dev/null)" = 1 ]; then
+					echo 0 > "$_v/bind" 2>/dev/null \
+						&& nbd_log "handoff: fbcon unbound" \
+						|| nbd_log "handoff: fbcon unbind failed"
+				fi ;;
+		esac
+	done
+}
+
+case "${1:-}" in
+	boot)
+		case "$(nbd_mode)" in
+			logo) nbd_logo ;;
+			blank) nbd_blank ;;
+			console) nbd_console ;;
+		esac
+		# Refresh a missing/stale render long after boot, at the lowest priority.
+		if [ -x "$NBD_OSCONFIG" ]; then
+			( sleep "$NBD_RENDER_DELAY"; nice -n 19 "$NBD_OSCONFIG" boot-display render --if-stale ) \
+				>/dev/null 2>&1 &
+		fi
+		exit 0 ;;
+	handoff)
+		if [ -f "$NBD_RUN/mirror.pid" ]; then
+			kill "$(cat "$NBD_RUN/mirror.pid")" 2>/dev/null
+			rm -f "$NBD_RUN/mirror.pid"
+		fi
+		nbd_unbind_fbcon
+		exit 0 ;;
+esac
+echo "usage: nebulaos-boot-display boot|handoff" >&2
+exit 64

@@ -31,7 +31,35 @@ PIDFILE=/var/run/nebulaos-display-sleep-wake-controller.pid
 : "${NDQ_SLEEP_WAKE_LIB:=/etc/nebulaos-display-sleep-wake-controller.sh}"
 [ -f "$NDQ_SLEEP_WAKE_LIB" ] && . "$NDQ_SLEEP_WAKE_LIB"
 
+# GUI/service readiness mission (2026-10-09): S98 also restores the
+# persisted display brightness (/etc/nebulaos-backlight.sh) - after S97, i.e.
+# after the kernel's boot-safe default and any qualified apply. Nothing
+# persisted, 100, or anything invalid: nothing is done. It runs before the
+# watcher decision and never affects it.
+: "${NBL_LIB:=/etc/nebulaos-backlight.sh}"
+
+restore_brightness() {
+	[ -f "$NBL_LIB" ] || return 0
+	( . "$NBL_LIB" && nbl_boot_restore ) || \
+		echo "S98nebulaos-display-sleep-wake-controller: brightness restore did not apply (backlight left as the kernel set it)"
+}
+
+start_watcher() {
+	echo "Starting S98nebulaos-display-sleep-wake-controller (touch-wake watcher)"
+	start-stop-daemon -S -b -m -p "$PIDFILE" -x /bin/sh -- "$0" __run
+}
+
+# On-demand start for the GUI sleep path (nebulaos-backlight sleep).
+watch() {
+	if ! command -v ndq_swc_touch_wake_allowed >/dev/null 2>&1 || ! ndq_swc_touch_wake_allowed; then
+		echo "S98nebulaos-display-sleep-wake-controller: touch-wake not allowed, not starting"
+		return 1
+	fi
+	start_watcher
+}
+
 start() {
+	restore_brightness
 	if ! command -v ndq_swc_requested_mode >/dev/null 2>&1; then
 		echo "S98nebulaos-display-sleep-wake-controller: $NDQ_SLEEP_WAKE_LIB not available, skipping"
 		return 0
@@ -41,8 +69,7 @@ start() {
 		echo "S98nebulaos-display-sleep-wake-controller: touch_wake_mode != polling, not starting (display stays without a touch-wake watcher)"
 		return 0
 	fi
-	echo "Starting S98nebulaos-display-sleep-wake-controller (touch-wake watcher)"
-	start-stop-daemon -S -b -m -p "$PIDFILE" -x /bin/sh -- "$0" __run
+	start_watcher
 }
 
 stop() {
@@ -61,6 +88,9 @@ case "$1" in
 	restart)
 		stop
 		start
+		;;
+	watch)
+		watch || exit 1
 		;;
 	__run)
 		# Internal re-exec target for start-stop-daemon above - not a

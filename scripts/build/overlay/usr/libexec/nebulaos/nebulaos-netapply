@@ -1,0 +1,79 @@
+#!/bin/sh
+#
+# nebulaos-netapply - live side of the persistent network configuration
+# (GUI/service readiness mission, 2026-10-09). Called only by
+# nebulaos-osconfig (which holds the osconfig lock and has already written a
+# validated boot.env). Uses /etc/nebulaos-network.sh, the same library S01wifi
+# uses at boot, so a live change and the next boot produce the same stanza.
+# Never touches wpa_supplicant: association is independent of addressing.
+#
+#   apply     re-address wlan0 from boot.env and verify
+#             exit 0 verified | 2 render failed | 3 ifup failed or no DHCP
+#                  lease within 30 s | 4 static gateway did not answer
+#   hostname  set the kernel hostname and re-render (no network bounce)
+
+NNET_LIB="${NNET_LIB:-/etc/nebulaos-network.sh}"
+. "$NNET_LIB" || exit 2
+NNET_VERIFY_SECONDS="${NNET_VERIFY_SECONDS:-10}"
+NNET_VERIFY_DHCP_TENTHS="${NNET_VERIFY_DHCP_TENTHS:-300}"
+NNET_IP="${NNET_IP:-ip}"
+
+# The stanza wlan0 is currently up with: the generated file if present.
+nnet_ifdown_current() {
+	if [ -f "$NNET_IFACES" ]; then
+		"$NNET_IFDOWN" -i "$NNET_IFACES" "$NNET_IFACE" >/dev/null 2>&1
+	else
+		"$NNET_IFDOWN" "$NNET_IFACE" >/dev/null 2>&1
+	fi
+}
+
+case "${1:-}" in
+	apply)
+		nnet_load || nnet_log "apply: $NNET_REASON - using DHCP"
+		"$NNET_HOSTNAME_CMD" "$NNET_HOSTNAME" 2>/dev/null
+		nnet_ifdown_current
+		nnet_render || exit 2
+		[ "$NNET_MODE" = static ] && nnet_write_resolv
+		"$NNET_IFUP" -i "$NNET_IFACES" "$NNET_IFACE" >/dev/null 2>&1 || {
+			nnet_set_state "APPLY_IFUP_FAILED"
+			exit 3
+		}
+		if [ "$NNET_MODE" = static ]; then
+			_i=0
+			while [ "$_i" -lt "$NNET_VERIFY_SECONDS" ]; do
+				if nnet_gateway_answers; then
+					nnet_set_state "STATIC"
+					exit 0
+				fi
+				_i=$((_i + 1))
+			done
+			nnet_set_state "APPLY_GATEWAY_SILENT"
+			exit 4
+		fi
+		# The image's ifupdown runs `udhcpc ... -b`: it backgrounds without a
+		# lease, so ifup succeeding proves nothing. Wait for a real address.
+		_i=0
+		while [ "$_i" -lt "$NNET_VERIFY_DHCP_TENTHS" ]; do
+			if [ -n "$("$NNET_IP" -4 -o addr show dev "$NNET_IFACE" 2>/dev/null)" ]; then
+				nnet_set_state "DHCP"
+				exit 0
+			fi
+			sleep 0.5
+			_i=$((_i + 5))
+		done
+		nnet_set_state "APPLY_DHCP_NO_LEASE"
+		exit 3
+		;;
+	hostname)
+		nnet_load || nnet_log "hostname: $NNET_REASON - default hostname"
+		"$NNET_HOSTNAME_CMD" "$NNET_HOSTNAME" 2>/dev/null || exit 2
+		# Keep the stanza wlan0 is actually up with (a static config may have
+		# fallen back to DHCP this boot).
+		_mode=$NNET_MODE
+		[ "$(cat "$NNET_STATE" 2>/dev/null)" = STATIC_FALLBACK_DHCP ] && _mode=dhcp
+		nnet_render "$_mode" || exit 2
+		exit 0
+		;;
+esac
+echo "usage: nebulaos-netapply apply|hostname" >&2
+exit 64

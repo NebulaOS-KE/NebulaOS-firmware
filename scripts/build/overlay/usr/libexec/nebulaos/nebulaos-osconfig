@@ -1,0 +1,13 @@
+#!/usr/bin/python3
+# nebulaos-osconfig - NebulaOS OS-settings helper (GUI/service readiness
+# mission, 2026-10-09). Called by the [nebulaos] Moonraker component with
+# argv only; usable over SSH for recovery (e.g. `network reset`). See
+# /usr/lib/nebulaos/python/nebulaos_osconfig/cli.py for the grammar.
+import os
+import sys
+
+sys.path.insert(0, os.environ.get("NEBULAOS_OSCONFIG_PYTHONPATH",
+                                  "/usr/lib/nebulaos/python"))
+from nebulaos_osconfig.cli import main  # noqa: E402
+
+sys.exit(main())

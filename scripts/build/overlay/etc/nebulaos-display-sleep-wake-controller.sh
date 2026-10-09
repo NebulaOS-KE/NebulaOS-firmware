@@ -85,6 +85,19 @@ ndq_swc_requested_mode() {
 	esac
 }
 
+# GUI/service readiness mission (2026-10-09): the GUI sleep path (the
+# display domain of nebulaos-osconfig, through /etc/nebulaos-backlight.sh)
+# also needs this watcher, independently of the display-qualification config:
+# it is the touch-wake path that keeps a GUI-initiated sleep recoverable when
+# GuppyScreen or Moonraker is not responding. The display domain persists
+# TOUCH_WAKE="1" in display.env; a missing file means not allowed.
+: "${NDQ_DISPLAY_ENV:=/usr/data/nebulaos/display/display.env}"
+
+ndq_swc_touch_wake_allowed() {
+	[ "$(ndq_swc_requested_mode)" = "polling" ] && return 0
+	grep -qx 'TOUCH_WAKE="1"' "$NDQ_DISPLAY_ENV" 2>/dev/null
+}
+
 # ============================================================
 # Driver reads
 # ============================================================
@@ -210,9 +223,8 @@ ndq_swc_tick() {
 # cannot be trapped, an already-accepted, already-documented limitation of
 # that same existing pattern.
 ndq_swc_run_loop() {
-	requested=$(ndq_swc_requested_mode)
-	if [ "$requested" != "polling" ]; then
-		ndq_swc_log "touch_wake_mode is not 'polling' in the persisted config - nothing to watch, exiting"
+	if ! ndq_swc_touch_wake_allowed; then
+		ndq_swc_log "touch_wake_mode is not 'polling' in the persisted config and display.env does not allow touch-wake - nothing to watch, exiting"
 		return 0
 	fi
 

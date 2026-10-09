@@ -224,6 +224,35 @@ validate_app() {
 }
 
 # $1=already-mounted target check, $2=source, $3=target
+# GUI/service readiness mission (2026-10-09): the NebulaOS OS-settings
+# Moonraker component lives on the read-only rootfs and is composed into the
+# persistent Moonraker checkout as a symlink listed in .git/info/exclude - the
+# same no-fork mechanism as the Klipper extras, so update_manager still sees a
+# pristine upstream repository. Idempotent; an upstream file of the same name
+# is never replaced (collision: logged, component simply unavailable).
+# Failure never blocks activation: Moonraker loads it as an optional component.
+NEBULAOS_MOONRAKER_COMPONENT="${NEBULAOS_MOONRAKER_COMPONENT:-/usr/lib/nebulaos/moonraker/nebulaos.py}"
+
+compose_moonraker_component() {
+	_mr="$1"
+	_dst="$_mr/moonraker/components/nebulaos.py"
+	_excl="$_mr/.git/info/exclude"
+	_rel="/moonraker/components/nebulaos.py"
+	[ -f "$NEBULAOS_MOONRAKER_COMPONENT" ] || { log "moonraker: component source missing - not composing"; return 0; }
+	if [ -e "$_dst" ] && [ ! -L "$_dst" ]; then
+		log "moonraker: $_dst is a real file (upstream collision?) - not replacing it, [nebulaos] unavailable"
+		return 0
+	fi
+	if [ "$(readlink "$_dst" 2>/dev/null)" != "$NEBULAOS_MOONRAKER_COMPONENT" ]; then
+		ln -sfn "$NEBULAOS_MOONRAKER_COMPONENT" "$_dst" 2>/dev/null \
+			|| { log "moonraker: could not compose the [nebulaos] component"; return 0; }
+	fi
+	if [ -d "$_mr/.git/info" ] || mkdir -p "$_mr/.git/info" 2>/dev/null; then
+		grep -qxF "$_rel" "$_excl" 2>/dev/null || echo "$_rel" >> "$_excl" 2>/dev/null
+	fi
+	return 0
+}
+
 bind_if_not_already() {
 	src="$1"; dst="$2"
 	# awk match on the exact target field (2nd column of /proc/mounts) -
@@ -335,6 +364,7 @@ start() {
 	fi
 
 	if validate_app moonraker "$NEBULAOS_ROOT/apps/moonraker" "moonraker/server.py"; then
+		compose_moonraker_component "$NEBULAOS_ROOT/apps/moonraker"
 		bind_if_not_already "$NEBULAOS_ROOT/apps/moonraker" /opt/moonraker
 	fi
 

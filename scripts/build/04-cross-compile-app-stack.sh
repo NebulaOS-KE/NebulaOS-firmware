@@ -482,6 +482,15 @@ if [ -n "$HOST_PYTHON3" ]; then
 		|| echo "WARNING: bytecode precompilation failed for the moonraker squashfs copy - shipping source-only" >&2
 fi
 
+# GUI/service readiness mission (2026-10-09): the NebulaOS OS-settings
+# component ([nebulaos], /usr/lib/nebulaos/moonraker/nebulaos.py on the rootfs)
+# must also be importable when Moonraker runs from this immutable fallback
+# copy. Same symlink S05nebulaos-activate composes into the persistent
+# checkout. Created after compileall on purpose: the target only exists on
+# the device, and the component is byte-compiled where it lives.
+ln -sfn /usr/lib/nebulaos/moonraker/nebulaos.py \
+	"$OVERLAY/opt/moonraker/moonraker/components/nebulaos.py"
+
 # Buildroot 2025.02.18 migration (2026-09-27): Moonraker's Python dependency
 # chain is no longer assembled here.
 #
