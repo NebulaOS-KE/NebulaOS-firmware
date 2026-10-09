@@ -25,7 +25,7 @@ c0131b14e0917f4740ebb2827c971828cbe7b9ad9b3d1f4e17de27f766511dc8  host  tools/hw
 19f336c5f89f6086b72ec66ccdecc6a2876a8c3245c30c92276e3639b65aac82  host  tools/hwcap/fb_cam10.sh
 27d09732bd0699d3d2ced39c3d080548abe5d062a1e10453ad9a8c1983fa4131  host  tools/hwcap/fb_ng3.sh
 4dfa38a919d411006ba3572de71e91f9a26e9aaef7330b4fa7f8b7efaab90f3e  host  tools/hwcap/gs_display.sh
-81b2cab29eeadbdacfb1512942845e2e1c9c29bf4f829705a2796a853a40552d  host  tools/hwcap/gs_services.sh
+ad544df7039070c13aea308f8a7033e1485a2aaa76c6c1a4dca3c423478c4507  host  tools/hwcap/gs_services.sh
 a95c06a67dbb2c4398988f4b7159fe5cd3e8a7681a17c18873138e616334a1a4  host  tools/hwcap/kduty.py
 546277b53a1ca96557ecbd11ec1dab1be928188cf0479edad9b48a45d3e04245  host  tools/hwcap/lv_cam.sh
 da6cd6f73f89dbb80cd4d35c3c789e11b0eb675d57951274f28205d52f5e0f75  host  tools/hwcap/lv_g10.sh

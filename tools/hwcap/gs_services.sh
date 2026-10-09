@@ -84,6 +84,11 @@ p=$(cat /var/run/nebulaos-display-sleep-wake-controller.pid 2>/dev/null); echo "
 echo "== boot image upload root"
 ls -la /usr/data/nebulaos/boot/uploads 2>&1 | head -5
 curl -s -m 5 "$U/server/files/roots" | grep -o '"name": *"nebulaos_boot"[^}]*' | head -c 300; echo
+echo "== guppyscreen thumbnails"
+TP=$(grep -o '"thumbnail_path": *"[^"]*"' /opt/guppyscreen/guppyconfig.json 2>/dev/null | sed 's/.*: *"//;s/"$//')
+echo "thumbnail_path=$TP"
+ls -ld "$TP" 2>&1 | head -1
+grep -iE "thumbnail|download" /opt/printer_data/logs/guppyscreen.log 2>/dev/null | tail -8 | cut -c1-200
 echo "== health"
 curl -s -m 5 "$U/server/info" | grep -oE '"klippy_state": *"[a-z]*"'
 dmesg | grep -cE 'BUG:|WARNING:|Oops' | sed 's/^/kernel_warnings=/'
