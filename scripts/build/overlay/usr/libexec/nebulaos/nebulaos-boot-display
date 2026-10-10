@@ -4,8 +4,9 @@
 # mission, 2026-10-09). Shell only: Python never runs on the boot path.
 #
 #   boot     S01splash: show the configured mode (logo | blank | console)
-#   handoff  S58guppyscreen: stop the boot-log mirror and unbind fbcon so
-#            GuppyScreen owns the framebuffer alone
+#   handoff  S58guppyscreen: stop the boot-log mirror and, in console mode,
+#            put the console into graphics mode so GuppyScreen owns the
+#            framebuffer alone
 #
 # Every step is best effort and bounded; any doubt means "do nothing" and the
 # kernel's boot logo simply stays. The backlight is never touched here (the
@@ -25,6 +26,8 @@ NBD_RUN="${NBD_RUN:-/run/nebulaos/boot-display}"
 NBD_MIRROR_SECONDS="${NBD_MIRROR_SECONDS:-300}"
 NBD_RENDER_DELAY="${NBD_RENDER_DELAY:-120}"
 NBD_OSCONFIG="${NBD_OSCONFIG:-/usr/libexec/nebulaos/nebulaos-osconfig}"
+NBD_KD_CMD="${NBD_KD_CMD:-}"
+NBD_KD_WAIT_TENTHS="${NBD_KD_WAIT_TENTHS:-50}"
 
 nbd_log() {
 	echo "nebulaos-boot-display: $*"
@@ -124,18 +127,37 @@ nbd_console() {
 	nbd_log "console: boot log on $NBD_TTY"
 }
 
-nbd_unbind_fbcon() {
-	for _v in "$NBD_VTCON"/vtcon*; do
-		[ -f "$_v/name" ] || continue
-		case "$(cat "$_v/name" 2>/dev/null)" in
-			*"frame buffer"*)
-				if [ "$(cat "$_v/bind" 2>/dev/null)" = 1 ]; then
-					echo 0 > "$_v/bind" 2>/dev/null \
-						&& nbd_log "handoff: fbcon unbound" \
-						|| nbd_log "handoff: fbcon unbind failed"
-				fi ;;
-		esac
+# Console mode only: KDSETMODE KD_GRAPHICS on the console VT, the standard way
+# a graphics client takes the screen (fbcon stays bound but stops drawing).
+# Replaces unbinding fbcon, which deadlocked in the kernel on ke-dev once fbcon
+# had taken over the display (store_bind -> fbcon_release waiting on the fb
+# lock; hardware test T5, 2026-10-10): S58 hung and GuppyScreen never started.
+# Run in the background with a bounded wait, so S58 always continues.
+nbd_graphics_mode() {
+	[ -c "$NBD_TTY" ] || return 0
+	if [ -n "$NBD_KD_CMD" ]; then
+		"$NBD_KD_CMD" "$NBD_TTY" >/dev/null 2>&1 &
+	else
+		python3 -c 'import fcntl, os, sys
+fd = os.open(sys.argv[1], os.O_RDWR | os.O_NOCTTY)
+fcntl.ioctl(fd, 0x4B3A, 1)' "$NBD_TTY" >/dev/null 2>&1 &
+	fi
+	_kd=$!
+	_i=0
+	while kill -0 "$_kd" 2>/dev/null; do
+		if [ "$_i" -ge "$NBD_KD_WAIT_TENTHS" ]; then
+			nbd_log "handoff: graphics mode still pending - continuing without it"
+			return 0
+		fi
+		sleep 0.1
+		_i=$((_i + 1))
 	done
+	if wait "$_kd"; then
+		nbd_log "handoff: console in graphics mode"
+	else
+		nbd_log "handoff: graphics mode failed"
+	fi
+	return 0
 }
 
 case "${1:-}" in
@@ -156,7 +178,7 @@ case "${1:-}" in
 			kill "$(cat "$NBD_RUN/mirror.pid")" 2>/dev/null
 			rm -f "$NBD_RUN/mirror.pid"
 		fi
-		nbd_unbind_fbcon
+		[ "$(nbd_mode)" = console ] && nbd_graphics_mode
 		exit 0 ;;
 esac
 echo "usage: nebulaos-boot-display boot|handoff" >&2

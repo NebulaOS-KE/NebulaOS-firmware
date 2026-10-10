@@ -99,9 +99,19 @@ if [ -c /dev/null ]; then
 	check "handoff stops the mirror" '[ ! -e "$NBD_RUN/mirror.pid" ]'
 fi
 
-# --- handoff -------------------------------------------------------------------------
-setup; sh "$NBD" handoff >/dev/null
-check "handoff unbinds fbcon only" '[ "$(cat "$T/b/vt/vtcon1/bind")" = 0 ] && [ "$(cat "$T/b/vt/vtcon0/bind")" = 1 ]'
+# --- handoff (D10: graphics mode, never an fbcon unbind) -----------------------------
+kd() { printf '#!/bin/sh\n%s\necho "kd $*" >> "%s"\n' "$1" "$T/b/kdlog" > "$T/b/kd"; chmod 755 "$T/b/kd"; }
+setup; kd ":"; echo 'MODE="console"' > "$NBD_BOOT_DIR/display.env"
+NBD_TTY=/dev/null NBD_KD_CMD="$T/b/kd" sh "$NBD" handoff >/dev/null
+check "console handoff: graphics mode requested on the tty" 'grep -qx "kd /dev/null" "$T/b/kdlog"'
+check "handoff never unbinds fbcon" '[ "$(cat "$T/b/vt/vtcon1/bind")" = 1 ] && [ "$(cat "$T/b/vt/vtcon0/bind")" = 1 ]'
+setup; kd ":"; NBD_TTY=/dev/null NBD_KD_CMD="$T/b/kd" sh "$NBD" handoff >/dev/null
+check "logo handoff: no graphics-mode call" '[ ! -e "$T/b/kdlog" ]'
+setup; kd "sleep 30"; echo 'MODE="console"' > "$NBD_BOOT_DIR/display.env"
+s0=$(date +%s); NBD_TTY=/dev/null NBD_KD_CMD="$T/b/kd" NBD_KD_WAIT_TENTHS=10 sh "$NBD" handoff >/dev/null; rc=$?; s1=$(date +%s)
+pkill -f "$T/b/kd" 2>/dev/null
+check "hung graphics-mode call: handoff still returns, bounded" '[ $rc -eq 0 ] && [ $((s1 - s0)) -le 4 ]'
+check "S58 no longer relies on an fbcon unbind" '! grep -q "vtcon.*bind\|nbd_unbind_fbcon" "$NBD"'
 rm -rf "$T/b/vt"; sh "$NBD" handoff >/dev/null; rc=$?
 check "handoff without vtconsole is fine" '[ $rc -eq 0 ]'
 sh "$NBD" bogus >/dev/null 2>&1; rc=$?
