@@ -60,15 +60,17 @@ if ! git -C "$GUPPY_REPO" cat-file -e "${PIN}^{commit}" 2>/dev/null; then
 	exit 0
 fi
 
-# owned path in NebulaOS-guppyscreen : path in this repo's overlay
-OWNED_FILES="k1/scripts/static_ip.py:scripts/build/overlay/opt/printer_data/config/GuppyScreen/scripts/static_ip.py"
+# owned path in NebulaOS-guppyscreen : path in this repo's overlay. Empty since
+# the GUI readiness work (2026-10-10): static_ip.py was the only entry, and the
+# static IP panel now uses machine.nebulaos.network.* instead.
+OWNED_FILES=""
 
 for spec in $OWNED_FILES; do
 	src=${spec%%:*}
 	dst=${spec#*:}
 	local_copy="$REPO_ROOT/$dst"
 	if [ ! -f "$local_copy" ]; then
-		fail "$dst is missing from this repository, but the guppyscreen binary hardcodes its runtime path"
+		fail "$dst is missing from this repository, but the guppyscreen binary needs it"
 		continue
 	fi
 	if ! git -C "$GUPPY_REPO" cat-file -e "$PIN:$src" 2>/dev/null; then
@@ -83,16 +85,18 @@ $(git -C "$GUPPY_REPO" show "$PIN:$src" | diff - "$local_copy" | head -20)"
 	fi
 done
 
-# The specific regression: NebulaOS-owned state must not be written under the
-# retired /usr/data top-level alias, which overlaps stock's shared tree
-# (S01persistent-datastore: "physically shared with stock").
-STATIC_IP="$REPO_ROOT/scripts/build/overlay/opt/printer_data/config/GuppyScreen/scripts/static_ip.py"
-if [ -f "$STATIC_IP" ]; then
-	if grep -qE '^(CONFIG_PATH|DHCP_SNAPSHOT_PATH)[[:space:]]*=[[:space:]]*"/usr/data/printer_data/' "$STATIC_IP"; then
-		fail "static_ip.py writes NebulaOS state under the retired /usr/data/printer_data alias (stock's shared tree)"
-	else
-		pass "static_ip.py writes its state through the NebulaOS-owned /opt/printer_data bind mount"
-	fi
+# static_ip.py retired: the shipped GuppyScreen must not depend on it, and the
+# image must not ship a copy that nothing calls.
+STATIC_IP_REL="scripts/build/overlay/opt/printer_data/config/GuppyScreen/scripts/static_ip.py"
+if git -C "$GUPPY_REPO" grep -q "static_ip\.py" "$PIN" -- src 2>/dev/null; then
+	fail "NebulaOS-guppyscreen@$PIN still references static_ip.py in src/ - the firmware copy cannot be dropped yet"
+else
+	pass "NebulaOS-guppyscreen@${PIN%%??????????????????????????????}... does not use static_ip.py"
+fi
+if [ -e "$REPO_ROOT/$STATIC_IP_REL" ]; then
+	fail "$STATIC_IP_REL is still shipped although nothing calls it"
+else
+	pass "static_ip.py is not shipped"
 fi
 
 echo ""

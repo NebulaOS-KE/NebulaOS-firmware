@@ -1184,8 +1184,7 @@ echo "=== printer_data config factory seed ==="
 # A genuinely wiped printer_data/config leaves Klipper and Moonraker
 # crash-looping - the immutable seed at /opt/nebulaos-seeds/printer_data-
 # config/ is what S02nebulaos-namespace restores from. Phase 2: seed
-# contains printer.cfg, moonraker.conf, songs.conf, and
-# GuppyScreen/scripts/static_ip.py (see below); all workflow macros live
+# contains printer.cfg, moonraker.conf and songs.conf; all workflow macros live
 # in /etc/nebulaos/klipper/*.cfg (image-owned, included via absolute
 # paths).
 check /opt/nebulaos-seeds/printer_data-config/printer.cfg
@@ -1197,29 +1196,13 @@ check_absent /opt/nebulaos-seeds/printer_data-config/camera-quality.cfg
 check_absent /opt/nebulaos-seeds/printer_data-config/GuppyScreen/scripts/set_camera_quality.py
 check_absent /opt/nebulaos-seeds/printer_data-config/GuppyScreen/guppy_cmd.cfg
 check_absent /opt/nebulaos-seeds/printer_data-config/simpleaf/homing.cfg
-# Clean Mainsail config root mission (2026-09-10): static_ip.py is the one
-# exception to "the old GuppyScreen deps are gone" - the compiled
-# /opt/guppyscreen/guppyscreen binary has
-# /opt/printer_data/config/GuppyScreen/scripts/static_ip.py hardcoded as a
-# literal path (confirmed via `strings` against a real device's binary),
-# so a fresh device built without this file would silently ship a broken
-# touchscreen static-IP feature. The 2026-08 "remove SimpleAF/GuppyScreen
-# deps" refactor deleted it along with the genuinely dead scripts in the
-# same directory without checking for this dependency.
-#
-# Audit F-11 (2026-09-22): that restore was taken "byte-identical from a
-# live, already-qualified device" (sha256 c131017c...), and the device
-# predated GUPPYSCREEN_PIN 5f1911ac's own fix - so it silently reverted
-# static_ip.py's state paths back onto the retired /usr/data/printer_data
-# alias, which overlaps stock's shared tree. This file is OWNED by
-# NebulaOS-guppyscreen (k1/scripts/static_ip.py); the copy here exists only
-# because the compiled binary hardcodes the runtime path. It is now
-# byte-identical to that owner at GUPPYSCREEN_PIN (sha256
-# b3e7a0dae3f86343a4d205effed240b971ff6e2977ded547f39767fe0da6aa72), and
-# tests/guppyscreen-owned-files-tests.sh asserts that mechanically. Do not
-# hand-edit it or restore it from a device - update the owning repository,
-# advance the pin, then re-sync.
-check /opt/nebulaos-seeds/printer_data-config/GuppyScreen/scripts/static_ip.py
+# GUI readiness work (2026-10-10): GuppyScreen's static IP panel uses
+# machine.nebulaos.network.* (persistent, verified, auto-revert) instead of
+# shelling out to GuppyScreen/scripts/static_ip.py, whose boot hook targeted
+# stock's wifi_up.sh and lost the setting on every NebulaOS reboot. The
+# script is gone from NebulaOS-guppyscreen and from this seed
+# (tests/guppyscreen-owned-files-tests.sh checks both).
+check_absent /opt/nebulaos-seeds/printer_data-config/GuppyScreen/scripts/static_ip.py
 
 rm -rf /tmp/printerdata-check
 mkdir -p /tmp/printerdata-check
