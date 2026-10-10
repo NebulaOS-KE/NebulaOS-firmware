@@ -79,6 +79,13 @@ start() {
 		mount -t ext4 /dev/mmcblk0p10 /usr/data
 	fi
 
+	# Clean NebulaOS reset (S2, 2026-10-11): when requested from the screen,
+	# remove the whole namespace now, before anything below seeds or binds
+	# into it - this boot then sets the printer up from the image.
+	NEBULAOS_CLEAN_RESET_LIB="${NEBULAOS_CLEAN_RESET_LIB:-/usr/libexec/nebulaos/nebulaos-clean-reset}"
+	# shellcheck disable=SC1090
+	[ -r "$NEBULAOS_CLEAN_RESET_LIB" ] && ( . "$NEBULAOS_CLEAN_RESET_LIB" && ncr_run )
+
 	mkdir -p "$DATA_ROOT"
 
 	# Seed real defaults from the squashfs's baked-in copies, once ever -

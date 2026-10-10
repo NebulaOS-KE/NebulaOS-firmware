@@ -2,6 +2,7 @@
 # (GUI/service readiness mission, 2026-10-09).
 import json
 import os
+import time
 
 from . import common
 
@@ -10,6 +11,16 @@ SEED_MANIFEST = os.environ.get("NEBULAOS_SEED_MANIFEST",
 DATA_MOUNT = os.environ.get("NEBULAOS_DATA_MOUNT", "/usr/data")
 DATA_FS_STATE = os.environ.get("NEBULAOS_DATA_FS_STATE", "/run/nebulaos/data-fs.state")
 SFTP_SERVER = "/usr/libexec/sftp-server"
+# Clean NebulaOS reset (S2, 2026-10-11): this flag, outside the namespace it
+# wipes, makes S01persistent-datastore remove /usr/data/nebulaos on the next
+# boot (see /usr/libexec/nebulaos/nebulaos-clean-reset).
+CLEAN_RESET_FLAG = os.environ.get("NEBULAOS_CLEAN_RESET_FLAG",
+                                  "/usr/data/.nebulaos-clean-reset")
+CMDLINE = os.environ.get("NEBULAOS_CMDLINE", "/proc/cmdline")
+SLOT_SWAP = os.environ.get("NEBULAOS_SLOT_SWAP", "/usr/libexec/nebulaos/nebulaos-slot-swap")
+# docs/A_B_SLOT_MODEL.md: slot 1 = kernel/rootfs p5/p7 (the other system),
+# slot 2 = p6/p8 (NebulaOS's permanent home).
+ROOT_SLOTS = {"/dev/mmcblk0p7": "A", "/dev/mmcblk0p8": "B"}
 
 
 def _read(path):
@@ -55,10 +66,62 @@ def storage_info():
     return info
 
 
+def boot_slot():
+    """"A" or "B" from root= on the kernel command line, None if unknown."""
+    for arg in _read(CMDLINE).split():
+        if arg.startswith("root="):
+            return ROOT_SLOTS.get(arg[len("root="):])
+    return None
+
+
 def info():
     uname = os.uname()
     return {"build": build_info(),
+            "slot": boot_slot(),
+            "clean_reset_pending": os.path.exists(CLEAN_RESET_FLAG),
             "kernel": {"release": uname.release, "version": uname.version},
             "hostname": _read("/proc/sys/kernel/hostname"),
             "storage": storage_info(),
             "sftp": {"available": os.access(SFTP_SERVER, os.X_OK)}}
+
+
+# -- clean reset and boot slot (S2/S3, 2026-10-11) -----------------------------
+# Both only arm the next boot; the Moonraker component refuses them while a
+# print is active and reboots right after, or disarms them again if the
+# reboot cannot be started.
+
+def request_clean_reset():
+    stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    common.atomic_write(CLEAN_RESET_FLAG, "requested=%s\n" % stamp, mode=0o600)
+    return {"result": "SCHEDULED", "applies": "next boot"}
+
+
+def cancel_clean_reset():
+    try:
+        os.unlink(CLEAN_RESET_FLAG)
+        common.fsync_dir(os.path.dirname(CLEAN_RESET_FLAG))
+    except FileNotFoundError:
+        pass
+    return {"result": "CANCELLED"}
+
+
+def _slot_swap(target):
+    rc, out, err = common.run([SLOT_SWAP, target], 30)
+    if rc != 0:
+        raise common.OsConfigError("SLOT_SWAP_FAILED",
+                                   "could not set the boot slot (rc=%d)" % rc,
+                                   log=(out + err).strip()[-1000:])
+
+
+def swap_slot():
+    if boot_slot() != "B":
+        raise common.OsConfigError("NOT_ON_NEBULAOS_SLOT",
+                                   "NebulaOS is not running from its own slot; "
+                                   "nothing was changed")
+    _slot_swap("other")
+    return {"result": "ARMED", "next_boot": "A", "applies": "next boot"}
+
+
+def keep_slot():
+    _slot_swap("nebulaos")
+    return {"result": "DISARMED", "next_boot": "B"}

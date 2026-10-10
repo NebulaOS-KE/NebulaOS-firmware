@@ -1,0 +1,56 @@
+#!/bin/sh
+#
+# nebulaos-clean-reset - the boot half of the clean NebulaOS reset (S2,
+# 2026-10-11). Sourced by S01persistent-datastore right after /usr/data is
+# mounted and before anything uses /usr/data/nebulaos.
+#
+# When the flag written by `nebulaos-osconfig system clean-reset` is present,
+# the whole NebulaOS namespace is removed: printer.cfg and calibration,
+# Moonraker's database and history, Wi-Fi networks, network settings, the
+# root password, the boot screen, GuppyScreen's settings. The rest of the boot
+# then seeds everything from this image, exactly as on a new printer.
+#
+# Kept: the Wi-Fi MAC seed (device identity, so the router keeps the same
+# address) and everything outside /usr/data/nebulaos - the other boot slot's
+# files and the shared G-code folder (/usr/data/printer_data/gcodes).
+#
+# Crash-safe: the namespace is first renamed (one atomic step), then deleted;
+# a power cut in between leaves a .nebulaos-wiping-* directory that the next
+# boot deletes. The flag is removed only after the rename, so an interrupted
+# reset repeats harmlessly. Nothing happens on a read-only /usr/data.
+
+NCR_DATA="${NCR_DATA:-/usr/data}"
+NCR_ROOT="${NCR_ROOT:-$NCR_DATA/nebulaos}"
+NCR_FLAG="${NCR_FLAG:-$NCR_DATA/.nebulaos-clean-reset}"
+NCR_KEEP="${NCR_KEEP:-wifi-mac-seed}"
+
+ncr_log() {
+	echo "nebulaos-clean-reset: $*"
+}
+
+ncr_run() {
+	if [ -f "$NCR_FLAG" ]; then
+		if ! touch "$NCR_DATA/.nebulaos-rw-probe" 2>/dev/null; then
+			ncr_log "requested, but $NCR_DATA is read-only - postponed"
+			return 0
+		fi
+		rm -f "$NCR_DATA/.nebulaos-rw-probe"
+		_doomed="$NCR_DATA/.nebulaos-wiping-$(date +%s)-$$"
+		if [ -d "$NCR_ROOT" ]; then
+			mv "$NCR_ROOT" "$_doomed" || { ncr_log "could not move $NCR_ROOT aside - nothing wiped"; return 0; }
+			mkdir -p "$NCR_ROOT"
+			for _f in $NCR_KEEP; do
+				[ -f "$_doomed/$_f" ] && cp -p "$_doomed/$_f" "$NCR_ROOT/$_f"
+			done
+		fi
+		rm -f "$NCR_FLAG"
+		sync
+		ncr_log "NebulaOS data wiped; this boot sets the printer up from the image"
+	fi
+	# Finish any wipe a power cut interrupted.
+	for _d in "$NCR_DATA"/.nebulaos-wiping-*; do
+		[ -d "$_d" ] || continue
+		rm -rf "$_d" && ncr_log "removed $_d"
+	done
+	return 0
+}

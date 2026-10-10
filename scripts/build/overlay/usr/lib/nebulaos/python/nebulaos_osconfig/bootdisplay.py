@@ -21,7 +21,11 @@ from . import common
 from .common import invalid, OsConfigError
 
 SCHEMA = 1
-MODES = ("logo", "console", "blank")
+MODES = ("logo", "blank")
+# "console" (a text boot log on the LCD) was removed (D10, 2026-10-11): the
+# framebuffer console deadlocked GuppyScreen's start on the RT kernel. A saved
+# "console" is read as "logo"; it can no longer be selected.
+RETIRED_MODES = {"console": "logo"}
 RENDERER_VERSION = "1"
 MAX_FILE_BYTES = 4 * 1024 * 1024
 MAX_DIMENSION = 2048
@@ -61,6 +65,8 @@ def load_config():
     raw, error = common.read_json(CONFIG)
     if raw is None:
         return default_config(), error
+    if raw.get("mode") in RETIRED_MODES:
+        raw = dict(raw, mode=RETIRED_MODES[raw["mode"]])
     if (raw.get("schema") != SCHEMA or raw.get("mode") not in MODES
             or raw.get("image") not in ("builtin", "custom")):
         return default_config(), "CONFIG_INVALID"

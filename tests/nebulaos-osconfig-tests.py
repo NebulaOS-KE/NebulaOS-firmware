@@ -65,6 +65,13 @@ class Env(object):
             # Never the host's real framebuffer.
             "NEBULAOS_FB_SYSFS": os.path.join(self.tmp, "no-fb-sysfs"),
             "NEBULAOS_FB_DEV": os.path.join(self.tmp, "no-fb"),
+            # Never the host's wpa_supplicant, OTA marker or data partition.
+            "NEBULAOS_WPA_CTRL_DIR": os.path.join(self.tmp, "wpa"),
+            "NEBULAOS_WIFI_SCAN_SECONDS": "2", "NEBULAOS_WIFI_CONNECT_SECONDS": "2",
+            "NEBULAOS_WIFI_ADDRESS_SECONDS": "0.2",
+            "NEBULAOS_CLEAN_RESET_FLAG": os.path.join(self.tmp, "data", ".nebulaos-clean-reset"),
+            "NEBULAOS_CMDLINE": os.path.join(self.tmp, "cmdline"),
+            "NEBULAOS_SLOT_SWAP": os.path.join(self.bin, "slot-swap"),
         })
         if PYLIB not in sys.path:
             sys.path.insert(0, PYLIB)
@@ -72,7 +79,7 @@ class Env(object):
             if name.startswith("nebulaos_osconfig"):
                 del sys.modules[name]
         self.pkg = importlib.import_module("nebulaos_osconfig")
-        for mod in ("common", "network", "display", "bootdisplay", "system", "cli"):
+        for mod in ("common", "network", "display", "bootdisplay", "system", "wifi", "cli"):
             setattr(self, mod, importlib.import_module("nebulaos_osconfig." + mod))
 
     def netapply_script(self, apply_rcs):
@@ -362,11 +369,22 @@ class BootDisplayTests(unittest.TestCase):
         return path
 
     def test_modes(self):
-        self.assertEqual(self.b.set_mode("console")["config"]["mode"], "console")
-        self.assertIn('MODE="console"', open(self.b.ENV).read())
+        self.assertEqual(self.b.set_mode("blank")["config"]["mode"], "blank")
+        self.assertIn('MODE="blank"', open(self.b.ENV).read())
         with self.assertRaises(self.e.common.OsConfigError):
             self.b.set_mode("splash; reboot")
-        self.assertEqual(self.b.load_config()[0]["mode"], "console")
+        self.assertEqual(self.b.load_config()[0]["mode"], "blank")
+        self.assertEqual(self.b.status()["modes"], ["logo", "blank"])
+
+    def test_console_retired(self):
+        # D10 (2026-10-11): console can no longer be chosen; a saved one is logo.
+        with self.assertRaises(self.e.common.OsConfigError) as cm:
+            self.b.set_mode("console")
+        self.assertEqual(cm.exception.code, "INVALID_MODE")
+        self.e.common.atomic_write_json(self.b.CONFIG, {"schema": 1, "mode": "console",
+                                                         "image": "builtin"})
+        cfg, error = self.b.load_config()
+        self.assertEqual((cfg["mode"], error), ("logo", None))
 
     def test_upload_name_confinement(self):
         for bad in ("/etc/passwd", "../x.png", "a/b.png", "sub/../x.png", ".hidden.png",
@@ -469,6 +487,322 @@ class BootDisplayTests(unittest.TestCase):
         self.assertIsNone(self.b.custom_path())
 
 
+class FakeTransport(object):
+    def __init__(self, wpa):
+        self.wpa, self.queue = wpa, []
+
+    def send(self, data):
+        self.wpa.receive(self, data.decode())
+
+    def recv(self, timeout):
+        return self.queue.pop(0).encode() if self.queue else None
+
+    def close(self):
+        self.wpa.attached.discard(self)
+
+
+class FakeWpa(object):
+    """An in-process wpa_supplicant control interface (the sandbox has no
+    Unix sockets): enough of the protocol for the helper (STATUS, LIST/GET/
+    ADD/SET/REMOVE/SELECT/ENABLE_NETWORK, SCAN, SCAN_RESULTS, SAVE_CONFIG,
+    ATTACH/DETACH), replies first, then events to attached clients.
+    `passwords` maps an SSID to the passphrase its access point accepts."""
+
+    def __init__(self, wifi_module, scan, passwords, saved=()):
+        self.module = wifi_module
+        self.real_transport = wifi_module.open_transport
+        wifi_module.open_transport = lambda: FakeTransport(self)
+        self.scan = scan            # [(ssid, signal, flags)]
+        self.passwords = passwords
+        self.nets = {}
+        self.next_id = 0
+        self.current = None
+        self.saves = []
+        self.commands = []
+        self.attached = set()
+        for ssid, pw in saved:
+            nid = self._add()
+            self.nets[nid]["ssid"] = ssid.encode()
+            self.nets[nid]["psk"] = self._psk(ssid.encode(), pw)
+        if self.nets:
+            self.current = 0
+
+    @staticmethod
+    def _psk(raw, pw):
+        import hashlib
+        return hashlib.pbkdf2_hmac("sha1", pw.encode(), raw, 4096, 32).hex()
+
+    def _add(self):
+        nid = self.next_id
+        self.next_id += 1
+        self.nets[nid] = {"ssid": b"", "psk": None, "key_mgmt": "WPA-PSK", "disabled": False}
+        return nid
+
+    def close(self):
+        self.module.open_transport = self.real_transport
+
+    def _event(self, text):
+        for t in list(self.attached):
+            t.queue.append(text)
+
+    def receive(self, t, cmd):
+        self.commands.append(cmd)
+        reply, after = self._handle(cmd, t)
+        t.queue.append(reply)
+        if after:
+            after()
+
+    def _ssid_out(self, raw):
+        if all(32 <= b < 127 for b in raw):
+            return '"%s"' % raw.decode()
+        return raw.hex()
+
+    def _handle(self, cmd, addr):
+        parts = cmd.split(" ")
+        verb = parts[0]
+        if verb == "ATTACH":
+            self.attached.add(addr)
+            return "OK\n", None
+        if verb == "DETACH":
+            self.attached.discard(addr)
+            return "OK\n", None
+        if verb == "STATUS":
+            if self.current is None:
+                return "wpa_state=DISCONNECTED\n", None
+            n = self.nets[self.current]
+            return "wpa_state=COMPLETED\nid=%d\nssid=%s\nkey_mgmt=WPA2-PSK\n" % (
+                self.current, n["ssid"].decode("utf-8", "replace")), None
+        if verb == "LIST_NETWORKS":
+            lines = ["network id / ssid / bssid / flags"]
+            for nid, n in sorted(self.nets.items()):
+                flags = "[CURRENT]" if nid == self.current else ("[DISABLED]" if n["disabled"] else "")
+                lines.append("%d\t%s\tany\t%s" % (nid, n["ssid"].decode("utf-8", "replace"), flags))
+            return "\n".join(lines) + "\n", None
+        if verb == "GET_NETWORK":
+            return self._ssid_out(self.nets[int(parts[1])]["ssid"]), None
+        if verb == "ADD_NETWORK":
+            return "%d\n" % self._add(), None
+        if verb == "SET_NETWORK":
+            n = self.nets.get(int(parts[1]))
+            if n is None:
+                return "FAIL\n", None
+            if parts[2] == "ssid":
+                n["ssid"] = bytes.fromhex(parts[3])
+            elif parts[2] == "psk":
+                n["psk"] = parts[3]
+            elif parts[2] == "key_mgmt":
+                n["key_mgmt"] = parts[3]
+            return "OK\n", None
+        if verb == "REMOVE_NETWORK":
+            self.nets.pop(int(parts[1]), None)
+            if self.current == int(parts[1]):
+                self.current = None
+            return "OK\n", None
+        if verb == "ENABLE_NETWORK":
+            for n in self.nets.values():
+                n["disabled"] = False
+            return "OK\n", None
+        if verb == "SELECT_NETWORK":
+            nid = int(parts[1])
+            for other, n in self.nets.items():
+                n["disabled"] = other != nid
+            return "OK\n", lambda: self._try(nid)
+        if verb == "SCAN":
+            return "OK\n", lambda: self._event("<3>CTRL-EVENT-SCAN-RESULTS ")
+        if verb == "SCAN_RESULTS":
+            lines = ["bssid / frequency / signal level / flags / ssid"]
+            for i, (ssid, sig, flags) in enumerate(self.scan):
+                lines.append("aa:bb:cc:dd:ee:%02x\t2412\t%d\t%s\t%s" % (i, sig, flags, ssid))
+            return "\n".join(lines) + "\n", None
+        if verb == "SAVE_CONFIG":
+            self.saves.append({nid: dict(n) for nid, n in self.nets.items()})
+            return "OK\n", None
+        return "UNKNOWN COMMAND\n", None
+
+    def _try(self, nid):
+        n = self.nets[nid]
+        ssid = n["ssid"].decode("utf-8", "replace")
+        if ssid not in self.passwords:
+            return                                  # not in range: no event
+        pw = self.passwords[ssid]
+        ok = (n["key_mgmt"] == "NONE" and pw is None) or (
+            pw is not None and n["psk"] == self._psk(n["ssid"], pw))
+        if ok:
+            self.current = nid
+            self._event("<3>CTRL-EVENT-CONNECTED - Connection to aa:bb completed [id=%d id_str=]" % nid)
+        else:
+            self._event('<3>CTRL-EVENT-SSID-TEMP-DISABLED id=%d ssid="%s" auth_failures=1 '
+                        'duration=10 reason=WRONG_KEY' % (nid, ssid))
+
+
+class WifiTests(unittest.TestCase):
+    SCAN = [("Home", -50, "[WPA2-PSK-CCMP][ESS]"), ("Home", -70, "[WPA2-PSK-CCMP][ESS]"),
+            ("Cafe", -60, "[ESS]"), ("Office\\x20\\xe2\\x9c\\x93", -65, "[WPA2-PSK-CCMP][ESS]"),
+            ("", -40, "[ESS]"), ("Corp", -55, "[WPA2-EAP-CCMP][ESS]")]
+
+    def setUp(self):
+        self.e = Env()
+        self.w = self.e.wifi
+        self.calls = self.e.netapply_script([0])
+
+    def tearDown(self):
+        if getattr(self, "wpa", None):
+            self.wpa.close()
+        self.e.cleanup()
+
+    def fake(self, passwords, saved=()):
+        self.wpa = FakeWpa(self.w, self.SCAN, passwords, saved)
+        return self.wpa
+
+    def test_parse_scan(self):
+        nets = self.w.parse_scan_results("h\n" + "\n".join(
+            "aa\t2412\t%d\t%s\t%s" % (sig, fl, ss) for ss, sig, fl in self.SCAN))
+        self.assertEqual([n["ssid"] for n in nets], ["Home", "Corp", "Cafe", "Office ✓"])
+        self.assertEqual(nets[0]["signal"], -50)
+        self.assertEqual({n["ssid"]: n["security"] for n in nets},
+                         {"Home": "psk", "Corp": "eap", "Cafe": "open", "Office ✓": "psk"})
+
+    def test_psk(self):
+        # IEEE 802.11i test vector.
+        self.assertEqual(self.w.psk_for(b"IEEE", "password"),
+                         "f42c6fc52df0ebef9ebb4b90b38a5f902e83fe1b135a70e23aed762e9710a12e")
+        self.assertEqual(self.w.psk_for(b"x", "A" * 64), "a" * 64)
+        for bad in ("short", "x" * 64, 5):
+            with self.assertRaises(self.e.common.OsConfigError):
+                self.w.psk_for(b"x", bad)
+
+    def test_unavailable(self):
+        with self.assertRaises(self.e.common.OsConfigError) as cm:
+            self.w.status()
+        self.assertEqual(cm.exception.code, "WIFI_UNAVAILABLE")
+
+    def test_status_and_scan(self):
+        self.fake({"Home": "secret123"}, saved=[("Home", "secret123")])
+        st = self.w.status()
+        self.assertEqual((st["status"]["state"], st["status"]["ssid"]), ("COMPLETED", "Home"))
+        self.assertEqual(st["saved"], [{"id": 0, "ssid": "Home", "current": True, "disabled": False}])
+        sc = self.w.scan()
+        self.assertTrue(sc["complete"])
+        home = [n for n in sc["networks"] if n["ssid"] == "Home"][0]
+        self.assertTrue(home["saved"] and home["current"])
+        self.assertFalse([n for n in sc["networks"] if n["ssid"] == "Cafe"][0]["saved"])
+
+    def test_connect_new_network_saves_only_after_success(self):
+        wpa = self.fake({"Home": "secret123", "Office ✓": "pa\"ss word"},
+                        saved=[("Home", "secret123")])
+        out = self.w.connect({"ssid": "Office ✓", "password": "pa\"ss word"})
+        self.assertEqual((out["result"], out["ssid"]), ("CONNECTED", "Office ✓"))
+        self.assertEqual(len(wpa.saves), 1)
+        saved = wpa.saves[0]
+        self.assertEqual(sorted(n["ssid"] for n in saved.values()), [b"Home", "Office ✓".encode()])
+        self.assertFalse(any(n["disabled"] for n in saved.values()))
+        # Hex SSID and hex PSK only: no passphrase or quote ever sent.
+        self.assertFalse([c for c in wpa.commands if "pa\"ss" in c or "ss word" in c])
+        self.assertTrue(open(self.calls).read().startswith("apply"))   # re-addressed
+
+    def test_wrong_password_reverts(self):
+        wpa = self.fake({"Home": "secret123", "Office ✓": "right-one"},
+                        saved=[("Home", "secret123")])
+        with self.assertRaises(self.e.common.OsConfigError) as cm:
+            self.w.connect({"ssid": "Office ✓", "password": "wrong-one"})
+        self.assertEqual(cm.exception.code, "WRONG_PASSWORD")
+        self.assertEqual(wpa.saves, [])
+        self.assertEqual(sorted(n["ssid"] for n in wpa.nets.values()), [b"Home"])
+        self.assertEqual(wpa.current, 0)
+        self.assertFalse(any(n["disabled"] for n in wpa.nets.values()))
+
+    def test_timeout_reverts(self):
+        wpa = self.fake({"Home": "secret123"}, saved=[("Home", "secret123")])
+        wpa.scan = wpa.scan + [("Far", -90, "[WPA2-PSK-CCMP][ESS]")]
+        with self.assertRaises(self.e.common.OsConfigError) as cm:
+            self.w.connect({"ssid": "Far", "password": "whatever1"})
+        self.assertEqual(cm.exception.code, "CONNECT_TIMEOUT")
+        self.assertEqual([n["ssid"] for n in wpa.nets.values()], [b"Home"])
+
+    def test_open_saved_and_refusals(self):
+        wpa = self.fake({"Home": "secret123", "Cafe": None}, saved=[("Home", "secret123")])
+        self.assertEqual(self.w.connect({"ssid": "Cafe"})["result"], "CONNECTED")
+        self.assertEqual([n["key_mgmt"] for n in wpa.nets.values() if n["ssid"] == b"Cafe"], ["NONE"])
+        self.assertEqual(self.w.connect({"ssid": "Home"})["result"], "CONNECTED")   # saved, no password
+        for spec, code in (({"ssid": "Corp", "password": "whatever1"}, "UNSUPPORTED_SECURITY"),
+                           ({"ssid": "Office ✓"}, "PASSWORD_REQUIRED"),
+                           ({"ssid": "x" * 33, "password": "whatever1"}, "INVALID_SSID"),
+                           ({"ssid": ""}, "INVALID_SSID")):
+            with self.assertRaises(self.e.common.OsConfigError, msg=spec) as cm:
+                self.w.connect(spec)
+            self.assertEqual(cm.exception.code, code)
+
+    def test_forget(self):
+        wpa = self.fake({"Home": "secret123"}, saved=[("Home", "secret123"), ("Old", "whatever1")])
+        self.assertEqual(self.w.forget("Old")["removed"], 1)
+        self.assertEqual([n["ssid"] for n in wpa.saves[-1].values()], [b"Home"])
+        with self.assertRaises(self.e.common.OsConfigError) as cm:
+            self.w.forget("Old")
+        self.assertEqual(cm.exception.code, "NOT_SAVED")
+
+    def test_cli_connect_reads_stdin_only(self):
+        self.fake({"Home": "secret123"})
+        rc, out = CliContractTests.run_cli(self, "wifi", "connect", "--ssid", "Home")
+        self.assertEqual((rc, out["error"]), (64, "USAGE"))
+        old = sys.stdin
+        sys.stdin = io.StringIO(json.dumps({"ssid": "Home", "password": "secret123"}))
+        try:
+            rc, out = CliContractTests.run_cli(self, "wifi", "connect", "--stdin")
+        finally:
+            sys.stdin = old
+        self.assertEqual((rc, out["result"]), (0, "CONNECTED"))
+
+
+class SystemResetSlotTests(unittest.TestCase):
+    def setUp(self):
+        self.e = Env()
+        self.s = self.e.system
+        self.log = os.path.join(self.e.tmp, "swap.log")
+        write_exe(os.environ["NEBULAOS_SLOT_SWAP"], 'echo "$1" >> "%s"\n[ -f "%s.fail" ] && exit 2\nexit 0\n'
+                  % (self.log, self.log))
+
+    def tearDown(self):
+        self.e.cleanup()
+
+    def cmdline(self, root):
+        open(os.environ["NEBULAOS_CMDLINE"], "w").write(
+            "console=ttyS2,115200 rootfstype=squashfs root=%s rw\n" % root)
+
+    def test_slot_and_info(self):
+        self.cmdline("/dev/mmcblk0p8")
+        self.assertEqual(self.s.boot_slot(), "B")
+        self.cmdline("/dev/mmcblk0p7")
+        self.assertEqual(self.s.boot_slot(), "A")
+        self.cmdline("/dev/sda1")
+        self.assertIsNone(self.s.boot_slot())
+        info = self.s.info()
+        self.assertIn("slot", info)
+        self.assertFalse(info["clean_reset_pending"])
+
+    def test_clean_reset_flag(self):
+        self.assertEqual(self.s.request_clean_reset()["result"], "SCHEDULED")
+        self.assertTrue(open(self.s.CLEAN_RESET_FLAG).read().startswith("requested="))
+        self.assertTrue(self.s.info()["clean_reset_pending"])
+        self.s.cancel_clean_reset()
+        self.assertFalse(os.path.exists(self.s.CLEAN_RESET_FLAG))
+        self.s.cancel_clean_reset()     # idempotent
+
+    def test_swap_only_from_nebulaos_slot(self):
+        self.cmdline("/dev/mmcblk0p7")
+        with self.assertRaises(self.e.common.OsConfigError) as cm:
+            self.s.swap_slot()
+        self.assertEqual(cm.exception.code, "NOT_ON_NEBULAOS_SLOT")
+        self.assertFalse(os.path.exists(self.log))
+        self.cmdline("/dev/mmcblk0p8")
+        self.assertEqual(self.s.swap_slot()["result"], "ARMED")
+        self.s.keep_slot()
+        self.assertEqual(open(self.log).read().split(), ["other", "nebulaos"])
+        open(self.log + ".fail", "w").close()
+        with self.assertRaises(self.e.common.OsConfigError) as cm:
+            self.s.swap_slot()
+        self.assertEqual(cm.exception.code, "SLOT_SWAP_FAILED")
+
+
 class CliContractTests(unittest.TestCase):
     def setUp(self):
         self.e = Env()
@@ -542,6 +876,8 @@ class ComponentTests(unittest.TestCase):
         self.log = os.path.join(self.tmp, "argv")
         write_exe(self.helper, """
             printf '%%s\\n' "$@" > "%(log)s"; echo "NEBULAOS_BOOT_UPLOAD_DIR=$NEBULAOS_BOOT_UPLOAD_DIR" >> "%(log)s"
+            [ "$3" = --stdin ] && cat > "%(log)s.stdin"
+            echo "$1 $2" >> "%(log)s.all"
             case "$1 $2" in
               "display set-brightness") echo '{"ok": false, "error": "INVALID_BRIGHTNESS", "message": "m"}'; exit 1 ;;
               "network set-ipv4") echo '{"ok": false, "error": "GATEWAY_UNREACHABLE_REVERTED", "message": "m"}'; exit 2 ;;
@@ -588,7 +924,8 @@ class ComponentTests(unittest.TestCase):
                 self.events.append((name, data))
 
             def lookup_component(self, name, default=None):
-                return FM()
+                return {"file_manager": FM(), "machine": test.machine,
+                        "klippy_apis": test.kapis}.get(name, default)
 
             def error(self, msg, code=400):
                 return ServerError(msg, code)
@@ -601,6 +938,24 @@ class ComponentTests(unittest.TestCase):
                 return {"helper": test.helper,
                         "boot_upload_dir": test.upload_dir}.get(key, default)
 
+        class Provider(object):
+            async def reboot(self):
+                test.reboots += 1
+                if test.reboot_fails:
+                    raise RuntimeError("sudo failed")
+
+        class Machine(object):
+            def get_system_provider(self):
+                return Provider()
+
+        class KApis(object):
+            async def query_objects(self, objects):
+                if test.print_state is None:
+                    raise RuntimeError("klippy not ready")
+                return {"print_stats": {"state": test.print_state}}
+
+        self.machine, self.kapis = Machine(), KApis()
+        self.reboots, self.reboot_fails, self.print_state = 0, False, "standby"
         self.server = Server()
         self.comp = self.mod.load_component(Config())
 
@@ -621,6 +976,12 @@ class ComponentTests(unittest.TestCase):
 
         def get_list(self, key, default=None):
             return self.args.get(key, default)
+
+    def calls(self):
+        try:
+            return open(self.log + ".all").read().splitlines()
+        except OSError:
+            return []
 
     def call(self, path, args=None):
         cb = self.server.endpoints[path][1]
@@ -666,6 +1027,45 @@ class ComponentTests(unittest.TestCase):
         with self.assertRaises(Exception) as cm:
             self.call("/machine/nebulaos/display/brightness", {"level": 30})
         self.assertEqual(cm.exception.status_code, 400)
+
+    def test_wifi_endpoints(self):
+        for p in ("wifi/status", "wifi/scan", "wifi/connect", "wifi/forget",
+                  "system/clean_reset", "system/swap_slot"):
+            self.assertIn("/machine/nebulaos/" + p, self.server.endpoints)
+        self.call("/machine/nebulaos/wifi/connect", {"ssid": "Home", "password": "s3cret pw"})
+        self.assertEqual(self.argv()[:3], ["wifi", "connect", "--stdin"])
+        self.assertNotIn("s3cret pw", open(self.log).read())         # never in argv
+        self.assertEqual(json.load(open(self.log + ".stdin")),
+                         {"ssid": "Home", "password": "s3cret pw"})
+        self.call("/machine/nebulaos/wifi/forget", {"ssid": "Old net"})
+        self.assertEqual(self.argv()[:4], ["wifi", "forget", "--ssid", "Old net"])
+
+    def test_clean_reset_and_swap_reboot(self):
+        self.assertEqual(self.call("/machine/nebulaos/system/clean_reset"), {"result": "APPLIED"})
+        self.call("/machine/nebulaos/system/swap_slot")
+        self.assertEqual(self.reboots, 2)
+        self.assertEqual(self.calls(), ["system clean-reset", "system swap-slot"])
+
+    def test_refused_while_printing(self):
+        for state in ("printing", "paused"):
+            self.print_state = state
+            for p in ("system/clean_reset", "system/swap_slot"):
+                with self.assertRaises(Exception) as cm:
+                    self.call("/machine/nebulaos/" + p)
+                self.assertEqual(cm.exception.status_code, 409)
+        self.assertEqual((self.reboots, self.calls()), (0, []))
+        self.print_state = None          # Klipper down: allowed
+        self.call("/machine/nebulaos/system/swap_slot")
+        self.assertEqual(self.reboots, 1)
+
+    def test_failed_reboot_disarms(self):
+        self.reboot_fails = True
+        for p, undo in (("system/clean_reset", "system cancel-clean-reset"),
+                        ("system/swap_slot", "system keep-slot")):
+            with self.assertRaises(Exception) as cm:
+                self.call("/machine/nebulaos/" + p)
+            self.assertIn("REBOOT_FAILED", str(cm.exception))
+            self.assertEqual(self.calls()[-1], undo)
 
     def test_ok_result_strips_ok(self):
         out = self.call("/machine/nebulaos/info")

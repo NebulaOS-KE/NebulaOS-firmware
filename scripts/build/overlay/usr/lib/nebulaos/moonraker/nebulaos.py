@@ -22,7 +22,7 @@ import os
 
 from ..common import RequestType
 
-from typing import TYPE_CHECKING, Any, Dict, List
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 if TYPE_CHECKING:
     from ..confighelper import ConfigHelper
@@ -70,6 +70,13 @@ class NebulaOS:
              self._disp_brightness),
             ("/machine/nebulaos/display/sleep", RequestType.POST, self._disp_sleep),
             ("/machine/nebulaos/display/wake", RequestType.POST, self._disp_wake),
+            ("/machine/nebulaos/wifi/status", RequestType.GET, self._wifi_status),
+            ("/machine/nebulaos/wifi/scan", RequestType.POST, self._wifi_scan),
+            ("/machine/nebulaos/wifi/connect", RequestType.POST, self._wifi_connect),
+            ("/machine/nebulaos/wifi/forget", RequestType.POST, self._wifi_forget),
+            ("/machine/nebulaos/system/clean_reset", RequestType.POST,
+             self._clean_reset),
+            ("/machine/nebulaos/system/swap_slot", RequestType.POST, self._swap_slot),
         ]
         for path, rtype, callback in routes:
             self.server.register_endpoint(path, rtype, callback)
@@ -81,13 +88,15 @@ class NebulaOS:
         env["NEBULAOS_BOOT_UPLOAD_DIR"] = self.boot_upload_dir
         return env
 
-    async def _exec(self, args: List[str], timeout: float) -> Dict[str, Any]:
+    async def _exec(self, args: List[str], timeout: float,
+                    stdin: Optional[bytes] = None) -> Dict[str, Any]:
         proc = await asyncio.create_subprocess_exec(
-            self.helper, *args, stdin=asyncio.subprocess.DEVNULL,
+            self.helper, *args,
+            stdin=asyncio.subprocess.PIPE if stdin is not None else asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
             env=self._env())
         try:
-            out, err = await asyncio.wait_for(proc.communicate(), timeout)
+            out, err = await asyncio.wait_for(proc.communicate(stdin), timeout)
         except asyncio.TimeoutError:
             proc.kill()
             await proc.wait()
@@ -108,10 +117,11 @@ class NebulaOS:
     async def _read(self, *args: str) -> Dict[str, Any]:
         return await self._exec(list(args), READ_TIMEOUT)
 
-    async def _write(self, domain: str, *args: str) -> Dict[str, Any]:
+    async def _write(self, domain: str, *args: str,
+                     stdin: Optional[bytes] = None) -> Dict[str, Any]:
         lock = self.write_locks.setdefault(domain, asyncio.Lock())
         async with lock:
-            result = await self._exec([domain] + list(args), WRITE_TIMEOUT)
+            result = await self._exec([domain] + list(args), WRITE_TIMEOUT, stdin)
         self.server.send_event("nebulaos:settings_changed",
                                {"domain": domain, "result": result.get("result")})
         return result
@@ -163,6 +173,62 @@ class NebulaOS:
 
     async def _disp_wake(self, web_request: WebRequest) -> Dict[str, Any]:
         return await self._write("display", "wake")
+
+    # -- Wi-Fi (Q3, 2026-10-11) -------------------------------------------------
+
+    async def _wifi_status(self, web_request: WebRequest) -> Dict[str, Any]:
+        return await self._read("wifi", "status")
+
+    async def _wifi_scan(self, web_request: WebRequest) -> Dict[str, Any]:
+        return await self._write("wifi", "scan")
+
+    async def _wifi_connect(self, web_request: WebRequest) -> Dict[str, Any]:
+        # The password goes to the helper on stdin, never on a command line.
+        spec = {"ssid": web_request.get_str("ssid"),
+                "password": web_request.get_str("password", "")}
+        return await self._write("wifi", "connect", "--stdin",
+                                 stdin=json.dumps(spec).encode("utf-8"))
+
+    async def _wifi_forget(self, web_request: WebRequest) -> Dict[str, Any]:
+        ssid = web_request.get_str("ssid")
+        return await self._write("wifi", "forget", "--ssid", ssid)
+
+    # -- clean reset and boot slot (S2/S3, 2026-10-11) ---------------------------
+    # Both arm the next boot and reboot at once. Refused while a print is
+    # active; if the reboot cannot be started, the change is disarmed again.
+
+    async def _refuse_while_printing(self) -> None:
+        kapis = self.server.lookup_component("klippy_apis", None)
+        if kapis is None:
+            return
+        try:
+            res = await kapis.query_objects({"print_stats": ["state"]})
+        except Exception:
+            return      # Klipper not ready: nothing can be printing
+        state = (res.get("print_stats") or {}).get("state")
+        if state in ("printing", "paused"):
+            raise self.server.error("PRINTING: not possible while a print is active", 409)
+
+    async def _reboot_or_undo(self, undo: List[str]) -> None:
+        machine = self.server.lookup_component("machine")
+        try:
+            await machine.get_system_provider().reboot()
+        except Exception as exc:
+            logging.info(f"nebulaos: reboot failed, undoing {undo}: {exc}")
+            await self._write(*undo)
+            raise self.server.error(f"REBOOT_FAILED: {exc}; nothing was changed", 500)
+
+    async def _clean_reset(self, web_request: WebRequest) -> Dict[str, Any]:
+        await self._refuse_while_printing()
+        result = await self._write("system", "clean-reset")
+        await self._reboot_or_undo(["system", "cancel-clean-reset"])
+        return result
+
+    async def _swap_slot(self, web_request: WebRequest) -> Dict[str, Any]:
+        await self._refuse_while_printing()
+        result = await self._write("system", "swap-slot")
+        await self._reboot_or_undo(["system", "keep-slot"])
+        return result
 
 
 def load_component(config: ConfigHelper) -> NebulaOS:

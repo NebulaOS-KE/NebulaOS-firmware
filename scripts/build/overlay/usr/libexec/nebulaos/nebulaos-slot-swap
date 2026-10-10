@@ -1,0 +1,34 @@
+#!/bin/sh
+#
+# nebulaos-slot-swap - set which boot slot (A/B) starts next (S3, 2026-10-11).
+# Called only by nebulaos-osconfig (system swap-slot / keep-slot), which
+# checks first that NebulaOS runs from its own slot 2. Writes the shared OTA
+# marker through /etc/ota_marker.sh - the exact bytes and durability the
+# documented SSH switch uses (docs/HOW_TO_SWITCH_STOCK_AND_CUSTOM.md) - and
+# reads it back.
+#
+#   other     next boot: slot 1, the other system ("ota:kernel")
+#   nebulaos  next boot: slot 2, NebulaOS ("ota:kernel2")
+#
+# exit 0 written and read back | 2 read-back mismatch | 64 usage
+
+OTA_MARKER_LIB="${OTA_MARKER_LIB:-/etc/ota_marker.sh}"
+OTA_MARKER_DEV="${OTA_MARKER_DEV:-/dev/mmcblk0p1}"
+
+case "${1:-}" in
+	other) marker="ota:kernel" ;;
+	nebulaos) marker="ota:kernel2" ;;
+	*) echo "usage: nebulaos-slot-swap other|nebulaos" >&2; exit 64 ;;
+esac
+
+. "$OTA_MARKER_LIB" || exit 2
+write_ota_marker "$marker"
+
+# The marker is "<value>\n\n" then zeros; compare the value line.
+got=$(head -c 64 "$OTA_MARKER_DEV" 2>/dev/null | head -n 1)
+if [ "$got" != "$marker" ]; then
+	echo "nebulaos-slot-swap: read back '$got', expected '$marker'" >&2
+	exit 2
+fi
+echo "nebulaos-slot-swap: next boot $marker"
+exit 0

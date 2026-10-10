@@ -1,17 +1,15 @@
 #!/bin/sh
 #
 # S01splash - userspace boot display (GUI/service readiness mission,
-# 2026-10-09): the configured boot logo, a blank screen, or the boot log,
-# from right after /usr/data mounts until GuppyScreen takes the framebuffer
-# (S58guppyscreen calls `nebulaos-boot-display handoff` first).
+# 2026-10-09): the configured boot logo or a blank screen, from right after
+# /usr/data mounts until GuppyScreen takes the framebuffer.
 #
 # Order: S01persistent-datastore (mounts /usr/data, where the rendered image
 # and the mode live) < S01seedrng < S01splash < S01syslogd < S01wifi -
 # alphabetical within S01, the same convention S01wifi documents.
 #
-# Never blocks or fails the boot: bounded work (one dd of ~0.5 MB, or a
-# background log mirror that ends by itself), always exit 0, and on any doubt
-# nothing is drawn and the kernel's boot logo stays. Never touches the
+# Never blocks or fails the boot: bounded work (one dd of ~0.5 MB), always
+# exit 0, and on any doubt nothing is drawn. Never touches the
 # backlight. All logic: /usr/libexec/nebulaos/nebulaos-boot-display.
 
 NBD="${NBD:-/usr/libexec/nebulaos/nebulaos-boot-display}"

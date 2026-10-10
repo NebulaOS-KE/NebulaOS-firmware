@@ -19,11 +19,6 @@ NEBULAOS_OOM_POLICY="${NEBULAOS_OOM_POLICY:-/etc/nebulaos-oom-policy.sh}"
 if [ -r "$NEBULAOS_OOM_POLICY" ]; then . "$NEBULAOS_OOM_POLICY"; else nebulaos_start_with_adj() { shift; "$@"; }; fi
 
 start() {
-	# GUI/service readiness mission (2026-10-09): stop the boot-log mirror and
-	# unbind fbcon so the console can never draw over GuppyScreen. Bounded,
-	# best effort, never blocks the start.
-	[ -x /usr/libexec/nebulaos/nebulaos-boot-display ] && \
-		/usr/libexec/nebulaos/nebulaos-boot-display handoff
 	echo "Starting guppyscreen"
 	# OOM priority at birth (MEM-T07): expendable UI tier, explicit 0.
 	nebulaos_start_with_adj "$NEBULAOS_ADJ_GUPPYSCREEN" \
