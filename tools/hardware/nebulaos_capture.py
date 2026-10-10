@@ -938,6 +938,18 @@ for _mode in ("blank", "console", "logo"):
     EXERCISE_PROFILES["gs-boot-mode-" + _mode] = (
         _IDLE_GUARD + "MODE=" + _mode + "; . $T/gs_bootmode.sh", ":", 60)
 
+# Recovery for the console-mode deadlock (T5/D10, 2026-10-10): with fbcon
+# owning the display, a render job hangs in fb_open holding the boot-display
+# lock, so nebulaos-osconfig set-mode waits forever. This writes the persisted
+# mode back to logo directly (same two files, atomically) without that lock.
+EXERCISE_PROFILES["gs-boot-mode-logo-direct"] = (
+    "D=/usr/data/nebulaos/boot; echo \"before: $(cat $D/display.env 2>/dev/null)\"; "
+    "printf 'MODE=\"logo\"\\n' > $D/display.env.tmp && mv -f $D/display.env.tmp $D/display.env; "
+    "printf '{\"image\": \"builtin\", \"mode\": \"logo\", \"schema\": 1}\\n' > $D/display.json.tmp "
+    "&& mv -f $D/display.json.tmp $D/display.json; sync; "
+    "echo \"after: $(cat $D/display.env) $(cat $D/display.json)\"",
+    ":", 60)
+
 # Exercises that embed a tracked hwcap probe, the same way captures do.
 EXERCISE_PROBES = {"ktimers-ab": ("timerlat.py",), "ttyflip-ab": ("ptyrtt.py",),
                    "uart-fe-probe": ("qualmcu.py",), "mcu-link-bench": ("qualmcu.py",),
