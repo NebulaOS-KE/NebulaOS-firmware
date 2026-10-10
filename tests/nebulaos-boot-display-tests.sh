@@ -72,8 +72,12 @@ setup; render; echo "garbage" > "$NBD_FB_SYSFS/pan"; sh "$NBD" boot >/dev/null
 check "unreadable pan: nothing drawn" '[ "$(cat "$NBD_FB" | tr -d K | wc -c)" -eq 0 ]'
 
 # --- mode selection --------------------------------------------------------------
-setup; render; echo 'MODE="blank"' > "$NBD_BOOT_DIR/display.env"; sh "$NBD" boot >/dev/null
-check "blank clears only the visible frame" '[ "$(frame $YRES "\000")" -eq 0 ] && [ "$(frame 0 K)" -eq 0 ]'
+setup; render; : > "$NBD_FB_SYSFS/mode"; echo 'MODE="blank"' > "$NBD_BOOT_DIR/display.env"; sh "$NBD" boot >/dev/null
+check "blank clears the displayed frame with an empty sysfs mode (KE)" '[ "$(frame $YRES "\000")" -eq 0 ]'
+check "blank clears every buffer" '[ "$(cat "$NBD_FB" | tr -d "\000" | wc -c)" -eq 0 ]'
+check "blank keeps the fb size" '[ "$(wc -c < "$NBD_FB")" -eq $((STRIDE * YRES * FRAMES)) ]'
+setup; echo "garbage" > "$NBD_FB_SYSFS/virtual_size"; echo 'MODE="blank"' > "$NBD_BOOT_DIR/display.env"; sh "$NBD" boot >/dev/null
+check "blank with unreadable geometry: nothing written" '[ "$(cat "$NBD_FB" | tr -d K | wc -c)" -eq 0 ]'
 setup; render; echo 'MODE="$(reboot)"' > "$NBD_BOOT_DIR/display.env"; sh "$NBD" boot >/dev/null
 check "invalid mode falls back to logo" '[ "$(frame $YRES R)" -eq 0 ]'
 

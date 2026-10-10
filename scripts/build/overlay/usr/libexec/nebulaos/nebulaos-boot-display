@@ -89,18 +89,15 @@ nbd_blank() {
 	_g=$(nbd_geometry) || return 0
 	# shellcheck disable=SC2086
 	set -- $_g
-	# Clear only the visible frame: yres of the current mode.
-	_yres=$(nbd_visible_yres) || return 0
-	dd if=/dev/zero of="$NBD_FB" bs="$2" seek="$3" count="$_yres" conv=notrunc 2>/dev/null \
+	# Clear every buffer of the virtual framebuffer (virtual_size rows x
+	# stride): correct whichever one is displayed, and needs no visible-mode
+	# height - sysfs "mode" is empty on the KE panel (hardware acceptance,
+	# 2026-10-09), which left blank mode doing nothing.
+	_vs=$(cat "$NBD_FB_SYSFS/virtual_size" 2>/dev/null)
+	_vy=${_vs#*,}
+	nbd_is_uint "$_vy" && [ "$_vy" -gt 0 ] || return 0
+	dd if=/dev/zero of="$NBD_FB" bs="$2" count="$_vy" conv=notrunc 2>/dev/null \
 		&& nbd_log "blank: screen cleared"
-}
-
-# Visible rows: modes is "U:480x272p-60"-style; fall back to nothing.
-nbd_visible_yres() {
-	_mode=$(head -n1 "$NBD_FB_SYSFS/mode" 2>/dev/null)
-	_y=${_mode#*x}; _y=${_y%%[!0-9]*}
-	nbd_is_uint "$_y" && [ "$_y" -gt 0 ] || return 1
-	echo "$_y"
 }
 
 nbd_console() {
