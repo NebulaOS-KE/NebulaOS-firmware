@@ -17,6 +17,12 @@ done
 echo "== moonraker components"
 curl -s -m 5 "$U/server/info" | grep -oE '"(components|failed_components|warnings)": *\[[^]]*\]' | head -c 3000; echo
 grep -nE 'nebulaos|zeroconf|Unable to load component' /opt/printer_data/logs/moonraker.log 2>/dev/null | tail -20 | cut -c1-240
+echo "== moonraker startup timeline"
+echo "now_epoch=$(date +%s) uptime=$(cut -d' ' -f1 /proc/uptime)"
+ML=/opt/printer_data/logs/moonraker.log
+# Moonraker rolls its log over at each start: the file is this run.
+grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2} ' "$ML" 2>/dev/null | head -3 | cut -c1-160
+grep -E 'load_component|Post Init|Starting Moonraker on|Zeroconf|klippy_connection|Exiting' "$ML" 2>/dev/null | head -60 | cut -c1-160
 echo "== composition"
 ls -l /opt/moonraker/moonraker/components/nebulaos.py /usr/data/nebulaos/apps/moonraker/moonraker/components/nebulaos.py 2>&1
 grep -n nebulaos /usr/data/nebulaos/apps/moonraker/.git/info/exclude 2>/dev/null
