@@ -1635,6 +1635,13 @@ check /etc/nebulaos-backlight.sh
 check /etc/nebulaos-moonraker-compose.sh
 check /etc/init.d/S01splash
 check /usr/share/nebulaos/guppyscreen/guppyconfig.default.json
+check /etc/nebulaos-shadow.sh
+check /usr/sbin/nebulaos-passwd
+if debugfs -R "cat /usr/bin/passwd" ${IMAGES}/rootfs.ext2 2>/dev/null | grep -q "nebulaos-passwd"; then
+	echo "OK   /usr/bin/passwd is the NebulaOS wrapper (persistent root password)"
+else
+	echo "MISS /usr/bin/passwd is not the NebulaOS wrapper - passwd cannot change root's password"
+fi
 if debugfs -R "stat /opt/guppyscreen/thumbnails" ${IMAGES}/rootfs.ext2 2>/dev/null | grep -q "Type: symlink"; then
 	echo "OK   /opt/guppyscreen/thumbnails is a symlink to persistent storage"
 else

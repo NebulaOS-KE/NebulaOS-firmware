@@ -132,6 +132,14 @@ start() {
 	[ -e "$PDATA/config/guppyscreen/guppyconfig.json" ] || touch "$PDATA/config/guppyscreen/guppyconfig.json"
 	mount --bind "$GUPPY_STATE/guppyconfig.json" "$PDATA/config/guppyscreen/guppyconfig.json"
 
+	# Persistent root password (D7, 2026-10-10): seed /etc/shadow once into
+	# the data partition and bind it over the read-only image copy, so
+	# nebulaos-passwd / passwd over SSH can change it. Best effort: on any
+	# doubt the image's default password stays (see the library).
+	NEBULAOS_SHADOW_LIB="${NEBULAOS_SHADOW_LIB:-/etc/nebulaos-shadow.sh}"
+	# shellcheck disable=SC1090
+	[ -r "$NEBULAOS_SHADOW_LIB" ] && ( . "$NEBULAOS_SHADOW_LIB" && nsh_boot )
+
 	# Phase 1.5 persistent-namespace mission (2026-08): the two top-level
 	# compatibility symlinks that used to live here
 	# (/usr/data/printer_data -> /opt/printer_data,
