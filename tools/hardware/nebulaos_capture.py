@@ -29,7 +29,7 @@ HWCAP_DIR = os.path.join(FW_ROOT, "tools", "hwcap")
 
 PROBES = ("schedsnap.py", "timerlat.py", "ptyrtt.py", "kduty.py", "adxl_overflows.py", "qualmcu.py",
           "lv_m1.py", "lv_s1.sh", "lv_s2.sh", "lv_g5.sh", "lv_cam.sh", "lv_g6.sh", "lv_g7.sh", "lv_g8.sh", "lv_g9.sh", "lv_g10.sh", "lv_ng1.py", "pf_cam.sh", "fb_ng3.sh", "fb_cam10.sh",
-          "gs_services.sh", "gs_display.sh")
+          "gs_services.sh", "gs_display.sh", "gs_sleep.sh", "gs_bootmode.sh")
 # Pinned data files embedded compressed (dropbear refuses a command longer than
 # MAX_CMD_LEN = 9000 bytes, so a whole profile must stay under SCRIPT_LIMIT).
 DATA_FILES = ("klipper-dict-board.json",)
@@ -905,6 +905,24 @@ EXERCISE_PROFILES["gs-display-brightness"] = (
     "echo \"undo: $(bl) files: $(ls $DD 2>/dev/null | tr '\\n' ' ')\"; fi",
     300)
 
+# Human-observed backlight exercise (T4): levels 25-100 % then sleep, woken by a
+# touch through the NebulaOS watcher. Undo wakes it if still off and restores
+# the recorded brightness and display files.
+EXERCISE_PROFILES["gs-display-sleep"] = (
+    _IDLE_GUARD + ". $T/gs_sleep.sh",
+    "if [ \"${GS_STARTED:-0}\" = 1 ]; then "
+    "[ \"$(cat $B/bl_power)\" = 0 ] || $O display wake > /dev/null 2>&1; "
+    "printf '%s' \"$B0\" > $B/brightness; "
+    "if [ \"$HAD_J\" = 1 ]; then cp $T/display.json $DD/display.json; else rm -f $DD/display.json; fi; "
+    "if [ \"$HAD_E\" = 1 ]; then cp $T/display.env $DD/display.env; else rm -f $DD/display.env; fi; "
+    "echo \"undo: $(bl) files: $(ls $DD 2>/dev/null | tr '\\n' ' ')\"; fi",
+    300)
+# Boot screen mode (T3/T5): a persistent user setting that only takes effect on
+# the next boot, so deliberately no undo - the session ends with the logo one.
+for _mode in ("blank", "console", "logo"):
+    EXERCISE_PROFILES["gs-boot-mode-" + _mode] = (
+        _IDLE_GUARD + "MODE=" + _mode + "; . $T/gs_bootmode.sh", ":", 60)
+
 # Exercises that embed a tracked hwcap probe, the same way captures do.
 EXERCISE_PROBES = {"ktimers-ab": ("timerlat.py",), "ttyflip-ab": ("ptyrtt.py",),
                    "uart-fe-probe": ("qualmcu.py",), "mcu-link-bench": ("qualmcu.py",),
@@ -912,7 +930,11 @@ EXERCISE_PROBES = {"ktimers-ab": ("timerlat.py",), "ttyflip-ab": ("ptyrtt.py",),
                    "live-s1-s03": ("lv_s1.sh",), "live-s2-s97": ("lv_s2.sh",), "live-g5-debugfs": ("lv_g5.sh",),
                    "live-s3-s4-camera": ("lv_cam.sh",), "live-g6-dhcp": ("lv_g6.sh",), "live-g7-klippy": ("lv_g7.sh",),
                    "live-g8-seeder": ("lv_g8.sh",), "live-g9-ext4": ("lv_g9.sh",), "live-g10-diskswap": ("lv_g10.sh",), "live-ng1-tornado": ("lv_ng1.py",), "pf-camera": ("pf_cam.sh",), "fb-ng3-handoff": ("lv_m1.py", "fb_ng3.sh"), "fb-camera-10": ("fb_cam10.sh",),
-                   "gs-display-brightness": ("gs_display.sh",)}
+                   "gs-display-brightness": ("gs_display.sh",),
+                   "gs-display-sleep": ("gs_sleep.sh",),
+                   "gs-boot-mode-blank": ("gs_bootmode.sh",),
+                   "gs-boot-mode-console": ("gs_bootmode.sh",),
+                   "gs-boot-mode-logo": ("gs_bootmode.sh",)}
 
 
 def exercise_script(name):
