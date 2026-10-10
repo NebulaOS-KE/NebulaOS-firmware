@@ -30,6 +30,12 @@ NNET_RESOLV="${NNET_RESOLV:-/tmp/resolv.conf}"
 NNET_DEFAULT_HOSTNAME="${NNET_DEFAULT_HOSTNAME:-nebulaos}"
 NNET_HOSTNAME_CMD="${NNET_HOSTNAME_CMD:-hostname}"
 NNET_IFACE="${NNET_IFACE:-wlan0}"
+# /etc/hosts is on the read-only rootfs (it names "buildroot"): a generated copy
+# is bind-mounted over it at boot and rewritten in place on a hostname change.
+NNET_HOSTS="${NNET_HOSTS:-$NNET_RUN_DIR/hosts}"
+NNET_ETC_HOSTS="${NNET_ETC_HOSTS:-/etc/hosts}"
+NNET_MOUNTS="${NNET_MOUNTS:-/proc/mounts}"
+NNET_MOUNT_CMD="${NNET_MOUNT_CMD:-mount}"
 
 nnet_log() {
 	echo "nebulaos-network: $*"
@@ -159,6 +165,25 @@ nnet_write_resolv() {
 	rm -f "$_tmp"
 }
 
+# Rewrites $NNET_HOSTS in place (same inode, so an existing bind mount shows
+# the change). Never fails its caller.
+nnet_write_hosts() {
+	mkdir -p "$NNET_RUN_DIR" 2>/dev/null
+	{ printf '127.0.0.1\tlocalhost\n127.0.1.1\t%s\n' "$NNET_HOSTNAME" > "$NNET_HOSTS"; } 2>/dev/null \
+		|| nnet_log "could not write $NNET_HOSTS"
+	return 0
+}
+
+# Binds $NNET_HOSTS over /etc/hosts once per boot. Never fails its caller: the
+# image's own /etc/hosts stays if anything is off.
+nnet_bind_hosts() {
+	[ -f "$NNET_HOSTS" ] || return 0
+	grep -q " $NNET_ETC_HOSTS " "$NNET_MOUNTS" 2>/dev/null && return 0
+	"$NNET_MOUNT_CMD" --bind "$NNET_HOSTS" "$NNET_ETC_HOSTS" 2>/dev/null \
+		|| nnet_log "could not bind $NNET_HOSTS over $NNET_ETC_HOSTS"
+	return 0
+}
+
 nnet_set_state() {
 	mkdir -p "$NNET_RUN_DIR" 2>/dev/null
 	{ printf '%s\n' "$1" > "$NNET_STATE"; } 2>/dev/null
@@ -175,6 +200,8 @@ nnet_boot_prepare() {
 	fi
 	"$NNET_HOSTNAME_CMD" "$NNET_HOSTNAME" 2>/dev/null \
 		|| nnet_log "could not set hostname $NNET_HOSTNAME"
+	nnet_write_hosts
+	nnet_bind_hosts
 	if ! nnet_render; then
 		nnet_log "could not write $NNET_IFACES - using /etc/network/interfaces"
 		nnet_set_state "DHCP_STOCK_INTERFACES"

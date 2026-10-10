@@ -31,6 +31,7 @@ case "${1:-}" in
 	apply)
 		nnet_load || nnet_log "apply: $NNET_REASON - using DHCP"
 		"$NNET_HOSTNAME_CMD" "$NNET_HOSTNAME" 2>/dev/null
+		nnet_write_hosts
 		nnet_ifdown_current
 		nnet_render || exit 2
 		[ "$NNET_MODE" = static ] && nnet_write_resolv
@@ -67,6 +68,7 @@ case "${1:-}" in
 	hostname)
 		nnet_load || nnet_log "hostname: $NNET_REASON - default hostname"
 		"$NNET_HOSTNAME_CMD" "$NNET_HOSTNAME" 2>/dev/null || exit 2
+		nnet_write_hosts
 		# Keep the stanza wlan0 is actually up with (a static config may have
 		# fallen back to DHCP this boot).
 		_mode=$NNET_MODE

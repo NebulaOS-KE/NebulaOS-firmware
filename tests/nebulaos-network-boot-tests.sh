@@ -38,6 +38,9 @@ setup() {
 	export NNET_IP="$T/w/bin/ip"
 	export NNET_HOSTNAME_CMD="$T/w/bin/hostname" NNET_IFUP="$T/w/bin/ifup"
 	export NNET_IFDOWN="$T/w/bin/ifdown" NNET_ARPING="$T/w/bin/arping"
+	printf '#!/bin/sh\necho "mount $*" >> "%s"\n' "$T/w/log" > "$T/w/bin/mount"; chmod 755 "$T/w/bin/mount"
+	echo "/dev/root / squashfs ro 0 0" > "$T/w/mounts"
+	export NNET_HOSTS="$T/w/run/hosts" NNET_ETC_HOSTS=/etc/hosts NNET_MOUNTS="$T/w/mounts" NNET_MOUNT_CMD="$T/w/bin/mount"
 	: > "$T/w/log"
 }
 
@@ -138,6 +141,22 @@ NNET_LIB="$LIB" sh "$NETAPPLY" nope; rc=$?
 check "netapply usage 64" '[ $rc -eq 64 ]'
 
 # --- S01wifi wiring ---------------------------------------------------------------
+# --- /etc/hosts (D2) ---------------------------------------------------------
+setup; env_static
+( . "$LIB"; nnet_boot_prepare ) >/dev/null
+check "hosts: generated with the configured hostname" '[ "$(cat "$NNET_HOSTS")" = "$(printf "127.0.0.1\tlocalhost\n127.0.1.1\tke-shop")" ]'
+check "hosts: bound over /etc/hosts" 'grep -qx "mount --bind $NNET_HOSTS /etc/hosts" "$T/w/log"'
+setup; echo "$NNET_HOSTS /etc/hosts ext4 rw 0 0" > "$T/w/mounts"
+( . "$LIB"; nnet_boot_prepare ) >/dev/null
+check "hosts: not bound twice" '! grep -q "^mount" "$T/w/log"'
+setup; : > "$NNET_ENV"
+( . "$LIB"; nnet_boot_prepare ) >/dev/null
+check "hosts: default hostname without boot.env" 'grep -qx "$(printf "127.0.1.1\tnebulaos")" "$NNET_HOSTS"'
+setup; env_static; ( . "$LIB"; nnet_boot_prepare ) >/dev/null
+ino1=$(ls -i "$NNET_HOSTS" | cut -d" " -f1)
+sed -i 's/ke-shop/ke-lab/' "$NNET_ENV"; NNET_LIB="$LIB" sh "$NETAPPLY" hostname >/dev/null 2>&1
+check "hosts: hostname change rewrites it in place (same inode)" '[ "$(ls -i "$NNET_HOSTS" | cut -d" " -f1)" = "$ino1" ] && grep -q "ke-lab" "$NNET_HOSTS"'
+
 check "S01wifi sources the network lib" 'grep -q "nnet_boot_prepare && NNET_READY=1" "$S01WIFI"'
 check "S01wifi ifup -i generated file" 'grep -q "/sbin/ifup -i \"\$NNET_IFACES\" wlan0" "$S01WIFI"'
 check "S01wifi falls back to stock ifup" 'grep -q "^		/sbin/ifup wlan0 2>/dev/null" "$S01WIFI"'
