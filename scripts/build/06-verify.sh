@@ -1412,7 +1412,10 @@ check /etc/ota_marker.sh
 # unsatisfiable by construction. Restored as `check` rather than deleted,
 # because the seeds-side assertion alone would leave the more load-bearing copy
 # unasserted.
-check /opt/printer_data/config/GuppyScreen/scripts/static_ip.py
+#
+# GUI readiness work (2026-10-10): static_ip.py is retired (see the seeds-side
+# check above), so both copies are now asserted absent, consistently.
+check_absent /opt/printer_data/config/GuppyScreen/scripts/static_ip.py
 
 echo "=== NebulaOS memory resilience (docs/NEBULAOS_MEMORY_RESILIENCE.md) ==="
 check /sbin/mkswap
