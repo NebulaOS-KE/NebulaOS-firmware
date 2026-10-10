@@ -905,6 +905,21 @@ EXERCISE_PROFILES["gs-display-brightness"] = (
     "echo \"undo: $(bl) files: $(ls $DD 2>/dev/null | tr '\\n' ' ')\"; fi",
     300)
 
+# Why S04/S05's venv validation stamp misses on a normal boot (the 4.6 s
+# S04nebulaos-factory-seed seen on every boot of 3580378): the current key of
+# each environment against its stored stamp. Read only; no interpreter start.
+CAPTURE_PROFILES["venv-stamp-diff"] = (
+    "log(){ :; }; . /usr/libexec/nebulaos-venv-lib.sh; "
+    "MS='import tornado, numpy, streaming_form_data.targets'; KSM='import greenlet, cffi, jinja2, serial, can'; "
+    "echo \"uptime=$(cut -d' ' -f1 /proc/uptime) marker=$([ -e \"$VENV_REVALIDATE_MARKER\" ] && echo present || echo absent)\"; "
+    "ls -la --full-time $VENV_VALIDATION_DIR 2>&1; "
+    "for e in moonraker:MS klipper:KSM; do n=${e%%:*}; v=${e#*:}; eval sm=\\$$v; "
+    "d=/usr/data/nebulaos/envs/$n; st=$(_venv_stamp_path $d); "
+    "venv_validation_key $d \"$sm\" > $T/$n.now; "
+    "echo \"== $n stamp=$st\"; if [ -f \"$st\" ]; then diff $st $T/$n.now && echo SAME; else echo NO_STAMP; cat $T/$n.now; fi; "
+    "for sp in $d/lib/python*/site-packages; do ls -lna --full-time $sp | head -4; ls -lnad --full-time $sp/__pycache__ 2>/dev/null; done; done",
+    False, None, 120)
+
 # Human-observed backlight exercise (T4): levels 25-100 % then sleep, woken by a
 # touch through the NebulaOS watcher. Undo wakes it if still off and restores
 # the recorded brightness and display files.
