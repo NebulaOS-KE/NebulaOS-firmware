@@ -12,6 +12,7 @@
 # Usage: python3 tests/nebulaos-osconfig-tests.py
 import asyncio
 import importlib
+import importlib.util
 import io
 import json
 import os
@@ -32,6 +33,9 @@ OVERLAY = os.path.join(REPO, "scripts", "build", "overlay")
 PYLIB = os.path.join(OVERLAY, "usr", "lib", "nebulaos", "python")
 COMPONENT = os.path.join(OVERLAY, "usr", "lib", "nebulaos", "moonraker", "nebulaos.py")
 CLI = os.path.join(OVERLAY, "usr", "libexec", "nebulaos", "nebulaos-osconfig")
+MCU_LIB = os.path.join(OVERLAY, "etc", "nebulaos")
+MCU_TOOLS = os.path.join(OVERLAY, "opt", "nebulaos", "tools")
+CANDIDATE = os.path.join(OVERLAY, "opt", "nebulaos", "mcu-candidates", "candidate-001.bin")
 
 
 def write_exe(path, body):
@@ -72,6 +76,16 @@ class Env(object):
             "NEBULAOS_CLEAN_RESET_FLAG": os.path.join(self.tmp, "data", ".nebulaos-clean-reset"),
             "NEBULAOS_CMDLINE": os.path.join(self.tmp, "cmdline"),
             "NEBULAOS_SLOT_SWAP": os.path.join(self.bin, "slot-swap"),
+            # MCU firmware (run 4): never the real upload dir, USB mount,
+            # nebulaos-mcu or guard state.
+            "NEBULAOS_MCU_UPLOAD_DIR": os.path.join(self.tmp, "mcu-upload"),
+            "NEBULAOS_MCU_USB_DIR": os.path.join(self.tmp, "usb"),
+            "NEBULAOS_MCU_BUILTIN": os.path.join(self.tmp, "builtin", "candidate-001.bin"),
+            "NEBULAOS_MCU_LIB": MCU_LIB,
+            "CREALITY_FLASH_PATH": MCU_TOOLS,
+            "NEBULAOS_MCU_CLI": os.path.join(self.bin, "nebulaos-mcu"),
+            "NEBULAOS_MCU_GUARD_STATE": os.path.join(self.tmp, "guard.state"),
+            "NEBULAOS_MCU_MANAGED_FLAG": os.path.join(self.tmp, "data", "mcu", "managed"),
         })
         if PYLIB not in sys.path:
             sys.path.insert(0, PYLIB)
@@ -79,7 +93,8 @@ class Env(object):
             if name.startswith("nebulaos_osconfig"):
                 del sys.modules[name]
         self.pkg = importlib.import_module("nebulaos_osconfig")
-        for mod in ("common", "network", "display", "bootdisplay", "system", "wifi", "cli"):
+        for mod in ("common", "network", "display", "bootdisplay", "system", "wifi", "mcu",
+                    "cli"):
             setattr(self, mod, importlib.import_module("nebulaos_osconfig." + mod))
 
     def netapply_script(self, apply_rcs):
@@ -803,6 +818,315 @@ class SystemResetSlotTests(unittest.TestCase):
         self.assertEqual(cm.exception.code, "SLOT_SWAP_FAILED")
 
 
+def candidate_bytes():
+    with open(CANDIDATE, "rb") as handle:
+        return handle.read()
+
+
+def raw_of(packed):
+    """What `make` in NebulaOS-klipper-mcu produces before packing: the 16
+    metadata bytes are the 0xFF placeholder."""
+    data = bytearray(packed)
+    data[0x200:0x210] = b"\xff" * 16
+    return bytes(data)
+
+
+class McuImageTests(unittest.TestCase):
+    """mcu_image: what may be flashed, and the raw -> Creality packing."""
+
+    def setUp(self):
+        self.e = Env()
+        self.img = self.e.mcu._image_module()
+        self.packed = candidate_bytes()
+
+    def tearDown(self):
+        self.e.cleanup()
+
+    def test_packed_and_raw_accepted(self):
+        self.assertEqual(self.img.classify(self.packed), ("packed", None))
+        self.assertEqual(self.img.classify(raw_of(self.packed)), ("raw", None))
+
+    def test_packing_a_raw_build_reproduces_the_shipped_image(self):
+        # candidate-001's provenance: raw and packed differ only in the header,
+        # packed with version 900 - so packing its raw form must give it back.
+        raw = raw_of(self.packed)
+        self.assertEqual(self.img.sha256(raw),
+                         "add546c7dd626c70a86ec33283cccdf4ad7956916d736af6b96f989b1b4188bd")
+        kind, image = self.img.prepare(raw)
+        self.assertEqual(kind, "raw")
+        self.assertEqual(image, self.packed)
+        self.assertEqual(self.img.prepare(self.packed), ("packed", self.packed))
+
+    def test_rejected(self):
+        p = self.packed
+        bad_crc = bytearray(p)
+        bad_crc[0x1000] ^= 0xFF
+        other_board = bytearray(p)
+        other_board[0x200:0x204] = b"noz0"
+        no_header = bytearray(p)
+        no_header[0x200:0x210] = bytes(range(16))     # code, like upstream Klipper
+        wrong_slot = bytearray(raw_of(p))
+        wrong_slot[4:8] = (0x08000101).to_bytes(4, "little")   # reset into the bootloader
+        cases = {
+            b"": "empty", b"\x00" * 100: "too small",
+            bytes(p) + b"\x00" * 70000: "too large",
+            bytes(bad_crc): "damaged", bytes(other_board): "another board",
+            bytes(no_header): "no Creality header", bytes(wrong_slot): "mainboard",
+        }
+        for data, why in cases.items():
+            kind, reason = self.img.classify(data)
+            self.assertIsNone(kind, why)
+            self.assertIn(why, reason)
+            with self.assertRaises(self.img.ImageError):
+                self.img.prepare(data)
+
+
+class McuFilesTests(unittest.TestCase):
+    """mcu status / list / flash with a fake nebulaos-mcu."""
+
+    def setUp(self):
+        self.e = Env()
+        self.m = self.e.mcu
+        self.packed = candidate_bytes()
+        self.upload = os.environ["NEBULAOS_MCU_UPLOAD_DIR"]
+        self.usb = os.environ["NEBULAOS_MCU_USB_DIR"]
+        os.makedirs(self.upload)
+        os.makedirs(os.path.join(self.usb, "sda1", "firmware"))
+        builtin = os.environ["NEBULAOS_MCU_BUILTIN"]
+        os.makedirs(os.path.dirname(builtin))
+        shutil.copy(CANDIDATE, builtin)
+        self.cli_log = os.path.join(self.e.tmp, "mcu-cli.log")
+        self.fake_cli(0, "MCU firmware flashed successfully.")
+
+    def tearDown(self):
+        self.e.cleanup()
+
+    def fake_cli(self, rc, out, err=""):
+        write_exe(os.environ["NEBULAOS_MCU_CLI"], """
+            echo "$@" >> "%(log)s"
+            cp "$2" "%(log)s.image"
+            echo "Stopping Klipper (required before any MCU serial operation)..."
+            echo "%(out)s"
+            [ -n "%(err)s" ] && echo "%(err)s" >&2
+            [ %(rc)d -ne 0 ] && echo "Flash failed. MCU ownership unchanged." >&2
+            echo "Restarting Klipper..."
+            exit %(rc)d
+        """ % {"log": self.cli_log, "out": out, "err": err, "rc": rc})
+
+    def put(self, path, data):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as handle:
+            handle.write(data)
+
+    def test_list(self):
+        self.put(os.path.join(self.upload, "klipper.bin"), raw_of(self.packed))
+        self.put(os.path.join(self.upload, "notes.txt"), b"x")
+        self.put(os.path.join(self.upload, ".hidden.bin"), self.packed)
+        self.put(os.path.join(self.upload, "junk.bin"), b"\x00" * 4096)
+        os.symlink("/etc/passwd", os.path.join(self.upload, "link.bin"))
+        self.put(os.path.join(self.usb, "sda1", "firmware", "KE.BIN"), self.packed)
+        self.put(os.path.join(self.usb, "sda1", "a", "b", "deep.bin"), self.packed)
+        out = self.m.list_files()
+        ids = [f["id"] for f in out["files"]]
+        self.assertEqual(ids, ["upload/junk.bin", "upload/klipper.bin",
+                               "usb/sda1/firmware/KE.BIN"])
+        junk, raw, usb = out["files"]
+        self.assertFalse(junk["valid"])
+        self.assertIn("no Creality header", junk["problem"])
+        self.assertEqual((raw["valid"], raw["kind"], raw["native"]), (True, "raw", False))
+        self.assertEqual((usb["valid"], usb["kind"], usb["native"], usb["source"]),
+                         (True, "packed", True, "usb"))
+        self.assertEqual(out["builtin"]["id"], "builtin/candidate-001.bin")
+        self.assertEqual(out["usb"], ["sda1"])
+
+    def test_big_file_not_read(self):
+        with open(os.path.join(self.upload, "huge.bin"), "wb") as handle:
+            handle.truncate(5 << 20)
+        f = self.m.list_files()["files"][0]
+        self.assertFalse(f["valid"])
+        self.assertIsNone(f["sha256"])
+        self.assertIn("too large", f["problem"])
+
+    def test_resolve_stays_inside(self):
+        outside = os.path.join(self.e.tmp, "secret.bin")
+        self.put(outside, self.packed)
+        os.symlink(outside, os.path.join(self.upload, "escape.bin"))
+        os.symlink(self.e.tmp, os.path.join(self.usb, "sda1", "up"))
+        for bad in ("", "upload/../secret.bin", "../secret.bin", "/etc/passwd",
+                    "upload/escape.bin", "usb/sda1/up/secret.bin", "builtin/other.bin",
+                    "elsewhere/x.bin", "upload/a/b.bin", "usb/sda1", "upload/",
+                    "usb/sda1/a/b/c.bin", None):
+            with self.assertRaises(self.e.common.OsConfigError, msg=repr(bad)):
+                self.m.resolve(bad)
+        with self.assertRaises(self.e.common.OsConfigError) as cm:
+            self.m.resolve("upload/missing.bin")
+        self.assertEqual(cm.exception.code, "FILE_NOT_FOUND")
+
+    def test_flash_raw_is_packed_staged_and_recorded(self):
+        raw = raw_of(self.packed)
+        self.put(os.path.join(self.upload, "klipper.bin"), raw)
+        sha = self.m.list_files()["files"][0]["sha256"]
+        out = self.m.flash("upload/klipper.bin", sha)
+        self.assertEqual((out["result"], out["kind"]), ("FLASHED", "raw"))
+        args = open(self.cli_log).read().split()
+        self.assertEqual(args[0], "flash")
+        self.assertTrue(args[1].startswith(os.path.join(self.e.run, "mcu") + os.sep))
+        self.assertEqual(open(self.cli_log + ".image", "rb").read(), self.packed)
+        self.assertFalse(os.path.exists(args[1]))            # staged copy removed
+        last = self.m.status()["last_flash"]
+        self.assertEqual((last["file"], last["ok"], last["kind"]),
+                         ("upload/klipper.bin", True, "raw"))
+
+    def test_flash_refuses_before_the_cli(self):
+        self.put(os.path.join(self.upload, "junk.bin"), b"\x00" * 4096)
+        self.put(os.path.join(self.upload, "ok.bin"), self.packed)
+        junk_sha = self.e.mcu._image_module().sha256(b"\x00" * 4096)
+        cases = [("upload/junk.bin", junk_sha, "INVALID_FIRMWARE"),
+                 ("upload/ok.bin", "0" * 64, "FILE_CHANGED"),
+                 ("upload/ok.bin", "nope", "INVALID_FILE")]
+        for file_id, sha, code in cases:
+            with self.assertRaises(self.e.common.OsConfigError) as cm:
+                self.m.flash(file_id, sha)
+            self.assertEqual((cm.exception.code, cm.exception.invalid), (code, True))
+        self.assertFalse(os.path.exists(self.cli_log))
+
+    def test_flash_failure_reason_and_refusal(self):
+        self.put(os.path.join(self.upload, "ok.bin"), self.packed)
+        sha = self.e.mcu._image_module().sha256(self.packed)
+        self.fake_cli(1, "Flashing...", "Hardware identity mismatch: 'xyz'")
+        with self.assertRaises(self.e.common.OsConfigError) as cm:
+            self.m.flash("upload/ok.bin", sha)
+        self.assertEqual(cm.exception.code, "FLASH_FAILED")
+        self.assertEqual(cm.exception.message, "Hardware identity mismatch: 'xyz'")
+        self.assertIn("Restarting Klipper", cm.exception.extra["log"])
+        self.assertFalse(self.m.status()["last_flash"]["ok"])
+        self.fake_cli(1, "", "REFUSED: Printer is printing. Cannot flash MCU during a print.")
+        with self.assertRaises(self.e.common.OsConfigError) as cm:
+            self.m.flash("upload/ok.bin", sha)
+        self.assertEqual(cm.exception.code, "REFUSED")
+
+    def test_second_flash_is_refused_not_queued(self):
+        self.put(os.path.join(self.upload, "ok.bin"), self.packed)
+        sha = self.e.mcu._image_module().sha256(self.packed)
+        os.makedirs(os.path.join(self.e.run, "mcu"))
+        import fcntl
+        fd = os.open(os.path.join(self.e.run, "mcu", "flash.lock"), os.O_RDWR | os.O_CREAT)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        try:
+            with self.assertRaises(self.e.common.OsConfigError) as cm:
+                self.m.flash("upload/ok.bin", sha)
+            self.assertEqual(cm.exception.code, "BUSY")
+        finally:
+            os.close(fd)
+        self.assertFalse(os.path.exists(self.cli_log))
+
+    def test_builtin_reinstall(self):
+        sha = self.m.list_files()["builtin"]["sha256"]
+        self.fake_cli(0, "NebulaOS native firmware installed. Auto-restore enabled.")
+        out = self.m.flash("builtin/candidate-001.bin", sha)
+        self.assertTrue(out["native"])
+        self.assertEqual(open(self.cli_log + ".image", "rb").read(), self.packed)
+
+    def test_status(self):
+        self.assertEqual(self.m.status()["guard"], None)
+        self.assertTrue(self.m.status()["managed"])
+        with open(os.environ["NEBULAOS_MCU_GUARD_STATE"], "w") as handle:
+            handle.write("MCU_GUARD_RESULT=PASS\nMCU_GUARD_DETAIL='it'\\''s fine'\n"
+                         "MCU_LIFECYCLE_STATE=SUPPORTED_HW_NATIVE_APP\n"
+                         "MCU_APPLICATION_CLASS=NATIVE_CANDIDATE_001\n"
+                         "MCU_APPLICATION_IDENTITY=v0.13.0-742-g01a9c2f92\n")
+        flag = os.environ["NEBULAOS_MCU_MANAGED_FLAG"]
+        os.makedirs(os.path.dirname(flag), exist_ok=True)
+        open(flag, "w").write("false\n")
+        st = self.m.status()
+        self.assertEqual(st["guard"]["application_class"], "NATIVE_CANDIDATE_001")
+        self.assertEqual(st["guard"]["result"], "PASS")
+        self.assertFalse(st["managed"])
+
+    def test_cli_contract(self):
+        out = io.StringIO()
+        old, sys.stdout = sys.stdout, out
+        try:
+            rc = self.e.cli.main(["mcu", "flash", "--file", "upload/none.bin",
+                                  "--sha256", "0" * 64])
+            rc_list = self.e.cli.main(["mcu", "list"])
+        finally:
+            sys.stdout = old
+        first, second = [json.loads(l) for l in out.getvalue().splitlines()]
+        self.assertEqual((rc, first["error"]), (1, "FILE_NOT_FOUND"))
+        self.assertEqual((rc_list, second["ok"]), (0, True))
+
+
+class McuFlashFileTests(unittest.TestCase):
+    """mcu_flash_file.py (the CLI's flash step) against a fake bootloader:
+    an image that is not firmware for this board never reaches the MCU, and a
+    raw build is packed before it is sent."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.events = []
+        test = self
+
+        class FlashError(Exception):
+            pass
+
+        fake = types.ModuleType("creality_flash")
+        fake.FlashError = FlashError
+        fake.DEFAULT_ALLOWED_HW_IDS = ("mcu0_001_G32",)
+        fake.SerialTransport = lambda *a, **k: object()
+        fake.handshake = lambda t: test.events.append("handshake") or True
+        fake.get_version = lambda t: "mcu0_001_G32-mcu0_005_000"
+        fake.check_identity = lambda v: v.startswith("mcu0_001_G32")
+        fake.get_sector_size = lambda t: 2
+        fake.flash_image = lambda t, image, s: test.events.append(("flash", image)) or True
+        fake.app_start = lambda t: test.events.append("app_start") or True
+        restart = types.ModuleType("mcu_restart")
+        restart.request_generic_restart = lambda p, b: test.events.append("restart") or "reset"
+        self.saved = {n: sys.modules.get(n) for n in ("creality_flash", "mcu_restart")}
+        sys.modules.update({"creality_flash": fake, "mcu_restart": restart})
+        os.environ["CREALITY_FLASH_PATH"] = MCU_TOOLS
+        spec = importlib.util.spec_from_file_location(
+            "mcu_flash_file_under_test", os.path.join(MCU_LIB, "mcu_flash_file.py"))
+        self.mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.mod)
+        self.mod.time.sleep = lambda s: None
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+        for name, mod in self.saved.items():
+            if mod is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = mod
+
+    def run_main(self, data):
+        path = os.path.join(self.tmp, "fw.bin")
+        with open(path, "wb") as handle:
+            handle.write(data)
+        old_argv, old_out, old_err = sys.argv, sys.stdout, sys.stderr
+        sys.argv = ["mcu_flash_file.py", path]
+        sys.stdout = sys.stderr = io.StringIO()
+        try:
+            rc = self.mod.main()
+            text = sys.stdout.getvalue()
+        finally:
+            sys.argv, sys.stdout, sys.stderr = old_argv, old_out, old_err
+        return rc, text
+
+    def test_not_firmware_never_touches_the_mcu(self):
+        rc, text = self.run_main(b"\x00" * 4096)
+        self.assertEqual(rc, 1)
+        self.assertIn("REFUSED", text)
+        self.assertEqual(self.events, [])
+
+    def test_raw_build_is_packed_then_flashed(self):
+        packed = candidate_bytes()
+        rc, text = self.run_main(raw_of(packed))
+        self.assertEqual(rc, 0, text)
+        self.assertEqual(self.events, ["restart", "handshake", ("flash", packed), "app_start"])
+        self.assertIn("Image: raw", text)
+
+
 class CliContractTests(unittest.TestCase):
     def setUp(self):
         self.e = Env()
@@ -1066,6 +1390,47 @@ class ComponentTests(unittest.TestCase):
                 self.call("/machine/nebulaos/" + p)
             self.assertIn("REBOOT_FAILED", str(cm.exception))
             self.assertEqual(self.calls()[-1], undo)
+
+    def test_mcu_endpoints(self):
+        self.assertEqual(self.call("/machine/nebulaos/mcu/files"), {"result": "APPLIED"})
+        self.assertEqual(self.argv()[:2], ["mcu", "list"])
+        self.call("/machine/nebulaos/mcu/status")
+        self.assertEqual(self.argv()[:2], ["mcu", "status"])
+        seen = {}
+        real_exec = self.comp._exec
+
+        async def spy(args, timeout, stdin=None):
+            seen["timeout"] = timeout
+            return await real_exec(args, timeout, stdin)
+        self.comp._exec = spy
+        self.call("/machine/nebulaos/mcu/flash", {"file": "usb/sda1/x.bin", "sha256": "ab" * 32})
+        self.assertEqual(self.argv()[:6], ["mcu", "flash", "--file", "usb/sda1/x.bin",
+                                           "--sha256", "ab" * 32])
+        self.assertEqual(seen["timeout"], self.mod.MCU_FLASH_TIMEOUT)
+        self.assertGreater(self.mod.MCU_FLASH_TIMEOUT, 600)    # outlives the helper's bound
+        self.assertEqual(self.server.events[-1][1]["domain"], "mcu")
+
+    def test_mcu_flash_refused_while_printing_or_busy(self):
+        for state in ("printing", "paused"):
+            self.print_state = state
+            with self.assertRaises(Exception) as cm:
+                self.call("/machine/nebulaos/mcu/flash", {"file": "upload/a.bin", "sha256": "0" * 64})
+            self.assertEqual(cm.exception.status_code, 409)
+        self.assertEqual(self.calls(), [])
+        self.print_state = "standby"
+
+        async def busy():
+            lock = self.comp.write_locks.setdefault("mcu", asyncio.Lock())
+            await lock.acquire()
+            try:
+                await self.server.endpoints["/machine/nebulaos/mcu/flash"][1](
+                    self.Req({"file": "upload/a.bin", "sha256": "0" * 64}))
+            finally:
+                lock.release()
+        with self.assertRaises(Exception) as cm:
+            asyncio.run(busy())
+        self.assertIn("BUSY", str(cm.exception))
+        self.assertEqual(self.calls(), [])
 
     def test_ok_result_strips_ok(self):
         out = self.call("/machine/nebulaos/info")

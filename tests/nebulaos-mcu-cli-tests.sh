@@ -360,10 +360,12 @@ echo "fake firmware bytes" > "$FIRMWARE_FIXTURE"
 
 FLASH_MANAGED_DIR="$TMPDIR/flash-managed"
 
-# PYTHON3=/bin/sh: the mock helper is a plain shell script, not Python -
-# `nebulaos-mcu` always invokes it as `"$PYTHON3" "$MCU_FLASH_FILE" ...`,
-# and `sh /path/to/mock.sh <args>` runs it correctly either way.
-flash_ok_output=$(MCU_FLASH_FILE="$MOCK_FLASH_OK" PYTHON3=/bin/sh \
+# MCU_GUARD_PYTHON3=/bin/sh: the mock helper is a plain shell script, not
+# Python - `nebulaos-mcu` invokes it as `"$PYTHON3" "$MCU_FLASH_FILE" ...`
+# with PYTHON3 taken from MCU_GUARD_PYTHON3 (run 4: these tests used to set
+# only PYTHON3, which the script ignores, so the "successful" mock flash
+# actually ran under python3 and failed).
+flash_ok_output=$(MCU_FLASH_FILE="$MOCK_FLASH_OK" PYTHON3=/bin/sh MCU_GUARD_PYTHON3=/bin/sh \
     MCU_MANAGED_DIR="$FLASH_MANAGED_DIR" \
     MOONRAKER_URL="http://127.0.0.1:1" \
     "$CLI_SCRIPT" flash "$FIRMWARE_FIXTURE" 2>&1)
@@ -388,7 +390,7 @@ else
     fail "flash sequence order is wrong (stop=$stop_line flash=$flash_line restart=$restart_line)"
 fi
 
-flash_fail_output=$(MCU_FLASH_FILE="$MOCK_FLASH_FAIL" PYTHON3=/bin/sh \
+flash_fail_output=$(MCU_FLASH_FILE="$MOCK_FLASH_FAIL" PYTHON3=/bin/sh MCU_GUARD_PYTHON3=/bin/sh \
     MCU_MANAGED_DIR="$FLASH_MANAGED_DIR" \
     MOONRAKER_URL="http://127.0.0.1:1" \
     "$CLI_SCRIPT" flash "$FIRMWARE_FIXTURE" 2>&1) || true
@@ -404,6 +406,49 @@ else
     fail "a failed flash was not reported correctly"
 fi
 
+# Development run 4 (2026-10-11): reinstalling the shipped native image
+# through `flash` (the touchscreen's "Reinstall NebulaOS firmware") hands the
+# MCU back to NebulaOS; any other file is manual ownership, as before.
+echo ""
+echo "--- flash of the native image re-enables management ---"
+
+NATIVE_FIXTURE="$TMPDIR/native-candidate.bin"
+echo "native candidate bytes" > "$NATIVE_FIXTURE"
+NATIVE_COPY="$TMPDIR/run-copy-of-native.bin"
+cp "$NATIVE_FIXTURE" "$NATIVE_COPY"
+OWNERSHIP_DIR="$TMPDIR/ownership"
+
+native_output=$(MCU_FLASH_FILE="$MOCK_FLASH_OK" PYTHON3=/bin/sh MCU_GUARD_PYTHON3=/bin/sh \
+    MCU_MANAGED_DIR="$OWNERSHIP_DIR" MCU_NATIVE_CANDIDATE="$NATIVE_FIXTURE" \
+    MOONRAKER_URL="http://127.0.0.1:1" \
+    "$CLI_SCRIPT" flash "$NATIVE_COPY" 2>&1) || true
+if [ "$(cat "$OWNERSHIP_DIR/managed" 2>/dev/null)" = "true" ] \
+   && echo "$native_output" | grep -q "NebulaOS native firmware installed"; then
+    pass "flashing a byte-identical copy of the native candidate sets managed=true"
+else
+    fail "native reflash did not re-enable management ($native_output)"
+fi
+
+custom_output=$(MCU_FLASH_FILE="$MOCK_FLASH_OK" PYTHON3=/bin/sh MCU_GUARD_PYTHON3=/bin/sh \
+    MCU_MANAGED_DIR="$OWNERSHIP_DIR" MCU_NATIVE_CANDIDATE="$NATIVE_FIXTURE" \
+    MOONRAKER_URL="http://127.0.0.1:1" \
+    "$CLI_SCRIPT" flash "$FIRMWARE_FIXTURE" 2>&1) || true
+if [ "$(cat "$OWNERSHIP_DIR/managed" 2>/dev/null)" = "false" ]; then
+    pass "flashing any other file still sets managed=false"
+else
+    fail "custom flash did not set managed=false ($custom_output)"
+fi
+
+failed_native_output=$(MCU_FLASH_FILE="$MOCK_FLASH_FAIL" PYTHON3=/bin/sh MCU_GUARD_PYTHON3=/bin/sh \
+    MCU_MANAGED_DIR="$OWNERSHIP_DIR" MCU_NATIVE_CANDIDATE="$NATIVE_FIXTURE" \
+    MOONRAKER_URL="http://127.0.0.1:1" \
+    "$CLI_SCRIPT" flash "$NATIVE_COPY" 2>&1) || true
+if [ "$(cat "$OWNERSHIP_DIR/managed" 2>/dev/null)" = "false" ]; then
+    pass "a FAILED native reflash leaves ownership unchanged"
+else
+    fail "a failed native reflash changed ownership ($failed_native_output)"
+fi
+
 echo ""
 echo "--- Klipper stop/restart wrapping (managed) ---"
 
@@ -415,7 +460,7 @@ echo "MCU_GUARD_RESULT=PASS"
 EOF
 chmod +x "$MOCK_IDENTITY_NATIVE"
 
-managed_output=$(MCU_IDENTITY_CHECK="$MOCK_IDENTITY_NATIVE" PYTHON3=/bin/sh \
+managed_output=$(MCU_IDENTITY_CHECK="$MOCK_IDENTITY_NATIVE" PYTHON3=/bin/sh MCU_GUARD_PYTHON3=/bin/sh \
     MCU_MANAGED_DIR="$FLASH_MANAGED_DIR" \
     "$CLI_SCRIPT" managed 2>&1) || true
 
@@ -438,7 +483,7 @@ echo "MCU_GUARD_RESULT=WARN"
 EOF
 chmod +x "$MOCK_IDENTITY_UNKNOWN"
 
-managed_refused_output=$(MCU_IDENTITY_CHECK="$MOCK_IDENTITY_UNKNOWN" PYTHON3=/bin/sh \
+managed_refused_output=$(MCU_IDENTITY_CHECK="$MOCK_IDENTITY_UNKNOWN" PYTHON3=/bin/sh MCU_GUARD_PYTHON3=/bin/sh \
     MCU_MANAGED_DIR="$FLASH_MANAGED_DIR" \
     "$CLI_SCRIPT" managed 2>&1) || true
 

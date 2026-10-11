@@ -36,6 +36,9 @@ DEFAULT_BOOT_UPLOAD_DIR = "/usr/data/nebulaos/boot/uploads"
 READ_TIMEOUT = 20.
 # A network change waits for DHCP/ARP verification and a possible revert.
 WRITE_TIMEOUT = 150.
+# An MCU flash stops Klipper, enters the bootloader, transfers and restarts
+# Klipper; the helper bounds it at 600 s itself. Never kill it first.
+MCU_FLASH_TIMEOUT = 660.
 
 
 class NebulaOS:
@@ -77,6 +80,9 @@ class NebulaOS:
             ("/machine/nebulaos/system/clean_reset", RequestType.POST,
              self._clean_reset),
             ("/machine/nebulaos/system/swap_slot", RequestType.POST, self._swap_slot),
+            ("/machine/nebulaos/mcu/status", RequestType.GET, self._mcu_status),
+            ("/machine/nebulaos/mcu/files", RequestType.GET, self._mcu_files),
+            ("/machine/nebulaos/mcu/flash", RequestType.POST, self._mcu_flash),
         ]
         for path, rtype, callback in routes:
             self.server.register_endpoint(path, rtype, callback)
@@ -118,10 +124,11 @@ class NebulaOS:
         return await self._exec(list(args), READ_TIMEOUT)
 
     async def _write(self, domain: str, *args: str,
-                     stdin: Optional[bytes] = None) -> Dict[str, Any]:
+                     stdin: Optional[bytes] = None,
+                     timeout: float = WRITE_TIMEOUT) -> Dict[str, Any]:
         lock = self.write_locks.setdefault(domain, asyncio.Lock())
         async with lock:
-            result = await self._exec([domain] + list(args), WRITE_TIMEOUT, stdin)
+            result = await self._exec([domain] + list(args), timeout, stdin)
         self.server.send_event("nebulaos:settings_changed",
                                {"domain": domain, "result": result.get("result")})
         return result
@@ -229,6 +236,26 @@ class NebulaOS:
         result = await self._write("system", "swap-slot")
         await self._reboot_or_undo(["system", "keep-slot"])
         return result
+
+    # -- MCU firmware (development run 4, 2026-10-11) -----------------------------
+    # The helper checks and stages the file and runs `nebulaos-mcu flash`,
+    # which refuses while printing, stops Klipper and always restarts it.
+
+    async def _mcu_status(self, web_request: WebRequest) -> Dict[str, Any]:
+        return await self._read("mcu", "status")
+
+    async def _mcu_files(self, web_request: WebRequest) -> Dict[str, Any]:
+        return await self._read("mcu", "list")
+
+    async def _mcu_flash(self, web_request: WebRequest) -> Dict[str, Any]:
+        file_id = web_request.get_str("file")
+        sha = web_request.get_str("sha256")
+        lock = self.write_locks.setdefault("mcu", asyncio.Lock())
+        if lock.locked():
+            raise self.server.error("BUSY: an MCU flash is already running", 409)
+        await self._refuse_while_printing()
+        return await self._write("mcu", "flash", "--file", file_id, "--sha256", sha,
+                                 timeout=MCU_FLASH_TIMEOUT)
 
 
 def load_component(config: ConfigHelper) -> NebulaOS:

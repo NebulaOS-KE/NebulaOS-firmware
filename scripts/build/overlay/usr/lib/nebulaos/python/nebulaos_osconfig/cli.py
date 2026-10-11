@@ -16,6 +16,8 @@
 #   nebulaos-osconfig boot-display render [--if-stale]
 #   nebulaos-osconfig display status|sleep|wake
 #   nebulaos-osconfig display set-brightness --level 25|50|75|100
+#   nebulaos-osconfig mcu status|list
+#   nebulaos-osconfig mcu flash --file ID --sha256 HEX   (ID and HEX from `list`)
 #
 # stdout: exactly one JSON object, {"ok": true, ...} or
 # {"ok": false, "error": CODE, "message": ...}. exit 0 ok, 1 invalid input
@@ -23,7 +25,7 @@
 import json
 import sys
 
-from . import bootdisplay, common, display, network, system, wifi
+from . import bootdisplay, common, display, mcu, network, system, wifi
 
 
 def _opts(args, allowed):
@@ -49,12 +51,18 @@ def _dispatch(argv):
     domain, verb, rest = argv[0], argv[1], argv[2:]
     read_only = {("system", "info"), ("network", "status"),
                  ("boot-display", "status"), ("display", "status"),
-                 ("wifi", "status")}
+                 ("wifi", "status"), ("mcu", "status"), ("mcu", "list")}
     if (domain, verb) in read_only:
         _opts(rest, {})
+        if domain == "mcu":
+            return mcu.status() if verb == "status" else mcu.list_files()
         return {"system": system.info, "network": network.status,
                 "boot-display": bootdisplay.status, "display": display.status,
                 "wifi": wifi.status}[domain]()
+    if (domain, verb) == ("mcu", "flash"):
+        # Its own non-blocking lock: a second flash is refused, never queued.
+        opts = _opts(rest, {"file": True, "sha256": True})
+        return mcu.flash(opts.get("file"), opts.get("sha256"))
     with common.Lock(domain):
         if domain == "network":
             if verb == "set-hostname":
