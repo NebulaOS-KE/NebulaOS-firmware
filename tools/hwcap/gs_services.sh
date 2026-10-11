@@ -10,7 +10,7 @@ echo "== boot scripts (new/changed)"
 grep -E 'S01(splash|wifi)|S05nebulaos-activate|S56moonraker|S58guppyscreen|S9[78]' /run/nebulaos-boot-scripts.log 2>/dev/null
 grep -E 'EV=(begin|done)' /run/nebulaos-boot-scripts.log 2>/dev/null
 echo "== component endpoints"
-for e in info network/status boot_display/status display/status; do
+for e in info network/status boot_display/status display/status wifi/status; do
 	echo "-- /machine/nebulaos/$e"
 	curl -s -m 25 -w '\nhttp=%{http_code} seconds=%{time_total}\n' "$U/machine/nebulaos/$e" | head -c 4000
 done
@@ -77,6 +77,9 @@ echo "fb: virtual_size=$(cat $F/virtual_size) bpp=$(cat $F/bits_per_pixel) strid
 for v in /sys/class/vtconsole/vtcon*; do echo "$v: $(cat $v/name) bind=$(cat $v/bind)"; done
 echo "fbcon_rotate=$(cat /sys/class/graphics/fbcon/rotate 2>/dev/null)"
 dmesg | grep -iE 'fbcon|Console: switching|frame buffer device' | tail -5
+echo "kernel_logo_copies=$(dmesg | grep -c 'copy logo_buf') (0 = no Ingenic logo, kernel d3cdc47+)"
+echo "clean_reset_flag=$(ls /usr/data/.nebulaos-clean-reset 2>/dev/null || echo absent) wipe_dirs=$(ls -d /usr/data/.nebulaos-wiping-* 2>/dev/null | wc -l)"
+echo "ota_marker=$(head -c 16 /dev/mmcblk0p1 2>/dev/null | head -n1) cmdline_root=$(tr ' ' '\n' < /proc/cmdline | grep '^root=')"
 grep -aE 'nebulaos-boot-display' /var/log/messages 2>/dev/null | tail -6 | cut -c1-200
 echo "== backlight (sysfs, G5)"
 B=/sys/class/backlight/nebulaos_backlight
