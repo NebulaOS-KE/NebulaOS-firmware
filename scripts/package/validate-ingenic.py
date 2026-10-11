@@ -13,6 +13,9 @@ the finished archive and proves three separate things:
   3. the safety properties hold: the erase policy still leaves sn_mac alone,
      the OTA marker selects the intended slot, and in the default slot-B layout
      the stock slot is genuinely untouched.
+  4. slot B's zero2.bin is the stock zero.bin except the one boot-logo JPEG
+     slot, which holds exactly the pinned NebulaOS logo, and the whole image
+     equals its pinned sha256 (or, with --rtos2 stock, equals stock).
 
 (2) is the check that matters most and is the easiest to omit. A package that
 embeds the right kernel but silently re-encoded U-Boot is not a package anyone
@@ -27,6 +30,9 @@ import zipfile
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "tools", "emmc"))
 import nebulaos_layout as layout  # noqa: E402
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import rtos_logo  # noqa: E402
 
 STOCK_KERNEL_ENTRY = "images/xImage"
 STOCK_ROOTFS_ENTRY = "images/rootfs.squashfs"
@@ -84,6 +90,46 @@ def ini_value(data, section, key):
     return None
 
 
+def check_rtos2(pkg, tpl, pkg_names, mode):
+    """zero2.bin: stock except the logo slot (nebulaos), or stock (stock)."""
+    if RTOS2_ENTRY not in pkg_names:
+        bad("the package carries %s" % RTOS2_ENTRY)
+        return
+    stock = tpl.read(STOCK_RTOS_ENTRY)
+    rtos2 = pkg.read(RTOS2_ENTRY)
+    if mode == "stock":
+        if rtos2 == stock:
+            ok("zero2.bin is a deliberate copy of the stock RTOS")
+        else:
+            bad("zero2.bin is a deliberate copy of the stock RTOS")
+        return
+    try:
+        rtos_logo.check_stock(stock)
+        ok("the template's zero.bin is the pinned stock RTOS (%s)" % rtos_logo.STOCK_ZERO_SHA256[:16])
+    except rtos_logo.LogoError as exc:
+        bad("the template's zero.bin is the pinned stock RTOS", str(exc))
+        return
+    with open(rtos_logo.LOGO_ASSET, "rb") as fh:
+        logo = fh.read()
+    if rtos_logo.sha256(logo) == rtos_logo.NEBULAOS_LOGO_SHA256:
+        ok("the committed NebulaOS logo is the pinned asset")
+    else:
+        bad("the committed NebulaOS logo is the pinned asset",
+            "%s != %s" % (rtos_logo.sha256(logo), rtos_logo.NEBULAOS_LOGO_SHA256))
+    try:
+        rtos_logo.verify(stock, rtos2, logo)
+        ok("zero2.bin equals stock except the 0x%x+%d logo slot, which holds the NebulaOS logo"
+           % (rtos_logo.LOGO_SLOT_OFFSET, rtos_logo.LOGO_SLOT_SIZE))
+    except rtos_logo.LogoError as exc:
+        bad("zero2.bin equals stock except the logo slot, which holds the NebulaOS logo", str(exc))
+    got = rtos_logo.sha256(rtos2)
+    if got == rtos_logo.NEBULAOS_ZERO_SHA256:
+        ok("zero2.bin is the pinned NebulaOS RTOS image (%s)" % got[:16])
+    else:
+        bad("zero2.bin is the pinned NebulaOS RTOS image",
+            "%s != %s" % (got, rtos_logo.NEBULAOS_ZERO_SHA256))
+
+
 def report():
     print()
     print("INGENIC_VALIDATION_PASS=%d" % len(PASS))
@@ -99,6 +145,8 @@ def main(argv):
     parser.add_argument("--ximage", required=True, help="canonical xImage to compare against")
     parser.add_argument("--rootfs", required=True, help="canonical rootfs.squashfs to compare against")
     parser.add_argument("--slot", choices=("a", "b"), default="b")
+    parser.add_argument("--rtos2", choices=("nebulaos", "stock"), default="nebulaos",
+                        help="what slot B's zero2.bin must be (as packaged by build-ingenic.py)")
     args = parser.parse_args(argv)
 
     slot_b = args.slot == "b"
@@ -206,10 +254,7 @@ def main(argv):
             bad("the NebulaOS kernel did not land in slot A",
                 "slot A holds the NebulaOS kernel - the stock fallback is gone")
 
-        if RTOS2_ENTRY in pkg_names and sha256_entry(pkg, RTOS2_ENTRY) == sha256_entry(tpl, STOCK_RTOS_ENTRY):
-            ok("zero2.bin is a deliberate copy of the stock RTOS")
-        else:
-            bad("zero2.bin is a deliberate copy of the stock RTOS")
+        check_rtos2(pkg, tpl, pkg_names, args.rtos2)
 
         # --- the OTA marker ---
         if OTA_ENTRY in pkg_names:

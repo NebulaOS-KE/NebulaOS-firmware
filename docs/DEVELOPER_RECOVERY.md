@@ -126,6 +126,45 @@ Here's the actual procedure, including a couple of gotchas we hit doing this for
 This only touches the OTA marker partition — it doesn't flash a kernel or rootfs, and it doesn't
 touch the bootloader or partition table.
 
+### RTOS logo: restoring rtos2
+
+The Hardware Agent's `rtos-logo` operation writes rtos2 (p4, offset `0x700000`, 4 MiB): the RTOS
+image SPL loads before Linux whenever the marker is `ota:kernel2`. If that image is broken,
+NebulaOS stops in SPL before Linux, so neither SSH nor `rtos-logo-restore` can reach it. Stock still
+boots (it loads rtos, p3, which the agent never writes), but getting there needs the marker swap
+above, and a power cycle into stock is what lets its updater reflash the MCU (§1). The direct fix
+is to write the backup back over USB.
+
+`rtos-logo` takes that backup before it writes anything:
+`~/.local/state/nebulaos-hardware/rtos-backups/<device>/rtos2-<time>-<sha16>.bin` (the complete
+4 MiB partition), next to a `.txt` with its sha256. Copy it to the recovery computer.
+
+**Rehearse this with the user before the first `rtos-logo` write**, while rtos2 is still stock and
+nothing is at stake:
+
+1. Run `capture rtos-hashes` (read-only) and note `p4_sha256_full`, the sha256 of the whole rtos2.
+2. Enter mask-ROM mode and load u-boot (§3 steps 1-3: buttons, `lsusb`, `sudo ./usbboot --uboot`).
+   Use the pinned, patched `usbboot` (`INGENIC_USBBOOT_*` in `manifests/dependencies.conf`).
+3. Read rtos2 over USB and compare it with the capture:
+   ```sh
+   sudo ./usbboot -o 0x700000 -s 0x400000 --dump-partition ./rtos2.usb
+   sha256sum ./rtos2.usb      # must equal p4_sha256_full
+   ```
+   A match proves the offset, the size and the tool before anything is written.
+4. Write that dump back. Its bytes equal what is there, so the rehearsal changes nothing:
+   ```sh
+   sudo ./usbboot --uboot
+   sudo ./usbboot -o 0x700000 -s 0x400000 --write-partition ./rtos2.usb
+   ```
+   The patched tool reads back every chunk and prints `write complete and verified`.
+5. Dump again (step 3), compare once more, then reset. NebulaOS must boot normally and
+   `capture rtos-hashes` must report the same `p4_sha256_full`.
+
+For a real recovery, run steps 2 to 5 with the agent's backup (taken before the failed write) in
+place of `./rtos2.usb`, and compare against the sha256 in its `.txt`. **Check the
+offset twice:** `0x700000` is rtos2. `0x300000` is stock's rtos, and `0x200000` is `sn_mac`, the
+per-unit identity that cannot be regenerated. Never write either one.
+
 ## 4. Manual repair over SSH
 
 If you can still SSH into either slot, you've got ordinary root access and normal shell tooling —

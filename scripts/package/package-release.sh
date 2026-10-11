@@ -51,6 +51,7 @@ TEMPLATE=""
 OUT=""
 OTA_VERSION=""
 SLOT=b
+RTOS2=nebulaos
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -59,7 +60,8 @@ while [ "$#" -gt 0 ]; do
     --out)            OUT=${2:-}; shift 2 ;;
     --ota-version)    OTA_VERSION=${2:-}; shift 2 ;;
     --slot)           SLOT=${2:-}; shift 2 ;;
-    *) die "unknown option '$1'. Usage: package-release.sh --build-run <dir> --template <vendor.ingenic> --ota-version <v> [--out <dir>] [--slot a|b]" ;;
+    --rtos2)          RTOS2=${2:-}; shift 2 ;;
+    *) die "unknown option '$1'. Usage: package-release.sh --build-run <dir> --template <vendor.ingenic> --ota-version <v> [--out <dir>] [--slot a|b] [--rtos2 nebulaos|stock]" ;;
   esac
 done
 
@@ -68,6 +70,7 @@ done
 [ -n "$OTA_VERSION" ] || die "--ota-version is required"
 [ -d "$BUILD_RUN" ]   || die "build run directory does not exist: $BUILD_RUN"
 [ -f "$TEMPLATE" ]    || die "ingenic template does not exist: $TEMPLATE"
+case "$RTOS2" in nebulaos|stock) ;; *) die "--rtos2 must be nebulaos or stock" ;; esac
 
 ART="$BUILD_RUN/artifacts/buildroot-halley5-v30-image"
 XIMAGE="$ART/xImage"
@@ -118,20 +121,32 @@ cp -f "$XIMAGE" "$ROOTFS" "$MANIFEST" "$OUT/" || die "cannot copy the canonical 
 echo "  xImage          $X_SHA"
 echo "  rootfs.squashfs $R_SHA"
 
-# --- the stock RTOS ---------------------------------------------------------
+# --- the RTOS ---------------------------------------------------------------
 # The real vendor ota_update.in lists THREE payloads - kernel, rootfs and
 # rtos/zero.bin (FIRMWARE.md, recorded from extracting Creality's own V1.1.0.12
-# package). NebulaOS has no reason to replace the RTOS, so the stock copy is
-# carried through unchanged, and the only genuine copy this project has of it is
-# inside the official .ingenic template.
-RTOS="$OUT/.zero.bin"
-python3 - "$TEMPLATE" "$RTOS" <<'PY' || die "cannot extract zero.bin from the template"
+# package). The only genuine copy this project has of zero.bin is inside the
+# official .ingenic template. NebulaOS changes one thing in it: the boot-logo
+# JPEG (rtos_logo.py: pinned input, pinned output, every other byte stock).
+# That image goes into the .img, which installs the NebulaOS slot set, and into
+# the .ingenic as zero2.bin; slot A of the .ingenic keeps the untouched stock
+# zero.bin. --rtos2 stock ships the stock RTOS everywhere.
+STOCK_RTOS="$OUT/.zero.bin"
+rm -f "$STOCK_RTOS" "$OUT/.zero2.bin"
+python3 - "$TEMPLATE" "$STOCK_RTOS" <<'PY' || die "cannot extract zero.bin from the template"
 import sys, zipfile
 with zipfile.ZipFile(sys.argv[1]) as z:
     with z.open("images/zero.bin") as src, open(sys.argv[2], "wb") as dst:
         dst.write(src.read())
 PY
-echo "  stock RTOS: $(sha256sum "$RTOS" | cut -d' ' -f1) ($(stat -c %s "$RTOS") bytes, from the template)"
+echo "  stock RTOS: $(sha256sum "$STOCK_RTOS" | cut -d' ' -f1) ($(stat -c %s "$STOCK_RTOS") bytes, from the template)"
+if [ "$RTOS2" = nebulaos ]; then
+  RTOS="$OUT/.zero2.bin"
+  python3 "$SCRIPT_DIR/rtos_logo.py" patch --stock "$STOCK_RTOS" --out "$RTOS" --require-pinned >/dev/null \
+    || die "cannot build the NebulaOS RTOS image (rtos_logo.py patch --require-pinned)"
+  echo "  NebulaOS RTOS: $(sha256sum "$RTOS" | cut -d' ' -f1) (stock + the NebulaOS boot logo)"
+else
+  RTOS="$STOCK_RTOS"
+fi
 
 # --- B. Creality F005 OTA .img --------------------------------------------
 echo
@@ -153,11 +168,11 @@ echo "== .ingenic (Ingenic Cloner recovery package) =="
 python3 "$SCRIPT_DIR/build-ingenic.py" \
   --template "$TEMPLATE" --ximage "$XIMAGE" --rootfs "$ROOTFS" --manifest "$MANIFEST" \
   --out "$ING" --source-head "$SOURCE_HEAD" \
-  --source-date-epoch "$SOURCE_DATE_EPOCH" --slot "$SLOT" \
+  --source-date-epoch "$SOURCE_DATE_EPOCH" --slot "$SLOT" --rtos2 "$RTOS2" \
   || die ".ingenic packaging failed"
 
 python3 "$SCRIPT_DIR/validate-ingenic.py" --package "$ING" --template "$TEMPLATE" \
-  --ximage "$XIMAGE" --rootfs "$ROOTFS" --slot "$SLOT" \
+  --ximage "$XIMAGE" --rootfs "$ROOTFS" --slot "$SLOT" --rtos2 "$RTOS2" \
   > "$OUT/$BASE.ingenic.validation.txt" 2>&1 \
   || { tail -20 "$OUT/$BASE.ingenic.validation.txt" >&2; die ".ingenic validation failed - see $OUT/$BASE.ingenic.validation.txt"; }
 echo "  validation: $(grep '^INGENIC_VALIDATED=' "$OUT/$BASE.ingenic.validation.txt")"
@@ -211,7 +226,8 @@ PKG_COMMIT=$(git -C "$FW" rev-parse HEAD 2>/dev/null || echo unknown)
   echo "IMG_CONSUMER=stock Creality updater (USB / touchscreen / local_ota_update.sh)"
   echo "IMG_INSTALL_TARGET=whichever A/B slot is INACTIVE at apply time"
   echo "IMG_RTOS_SHA256=$(sha256sum "$RTOS" | cut -d' ' -f1)"
-  echo "IMG_RTOS_PROVENANCE=stock zero.bin from the pinned .ingenic template, unchanged"
+  echo "IMG_RTOS_PROVENANCE=$(grep -m1 '^RTOS_PROVENANCE=' "$IMG.manifest.txt" | cut -d= -f2-)"
+  echo "RTOS_STOCK_SHA256=$(sha256sum "$STOCK_RTOS" | cut -d' ' -f1)"
   echo
   echo "# --- C. Ingenic Cloner recovery package ---"
   echo "INGENIC_ARTIFACT=$BASE.ingenic"
@@ -219,6 +235,8 @@ PKG_COMMIT=$(git -C "$FW" rev-parse HEAD 2>/dev/null || echo unknown)
   echo "INGENIC_SIZE=$(stat -c %s "$ING")"
   echo "INGENIC_VALIDATED=$(grep -m1 '^INGENIC_VALIDATED=' "$OUT/$BASE.ingenic.validation.txt" | cut -d= -f2)"
   echo "INGENIC_SLOT=$SLOT"
+  echo "INGENIC_RTOS2=$(grep -m1 '^INGENIC_RTOS2=' "$ING.manifest.txt" | cut -d= -f2)"
+  echo "INGENIC_RTOS2_SHA256=$(grep -m1 '^INGENIC_RTOS2_SHA256=' "$ING.manifest.txt" | cut -d= -f2)"
   echo "INGENIC_TEMPLATE_SHA256=$(sha256sum "$TEMPLATE" | cut -d' ' -f1)"
   echo "INGENIC_CONSUMER=Ingenic USB Cloner in X2000E USB-boot (mask-ROM) mode"
   echo "INGENIC_SN_MAC_PRESERVED=YES"
@@ -229,7 +247,7 @@ PKG_COMMIT=$(git -C "$FW" rev-parse HEAD 2>/dev/null || echo unknown)
   echo "PACKAGING_RECOMPILED_ANYTHING=NO"
 } > "$OUT/release-manifest.txt"
 
-rm -f "$RTOS"
+rm -f "$STOCK_RTOS" "$OUT/.zero2.bin"
 
 ( cd "$OUT" && sha256sum "$BASE.img" "$BASE.ingenic" xImage rootfs.squashfs build-manifest.txt \
     > SHA256SUMS ) || die "cannot write SHA256SUMS"

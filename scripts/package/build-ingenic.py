@@ -35,8 +35,15 @@ and a packaging manifest.
 DEFAULT LAYOUT: STOCK IN A, NEBULAOS IN B
 
     Slot A:  stock xImage, stock rootfs.squashfs, stock zero.bin   (untouched)
-    Slot B:  NebulaOS xImage2, NebulaOS rootfs2.squashfs, stock zero2.bin copy
+    Slot B:  NebulaOS xImage2, NebulaOS rootfs2.squashfs, NebulaOS zero2.bin
     marker:  images/ota = b"ota:kernel2\\n\\n"  -> the device boots Slot B
+
+zero2.bin is the stock RTOS image with ONE change: the 480x272 boot logo JPEG
+in it is NebulaOS's (scripts/package/rtos_logo.py; every byte outside that
+slot is stock, and the result must equal the sha256 pinned in rtos_logo.py and
+manifests/dependencies.conf). SPL loads rtos2 only when the marker is
+ota:kernel2, so stock keeps its own logo. --rtos2 stock ships the unchanged
+stock copy instead.
 
 This leaves a working stock slot behind, which is the safer first install. It is
 a CHOICE, not a constraint: the Cloner programs whatever its policy names, and
@@ -85,6 +92,9 @@ import zipfile
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "tools", "emmc"))
 import nebulaos_layout as layout  # noqa: E402
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import rtos_logo  # noqa: E402
 
 STOCK_KERNEL_ENTRY = "images/xImage"
 STOCK_ROOTFS_ENTRY = "images/rootfs.squashfs"
@@ -281,6 +291,20 @@ def build(args):
                 % (effective_erase, *layout.SN_MAC_PRESERVED_RANGE)
             )
 
+        rtos2 = None
+        if slot_b:
+            stock_rtos = source.read(STOCK_RTOS_ENTRY)
+            if args.rtos2 == "nebulaos":
+                # Pinned stock in, pinned NebulaOS image out - an unpinned
+                # template (an experiment) cannot produce a NebulaOS RTOS.
+                try:
+                    rtos2 = rtos_logo.nebulaos_image(stock_rtos)
+                except rtos_logo.LogoError as exc:
+                    sys.exit("FATAL: cannot build the NebulaOS zero2.bin: %s\n"
+                             "       Use --rtos2 stock to ship the unchanged stock RTOS in slot B." % exc)
+            else:
+                rtos2 = stock_rtos
+
         if slot_b:
             # Slot B's payloads are APPENDED under new names, not substituted
             # over template entries, so there is nothing to replace in-place.
@@ -314,9 +338,7 @@ def build(args):
                 if slot_b:
                     # Reference entry order: ota, RTOS2, kernel2, rootfs2.
                     dest.writestr(renamed(infos[STOCK_KERNEL_ENTRY], OTA_ENTRY), SLOT2_OTA_MARKER)
-                    with source.open(infos[STOCK_RTOS_ENTRY], "r") as src, \
-                         dest.open(renamed(infos[STOCK_RTOS_ENTRY], RTOS2_ENTRY), "w") as out_stream:
-                        shutil.copyfileobj(src, out_stream, 1024 * 1024)
+                    dest.writestr(renamed(infos[STOCK_RTOS_ENTRY], RTOS2_ENTRY), rtos2)
                     for entry, path, template_entry in (
                         (KERNEL2_ENTRY, args.ximage, STOCK_KERNEL_ENTRY),
                         (ROOTFS2_ENTRY, args.rootfs, STOCK_ROOTFS_ENTRY),
@@ -358,6 +380,8 @@ def build(args):
         "INGENIC_SHA256=%s" % pkg_sha,
         "INGENIC_SIZE=%d" % os.path.getsize(out),
         "INGENIC_OTA_MARKER=%s" % ("ota:kernel2" if slot_b else "unchanged"),
+        "INGENIC_RTOS2=%s" % (args.rtos2 if slot_b else "absent"),
+        "INGENIC_RTOS2_SHA256=%s" % (rtos_logo.sha256(rtos2) if slot_b else ""),
         # Both derived from the bytes in the package, never from a constant.
         # Reaching this line at all means the check above passed.
         "INGENIC_SN_MAC_PRESERVED=YES",
@@ -365,6 +389,8 @@ def build(args):
         "KEEP_STOCK_SPL_UBOOT_GPT=YES",
         "HARDWARE_AGENT_TRANSPORT=NO",
         "QUALIFIED_INPUT_ARTIFACTS_MODIFIED=NO",
+        "# zero.bin (slot A) is the stock RTOS, unchanged. zero2.bin (slot B) is the",
+        "# stock RTOS with the NebulaOS logo in its logo slot, unless INGENIC_RTOS2=stock.",
         "# CONSUMER: the Ingenic USB Cloner in X2000E USB boot (mask-ROM) mode.",
         "# This is NOT flashed from a U-Boot command line, and it is NOT an",
         "# autonomous Hardware Agent transport. It programs whole partitions per",
@@ -399,6 +425,9 @@ def main(argv):
     parser.add_argument("--slot", choices=("a", "b"), default="b",
                         help="b (default): stock kept in slot A, NebulaOS in slot B. "
                              "a: overwrite the stock slot.")
+    parser.add_argument("--rtos2", choices=("nebulaos", "stock"), default="nebulaos",
+                        help="slot B RTOS: nebulaos (default) = stock zero.bin with the NebulaOS "
+                             "boot logo; stock = an unchanged copy")
     parser.add_argument("--allow-unpinned-template", action="store_true",
                         help="local experimentation only; never for a release")
     return build(parser.parse_args(argv))

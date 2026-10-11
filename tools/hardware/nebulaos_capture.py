@@ -121,8 +121,39 @@ _PRESSURE = (
     "grep -E '^(pgfault|pgmajfault|pswpin|pswpout|allocstall_normal|oom_kill) ' /proc/vmstat; cat /proc/loadavg; }; "
     "snap; sleep 10; snap")
 
+# The two RTOS partitions (rtos p3 = stock's, rtos2 p4 = NebulaOS's; SPL loads
+# rtos2 for ota:kernel2). Read-only: sha256 of the whole 4 MiB partition and of
+# the first zero.bin-sized bytes, compared with the pinned stock and NebulaOS
+# images (scripts/package/rtos_logo.py), the first 64 bytes, and what fills the
+# rest of the partition (count of bytes that are not 0x00 / not 0xFF), so the
+# relation between the partition and the 432824-byte file is evidence, not a
+# guess. The partition name and size are read from sysfs, not assumed.
+def _rtos_hashes():
+    import sys
+    sys.path.insert(0, os.path.join(FW_ROOT, "scripts", "package"))
+    import rtos_logo
+    n = rtos_logo.STOCK_ZERO_SIZE
+    return (
+        "for p in 3 4; do d=/dev/mmcblk0p$p; s=/sys/class/block/mmcblk0p$p; "
+        "echo \"== p$p name=$(sed -n 's/^PARTNAME=//p' $s/uevent) bytes=$(( $(cat $s/size) * 512 ))\"; "
+        "f=$(sha256sum < $d | cut -d' ' -f1); h=$(head -c %d $d | sha256sum | cut -d' ' -f1); "
+        "case $h in %s) k=stock ;; %s) k=nebulaos ;; *) k=unknown ;; esac; "
+        "echo \"p${p}_sha256_full=$f\"; echo \"p${p}_sha256_first_%d=$h\"; echo \"p${p}_first_%d_is=$k\"; "
+        "echo \"p${p}_head64=$(head -c 64 $d | od -An -tx1 -v | tr -d ' \\n')\"; "
+        "echo \"p${p}_tail_bytes_not_00=$(tail -c +%d $d | tr -d '\\000' | wc -c)\"; "
+        "echo \"p${p}_tail_bytes_not_ff=$(tail -c +%d $d | tr -d '\\377' | wc -c)\"; "
+        "eval \"F$p=$f\"; done; "
+        "echo \"p3_p4_identical=$([ \"$F3\" = \"$F4\" ] && echo YES || echo NO)\"; "
+        "echo \"ota_marker=$(head -c 512 /dev/mmcblk0p1 | tr -d '\\000' | tr '\\n' ' ' | head -c 64)\"; "
+        "echo \"ref_stock_zero_sha256=%s\"; echo \"ref_nebulaos_zero_sha256=%s\""
+        % (n, rtos_logo.STOCK_ZERO_SHA256, rtos_logo.NEBULAOS_ZERO_SHA256, n, n, n + 1, n + 1,
+           rtos_logo.STOCK_ZERO_SHA256, rtos_logo.NEBULAOS_ZERO_SHA256))
+
+
 # name -> (body, needs_diag, probe or None, timeout seconds)
 CAPTURE_PROFILES = {
+    # RTOS logo (G7): what is on rtos/rtos2 before anything writes rtos2.
+    "rtos-hashes": (_rtos_hashes(), False, None, 120),
     # --- TOOL-01 base list ---------------------------------------------------
     "usb-topology": (_USB_TOPOLOGY, False, None, 60),
     "dwc2-hw": (_DWC2_HW, False, None, 60),

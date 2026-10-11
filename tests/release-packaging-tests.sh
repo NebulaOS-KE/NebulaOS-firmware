@@ -254,6 +254,137 @@ else
   bad "packaging left the canonical xImage and rootfs byte-identical"
 fi
 
+# --- 2b. the RTOS logo patcher (rtos_logo.py) ---------------------------------
+# Synthetic stock image: random bytes, the RTOS tag, and a 480x272 baseline
+# JPEG padded with a COM segment to exactly the 10899-byte slot at 0x5e50c.
+# The real image is covered in section 3 when the template is available.
+RL="$PKG/rtos_logo.py"
+DEPS="$FW/manifests/dependencies.conf"
+SYN="$WORK/rtos-syn"; mkdir -p "$SYN"
+python3 - "$SYN" "$PKG" <<'PY' || bad "the synthetic RTOS fixtures could be built"
+import io, os, sys
+from PIL import Image
+out, pkg = sys.argv[1], sys.argv[2]
+sys.path.insert(0, pkg)
+import rtos_logo as R
+
+def jpeg(size=(480, 272), **kw):
+    buf = io.BytesIO()
+    Image.new("RGB", size, (40, 50, 60)).save(buf, "JPEG", quality=90, subsampling=2, **kw)
+    return buf.getvalue()
+
+def pad_to(data, n):
+    # insert one COM segment after SOI so the JPEG is exactly n bytes
+    extra = n - len(data) - 4
+    assert 0 <= extra <= 65533
+    return data[:2] + b"\xff\xfe" + (extra + 2).to_bytes(2, "big") + b"\x00" * extra + data[2:]
+
+stock = bytearray(os.urandom(R.STOCK_ZERO_SIZE).replace(b"\xff", b"\x7f"))
+stock[8:12] = b"RTOS"
+slot = pad_to(jpeg(), R.LOGO_SLOT_SIZE)
+stock[R.LOGO_SLOT_OFFSET:R.LOGO_SLOT_OFFSET + R.LOGO_SLOT_SIZE] = slot
+files = {
+    "stock.bin": bytes(stock),
+    "logo.jpg": jpeg(),
+    "progressive.jpg": jpeg(progressive=True),
+    "small.jpg": jpeg((320, 240)),
+    "big.jpg": pad_to(jpeg(), R.LOGO_SLOT_SIZE + 1),
+    "trailing.jpg": jpeg() + b"junk",
+    "s444.jpg": (lambda b: (Image.new("RGB", (480, 272)).save(b, "JPEG", subsampling=0), b.getvalue())[1])(io.BytesIO()),
+}
+for name, data in files.items():
+    with open(os.path.join(out, name), "wb") as fh:
+        fh.write(data)
+PY
+
+out=$(python3 - "$PKG" "$DEPS" <<'PY' 2>&1
+import sys
+sys.path.insert(0, sys.argv[1])
+import rtos_logo as R
+conf = dict(l.strip().split("=", 1) for l in open(sys.argv[2]) if l.startswith("RTOS_"))
+pairs = [("RTOS_STOCK_ZERO_SHA256", R.STOCK_ZERO_SHA256), ("RTOS_STOCK_ZERO_SIZE", str(R.STOCK_ZERO_SIZE)),
+         ("RTOS_NEBULAOS_LOGO_SHA256", R.NEBULAOS_LOGO_SHA256), ("RTOS_NEBULAOS_ZERO_SHA256", R.NEBULAOS_ZERO_SHA256)]
+bad = ["%s manifest=%s code=%s" % (k, conf.get(k), v) for k, v in pairs if conf.get(k) != v]
+print("MISMATCH " + "; ".join(bad) if bad else "AGREE")
+PY
+)
+if [ "$out" = AGREE ]; then
+  ok "the RTOS pins in rtos_logo.py equal the ones in manifests/dependencies.conf"
+else
+  bad "the RTOS pins in rtos_logo.py equal the ones in manifests/dependencies.conf" "$out"
+fi
+
+out=$(python3 - "$PKG" <<'PY' 2>&1
+import sys
+sys.path.insert(0, sys.argv[1])
+import rtos_logo as R
+data = open(R.LOGO_ASSET, "rb").read()
+i = R.parse_jpeg(data)
+print(R.sha256(data) == R.NEBULAOS_LOGO_SHA256, i.length == len(data), i.baseline(),
+      (i.width, i.height), [(h, v) for _, h, v in i.components], len(data) <= R.LOGO_SLOT_SIZE)
+PY
+)
+if [ "$out" = "True True True (480, 272) [(2, 2), (1, 1), (1, 1)] True" ]; then
+  ok "the committed NebulaOS logo is the pinned, complete, baseline 480x272 4:2:0 JPEG and fits the slot"
+else
+  bad "the committed NebulaOS logo is the pinned baseline 480x272 4:2:0 JPEG" "$out"
+fi
+
+S_SHA=$(sha256sum "$SYN/stock.bin" | cut -d' ' -f1)
+if python3 "$RL" patch --stock "$SYN/stock.bin" --logo "$SYN/logo.jpg" --out "$SYN/p.bin" \
+     --allow-unpinned-stock > "$SYN/p.out" 2>&1 \
+   && python3 "$RL" verify --stock "$SYN/stock.bin" --patched "$SYN/p.bin" --logo "$SYN/logo.jpg" \
+     --allow-unpinned-stock >/dev/null 2>&1 \
+   && [ "$(stat -c %s "$SYN/p.bin")" = 432824 ] \
+   && [ "$(sha256sum "$SYN/stock.bin" | cut -d' ' -f1)" = "$S_SHA" ] \
+   && [ "$(cmp -l "$SYN/stock.bin" "$SYN/p.bin" | awk '$1-1 < 386316 || $1-1 >= 386316+10899' | wc -l)" = 0 ]; then
+  ok "patch: same size, input untouched, zero bytes differ outside the logo slot (cmp, independently)"
+else
+  bad "patch: same size, input untouched, zero bytes differ outside the logo slot" "$(tail -3 "$SYN/p.out")"
+fi
+
+refuse(){  # <label> <expected reason substring> <args...>
+  local label=$1 want=$2; shift 2
+  local o; o=$(python3 "$RL" "$@" 2>&1)
+  if [ $? -ne 0 ] && printf '%s' "$o" | grep -q -- "$want"; then ok "patch refuses $label"
+  else bad "patch refuses $label" "$o"; fi
+}
+refuse "unpinned stock without --allow-unpinned-stock" "expected the pinned" \
+  patch --stock "$SYN/stock.bin" --logo "$SYN/logo.jpg" --out "$SYN/r1.bin"
+refuse "a progressive JPEG" "baseline" \
+  patch --stock "$SYN/stock.bin" --logo "$SYN/progressive.jpg" --out "$SYN/r2.bin" --allow-unpinned-stock
+refuse "a JPEG of the wrong size" "320x240" \
+  patch --stock "$SYN/stock.bin" --logo "$SYN/small.jpg" --out "$SYN/r3.bin" --allow-unpinned-stock
+refuse "a JPEG larger than the slot" "the slot holds" \
+  patch --stock "$SYN/stock.bin" --logo "$SYN/big.jpg" --out "$SYN/r4.bin" --allow-unpinned-stock
+refuse "bytes after the logo's EOI" "after its EOI" \
+  patch --stock "$SYN/stock.bin" --logo "$SYN/trailing.jpg" --out "$SYN/r5.bin" --allow-unpinned-stock
+refuse "a different chroma sampling than the stock logo" "sampling" \
+  patch --stock "$SYN/stock.bin" --logo "$SYN/s444.jpg" --out "$SYN/r6.bin" --allow-unpinned-stock
+refuse "an existing output" "refusing to overwrite" \
+  patch --stock "$SYN/stock.bin" --logo "$SYN/logo.jpg" --out "$SYN/p.bin" --allow-unpinned-stock
+refuse "--require-pinned with an unpinned logo" "require-pinned" \
+  patch --stock "$SYN/stock.bin" --logo "$SYN/logo.jpg" --out "$SYN/r7.bin" --allow-unpinned-stock --require-pinned
+for f in r1 r2 r3 r4 r5 r6 r7; do [ -e "$SYN/$f.bin" ] && bad "a refused patch leaves no output" "$f.bin exists"; done
+
+python3 - "$SYN/p.bin" "$SYN/stock.bin" "$SYN/t.bin" "$SYN/moved.bin" <<'PY'
+import sys
+p = bytearray(open(sys.argv[1], "rb").read())
+p[100] ^= 1
+open(sys.argv[3], "wb").write(p)
+s = bytearray(open(sys.argv[2], "rb").read())
+s[0x5e50c:0x5e50c + 2] = b"\x00\x00"           # no JPEG at the pinned slot offset
+open(sys.argv[4], "wb").write(s)
+PY
+o=$(python3 "$RL" verify --stock "$SYN/stock.bin" --patched "$SYN/t.bin" --logo "$SYN/logo.jpg" --allow-unpinned-stock 2>&1)
+if [ $? -ne 0 ] && printf '%s' "$o" | grep -q '1 byte(s) outside the logo slot differ'; then
+  ok "verify catches one flipped byte outside the logo slot"
+else
+  bad "verify catches one flipped byte outside the logo slot" "$o"
+fi
+refuse "an image whose logo slot is not where the pin says" "no JPEG at the logo slot" \
+  patch --stock "$SYN/moved.bin" --logo "$SYN/logo.jpg" --out "$SYN/r8.bin" --allow-unpinned-stock
+
 # --- 3. .ingenic: the Ingenic Cloner recovery package -----------------------
 TEMPLATE=${NEBULAOS_INGENIC_TEMPLATE:-}
 if [ -z "$TEMPLATE" ] || [ ! -f "$TEMPLATE" ]; then
@@ -277,6 +408,86 @@ else
   else
     bad ".ingenic validation passes (payload round-trip + vendor entries unchanged)" \
         "$(python3 "$PKG/validate-ingenic.py" --package "$ING" --template "$TEMPLATE" --ximage "$XIMAGE" --rootfs "$ROOTFS" 2>&1 | grep '^FAIL' | head -3 | tr '\n' ' ')"
+  fi
+
+  # ---- the RTOS images: slot A stock, slot B stock + the NebulaOS logo -------
+  RT="$WORK/rtos-real"; mkdir -p "$RT"
+  python3 - "$TEMPLATE" "$ING" "$RT" <<'PY'
+import sys, zipfile
+with zipfile.ZipFile(sys.argv[1]) as t:
+    open(sys.argv[3] + "/tpl-zero.bin", "wb").write(t.read("images/zero.bin"))
+with zipfile.ZipFile(sys.argv[2]) as p:
+    open(sys.argv[3] + "/pkg-zero.bin", "wb").write(p.read("images/zero.bin"))
+    open(sys.argv[3] + "/pkg-zero2.bin", "wb").write(p.read("images/zero2.bin"))
+PY
+  STOCK_PIN=$(grep -m1 '^RTOS_STOCK_ZERO_SHA256=' "$DEPS" | cut -d= -f2)
+  NEB_PIN=$(grep -m1 '^RTOS_NEBULAOS_ZERO_SHA256=' "$DEPS" | cut -d= -f2)
+  if [ "$(sha256sum "$RT/tpl-zero.bin" | cut -d' ' -f1)" = "$STOCK_PIN" ] \
+  && [ "$(sha256sum "$RT/pkg-zero.bin" | cut -d' ' -f1)" = "$STOCK_PIN" ]; then
+    ok ".ingenic slot A zero.bin is the byte-exact pinned stock RTOS"
+  else
+    bad ".ingenic slot A zero.bin is the byte-exact pinned stock RTOS"
+  fi
+  if [ "$(sha256sum "$RT/pkg-zero2.bin" | cut -d' ' -f1)" = "$NEB_PIN" ] \
+  && python3 "$RL" verify --stock "$RT/tpl-zero.bin" --patched "$RT/pkg-zero2.bin" >/dev/null 2>&1 \
+  && grep -q '^INGENIC_RTOS2=nebulaos$' "$ING.manifest.txt"; then
+    ok ".ingenic slot B zero2.bin is the pinned NebulaOS RTOS: stock except the logo slot"
+  else
+    bad ".ingenic slot B zero2.bin is the pinned NebulaOS RTOS: stock except the logo slot"
+  fi
+  if python3 "$RL" patch --stock "$RT/tpl-zero.bin" --out "$RT/fresh.bin" --require-pinned >/dev/null 2>&1 \
+  && cmp -s "$RT/fresh.bin" "$RT/pkg-zero2.bin"; then
+    ok "rtos_logo.py patch --require-pinned on the real stock image reproduces the pinned zero2.bin"
+  else
+    bad "rtos_logo.py patch --require-pinned on the real stock image reproduces the pinned zero2.bin"
+  fi
+
+  ING_S="$WORK/stock-rtos2.ingenic"
+  mking "$TEMPLATE" "$ING_S" b "--rtos2 stock" >/dev/null 2>&1
+  if python3 "$PKG/validate-ingenic.py" --package "$ING_S" --template "$TEMPLATE" \
+       --ximage "$XIMAGE" --rootfs "$ROOTFS" --rtos2 stock >/dev/null 2>&1 \
+  && ! python3 "$PKG/validate-ingenic.py" --package "$ING_S" --template "$TEMPLATE" \
+       --ximage "$XIMAGE" --rootfs "$ROOTFS" >/dev/null 2>&1; then
+    ok "--rtos2 stock ships a stock zero2.bin, and the default validator rejects it"
+  else
+    bad "--rtos2 stock ships a stock zero2.bin, and the default validator rejects it"
+  fi
+
+  # A zero2.bin that differs from stock by one byte OUTSIDE the logo slot.
+  TAMP="$WORK/tampered-rtos2.ingenic"
+  python3 - "$ING" "$TAMP" <<'PY' >/dev/null 2>&1
+import sys, zipfile, copy, shutil
+with zipfile.ZipFile(sys.argv[1]) as z, zipfile.ZipFile(sys.argv[2], "w", allowZip64=True) as o:
+    for i in z.infolist():
+        if i.filename == "images/zero2.bin":
+            d = bytearray(z.read(i)); d[0x1000] ^= 0x01
+            o.writestr(copy.copy(i), bytes(d))
+        else:
+            with z.open(i) as a, o.open(copy.copy(i), "w") as b:
+                shutil.copyfileobj(a, b, 1 << 20)
+PY
+  out=$(python3 "$PKG/validate-ingenic.py" --package "$TAMP" --template "$TEMPLATE" \
+          --ximage "$XIMAGE" --rootfs "$ROOTFS" 2>&1)
+  if [ $? -ne 0 ] && printf '%s' "$out" | grep -q '1 byte(s) outside the logo slot differ'; then
+    ok "the validator rejects a zero2.bin with one changed byte outside the logo slot"
+  else
+    bad "the validator rejects a zero2.bin with one changed byte outside the logo slot" \
+        "$(printf '%s' "$out" | grep '^FAIL' | head -3 | tr '\n' ' ')"
+  fi
+
+  IMGN="$WORK/neb-rtos.img"
+  if python3 "$PKG/build-img.py" --ximage "$XIMAGE" --rootfs "$ROOTFS" --manifest "$MANIFEST" \
+       --out "$IMGN" --rtos "$RT/pkg-zero2.bin" --source-head "$HEAD_SHA" \
+       --source-date-epoch 1790442459 --ota-version 9.9.9.1 >/dev/null 2>&1 \
+  && python3 "$PKG/validate-img.py" --img "$IMGN" --ximage "$XIMAGE" --rootfs "$ROOTFS" \
+       --rtos "$RT/pkg-zero2.bin" >/dev/null 2>&1 \
+  && grep -q '^RTOS_PROVENANCE=stock zero.bin with the NebulaOS boot logo' "$IMGN.manifest.txt" \
+  && grep -q "^RTOS_SHA256=$NEB_PIN$" "$IMGN.manifest.txt" \
+  && grep -q '^RTOS_PROVENANCE=UNPINNED' "$IMG.manifest.txt"; then
+    ok ".img carries the NebulaOS RTOS and names it from the pins (a random RTOS reads UNPINNED)"
+  else
+    bad ".img carries the NebulaOS RTOS and names it from the pins" \
+        "$(grep '^RTOS_' "$IMGN.manifest.txt" "$IMG.manifest.txt" 2>&1 | tr '\n' ' ')"
   fi
 
   ING2="$WORK/test2.ingenic"

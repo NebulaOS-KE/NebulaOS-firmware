@@ -84,6 +84,26 @@ snapshotted as the supervisor's last-known-good env, so a later image missing
 the same package would verify PASS. Product defects are fixed in the product and
 reinstalled.
 
+### The RTOS boot logo (`rtos-logo`, `rtos-logo-restore`)
+
+`capture rtos-hashes` (read-only) reports sha256 of rtos (p3) and rtos2 (p4), both whole and over the
+first 432824 bytes (the size of `zero.bin`), compared with the pinned stock and NebulaOS images. It
+also reports the first 64 bytes, what fills the rest of each partition, and the marker.
+
+`rtos-logo RTOS_LOGO_CONFIRM=RTOS2` writes the pinned NebulaOS RTOS image (stock `zero.bin` with only
+its boot-logo JPEG replaced, `scripts/package/rtos_logo.py`) to rtos2, the RTOS SPL loads for
+`ota:kernel2`. It runs only on NebulaOS from p8, with the marker on `ota:kernel2`, idle with heater
+targets at zero, no open install transaction, and both locks held. The patch input is the printer's
+own rtos2, and only if it starts with the pinned stock image. Before writing, it copies the whole 4
+MiB to `<state>/rtos-backups/<device>/` and checks the copy against the device's hash. It then
+stages and re-hashes the payload, re-checks the guards, and runs one `dd conv=notrunc,fsync` behind a
+partition guard (sysfs name, by-partlabel link, size, not mounted). It reads the result back on the
+device and from the host, and checks that rtos (p3) did not change. A second run writes nothing.
+`rtos-logo-restore <backup-sha256> RTOS_RESTORE_CONFIRM=RTOS2` writes a backup back the same way.
+If a write fails, the output names the restore command and says not to reboot. Policy `RTOS2_ONLY`
+cannot select rtos, and an install never writes rtos2. USB recovery:
+`docs/DEVELOPER_RECOVERY.md`, "RTOS logo: restoring rtos2". Rehearse it before the first write.
+
 There is no `ssh`, `scp`, `dd`, `marker`, `reboot`, `flash`, raw `usbboot`,
 `--host`, `--password` or `--command`. Not filtered — **absent**. `DeviceSession`
 defines a closed vocabulary with no method that takes a command, a block device

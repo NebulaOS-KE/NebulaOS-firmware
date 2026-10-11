@@ -1585,6 +1585,281 @@ def case_diagnose_and_restart():
         shutil.rmtree(root, ignore_errors=True)
 
 
+def _synthetic_rtos(root):
+    """A synthetic stock zero.bin with a real 480x272 JPEG in the logo slot, and
+    rtos_logo's pins re-pointed at it (the real stock image is vendor firmware
+    and is not in this repository). -> (stock, patched, restore_pins)."""
+    import io
+    from PIL import Image
+    sys.path.insert(0, os.path.join(FW, "scripts", "package"))
+    import rtos_logo as R
+
+    def jpeg(colour):
+        buf = io.BytesIO()
+        Image.new("RGB", (480, 272), colour).save(buf, "JPEG", quality=90, subsampling=2)
+        return buf.getvalue()
+
+    slot = jpeg((1, 2, 3))
+    extra = R.LOGO_SLOT_SIZE - len(slot) - 4
+    slot = slot[:2] + b"\xff\xfe" + (extra + 2).to_bytes(2, "big") + b"\x00" * extra + slot[2:]
+    stock = bytearray(hashlib.sha256(b"seed").digest() * (R.STOCK_ZERO_SIZE // 32 + 1))[:R.STOCK_ZERO_SIZE]
+    stock = bytearray(bytes(stock).replace(b"\xff", b"\x7f"))
+    stock[8:12] = b"RTOS"
+    stock[R.LOGO_SLOT_OFFSET:R.LOGO_SLOT_OFFSET + R.LOGO_SLOT_SIZE] = slot
+    stock = bytes(stock)
+    logo = jpeg((200, 210, 250))
+    asset = os.path.join(root, "logo.jpg")
+    with open(asset, "wb") as fh:
+        fh.write(logo)
+    saved = (R.STOCK_ZERO_SHA256, R.NEBULAOS_LOGO_SHA256, R.NEBULAOS_ZERO_SHA256, R.LOGO_ASSET)
+    R.STOCK_ZERO_SHA256 = hashlib.sha256(stock).hexdigest()
+    R.NEBULAOS_LOGO_SHA256 = hashlib.sha256(logo).hexdigest()
+    R.LOGO_ASSET = asset
+    patched = R.patch(stock, logo)
+    R.NEBULAOS_ZERO_SHA256 = hashlib.sha256(patched).hexdigest()
+
+    def restore():
+        R.STOCK_ZERO_SHA256, R.NEBULAOS_LOGO_SHA256, R.NEBULAOS_ZERO_SHA256, R.LOGO_ASSET = saved
+    return stock, patched, restore
+
+
+def case_rtos_logo():
+    """rtos-logo / rtos-logo-restore through the real agent ops, against the simulator.
+
+    Proves: the confirmation word is required before any contact; the write
+    lands only in rtos2, only the logo bytes change, rtos (p3) is untouched and
+    a verified host backup exists BEFORE the write; a second run writes
+    nothing; restore by sha256 brings the exact backup back; the marker, a
+    print, a heater, an open install transaction, unknown rtos2 content, a
+    short backup read and a print starting after staging all refuse without
+    writing; a corrupt or interrupted write is reported as RTOS_WRITE_FAILED
+    with the restore command, and that restore works.
+    """
+    import argparse
+    import contextlib
+    import io
+    import nebulaos_agent as agent
+    import nebulaos_rtos as rtos
+
+    saved = (agent.FW_ROOT, agent.ssh_session_factory)
+    fx, root = scenario("rtos")
+    stock, patched, unpin = _synthetic_rtos(root)
+    try:
+        os.environ[journal.ENV_STATE_HOME] = os.path.join(root, "jstate")
+        conf = os.path.join(os.environ[profiles.ENV_HOME], "devices", "printer-sim", "profile.conf")
+        with open(conf, "a") as fh:
+            fh.write("INSTALL_MODE=dev\n")
+        os.chmod(conf, 0o600)
+        agent.FW_ROOT = fx.control_work
+        agent.ssh_session_factory = lambda profile: sim.make_session_factory(fx.printer, profile)
+
+        size = targets.resolve("rtos2").size
+        tail = bytes(range(256)) * ((size - len(stock)) // 256 + 1)
+        original = (stock + tail)[:size]
+        p = fx.printer
+        p.partitions["rtos"] = original
+        p.partitions["rtos2"] = original
+        backups = os.path.join(root, "jstate", "rtos-backups", "printer-sim")
+
+        def run(op, confirm, backup_sha=None):
+            ns = argparse.Namespace(device="printer-sim", control_commit=fx.control_commit,
+                                    op=op, confirm=confirm, backup_sha=backup_sha)
+            fn = {"rtos-logo": agent.op_rtos_logo, "rtos-logo-restore": agent.op_rtos_logo_restore}[op]
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                try:
+                    rc = fn(ns)
+                except (agent.AgentRefusal, profiles.ProfileError, control.ControlError) as exc:
+                    print("REFUSED: %s" % exc)
+                    rc = 2
+            return rc, buf.getvalue()
+
+        def bins():
+            return sorted(n for n in os.listdir(backups) if n.endswith(".bin")) if os.path.isdir(backups) else []
+
+        for word in (None, "", "yes", "RTOS_LOGO_CONFIRM=RTOS", "RTOS_RESTORE_CONFIRM=RTOS2"):
+            ops = p._ops
+            rc, out = run("rtos-logo", word)
+            check("rtos-logo refuses confirmation %r before touching the printer" % word,
+                  rc == 2 and p._ops == ops and p.rtos2_writes == 0, out[-200:])
+        rc, out = run("rtos-logo-restore", rtos.LOGO_CONFIRM_WORD, "a" * 64)
+        check("rtos-logo-restore refuses the logo's confirmation word", rc == 2 and p.rtos2_writes == 0)
+
+        # --- refusals that must not write --------------------------------
+        def refused(label, reason, prepare, undo):
+            prepare()
+            writes, rtos2 = p.rtos2_writes, p.partitions["rtos2"]
+            rc, out = run("rtos-logo", rtos.LOGO_CONFIRM_WORD)
+            same = p.partitions["rtos2"] == rtos2
+            undo()
+            check("rtos-logo refuses %s and writes nothing" % label,
+                  rc == 2 and reason in out and p.rtos2_writes == writes
+                  and same and p.flash_lock_holder is None, out[-300:])
+
+        refused("when the marker selects stock", "does not select NebulaOS",
+                lambda: p.partitions.__setitem__("ota", marker.canonical(marker.KERNEL)),
+                lambda: p.partitions.__setitem__("ota", marker.canonical(marker.KERNEL2)))
+        refused("during a print", "proven idle",
+                lambda: setattr(p, "printing", True), lambda: setattr(p, "printing", False))
+        refused("with a heater target set", "proven idle",
+                lambda: p.heater_targets.__setitem__("heater_bed", 60),
+                lambda: p.heater_targets.__setitem__("heater_bed", 0))
+        txn = []
+        refused("while an install transaction is open", "transaction is open",
+                lambda: txn.append(journal.Transaction.begin(
+                    "printer-sim", fx.control_commit, SOURCE_HEAD, "a" * 64, "b" * 64)),
+                lambda: txn[0].advance(journal.DONE, "sim"))
+        refused("when rtos2 holds unknown bytes", "does not start with the pinned stock",
+                lambda: p.partitions.__setitem__("rtos2", b"\x01" + original[1:]),
+                lambda: p.partitions.__setitem__("rtos2", original))
+        refused("when the backup copy arrives short", "stopped before writing",
+                lambda: setattr(p, "backup_read_short", True),
+                lambda: setattr(p, "backup_read_short", False))
+        refused("when a print starts after staging (re-checked before the write)", "proven idle",
+                lambda: setattr(p, "busy_after_staging", rtos.STAGED_LOGO),
+                lambda: (setattr(p, "busy_after_staging", None), setattr(p, "printing", False)))
+        refused("on Stock", "could not reach",
+                lambda: setattr(p, "running_os", device.OS_STOCK),
+                lambda: setattr(p, "running_os", device.OS_NEBULAOS))
+
+        # --- the write -----------------------------------------------------
+        before = list(bins())
+        rc, out = run("rtos-logo", rtos.LOGO_CONFIRM_WORD)
+        new = [b for b in bins() if b not in before]
+        check("rtos-logo writes rtos2 once and reports WRITTEN",
+              rc == 0 and p.rtos2_writes == 1 and "RTOS2_LOGO=WRITTEN" in out, out[-600:])
+        check("rtos2 now holds the pinned NebulaOS image, and its tail is untouched",
+              p.partitions["rtos2"] == patched + original[len(patched):])
+        check("rtos (p3) is byte-identical and reported unchanged",
+              p.partitions["rtos"] == original and "RTOS_P3_UNCHANGED=YES" in out)
+        backup = os.path.join(backups, new[-1]) if new else ""
+        check("a backup of the ORIGINAL rtos2 was kept on the host, 0600, with its facts",
+              bool(new) and open(backup, "rb").read() == original
+              and (os.stat(backup).st_mode & 0o777) == 0o600
+              and os.path.isfile(backup[:-4] + ".txt"), str(new))
+        order = out.find("RTOS2_BACKUP_SHA256="), out.find("WRITE_PLAN target=rtos2")
+        check("the backup is reported before the write plan", -1 < order[0] < order[1], out[-600:])
+        check("the device lock is released", p.flash_lock_holder is None)
+
+        rc, out = run("rtos-logo", rtos.LOGO_CONFIRM_WORD)
+        check("a second rtos-logo finds the logo present and writes nothing",
+              rc == 0 and "ALREADY_PRESENT" in out and p.rtos2_writes == 1, out[-300:])
+
+        rc, out = run("rtos-logo-restore", rtos.RESTORE_CONFIRM_WORD, "c" * 64)
+        check("restore refuses a backup sha256 it does not have",
+              rc == 2 and "no rtos2 backup" in out and p.rtos2_writes == 1, out[-200:])
+        rc, out = run("rtos-logo-restore", rtos.RESTORE_CONFIRM_WORD, hashlib.sha256(original).hexdigest())
+        check("restore writes the named backup back, byte for byte",
+              rc == 0 and p.partitions["rtos2"] == original and p.rtos2_writes == 2
+              and "RTOS2_RESTORE=WRITTEN" in out, out[-400:])
+        rc, out = run("rtos-logo-restore", rtos.RESTORE_CONFIRM_WORD, hashlib.sha256(original).hexdigest())
+        check("restoring what is already there writes nothing",
+              rc == 0 and "ALREADY_EQUAL" in out and p.rtos2_writes == 2, out[-200:])
+
+        # --- failed writes ---------------------------------------------------
+        for fault in ("rtos_write_corrupt", "rtos_write_raises"):
+            setattr(p, fault, True)
+            rc, out = run("rtos-logo", rtos.LOGO_CONFIRM_WORD)
+            setattr(p, fault, False)
+            check("%s: reported as RTOS_WRITE_FAILED with the restore command" % fault,
+                  rc == 1 and "RUN_NEBULAOS_HARDWARE=RTOS_WRITE_FAILED" in out
+                  and "Do NOT reboot" in out
+                  and "rtos-logo-restore %s" % hashlib.sha256(original).hexdigest() in out, out[-500:])
+            check("%s: the lock is released" % fault, p.flash_lock_holder is None)
+            rc, out = run("rtos-logo-restore", rtos.RESTORE_CONFIRM_WORD, hashlib.sha256(original).hexdigest())
+            check("%s: the suggested restore brings rtos2 back" % fault,
+                  rc == 0 and p.partitions["rtos2"] == original, out[-300:])
+        log = open(os.path.join(root, "jstate", "rtos-backups", "printer-sim.log")).read()
+        check("every rtos operation that reached the printer is logged on the host",
+              log.count("OP=rtos-logo ") >= 9 and "RESULT=FAILED" in log and "RESULT=WRITTEN" in log, log[-300:])
+
+        # --- the policy and the writer never reach rtos (p3) ------------------
+        try:
+            targets.RTOS2_ONLY.select("rtos")
+            check("RTOS2_ONLY cannot select rtos", False)
+        except targets.TargetError:
+            check("RTOS2_ONLY cannot select rtos", True)
+        check("the install policy does not include rtos2", "rtos2" not in targets.DEV_PRESERVE_STOCK.allowed)
+        plan = targets.RECOVERY_BOTH_SIDES.select("rtos").plan_write(1024, "0" * 64)
+        check("the rtos2 writer refuses a plan for rtos, even one a broader policy allowed",
+              _raises(lambda: device.rtos2_write_script(plan, "x")))
+        s = sim.make_session_factory(p, fx.profile)(device.OS_NEBULAOS, p.addresses[device.OS_NEBULAOS])
+        check("whole-partition reads are limited to rtos/rtos2", _raises(lambda: s.read_target_image("rootfs")))
+    finally:
+        unpin()
+        agent.FW_ROOT, agent.ssh_session_factory = saved
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def case_rtos2_write_script_in_a_real_shell():
+    """The composed rtos2 writer and partition guard, run by /bin/sh against a
+    fixture sysfs/dev tree: the guards refuse before dd, and a good plan writes
+    and reads back."""
+    root = tempfile.mkdtemp(prefix="nebulaos-rtos2sh.", dir=os.environ.get("TMPDIR") or None)
+    try:
+        t = targets.resolve("rtos2")
+        sysd = os.path.join(root, "sys", "mmcblk0p4")
+        os.makedirs(sysd)
+        os.makedirs(os.path.join(root, "bylabel"))
+        os.makedirs(os.path.join(root, "stage"))
+        dev = os.path.join(root, "mmcblk0p4")
+        with open(dev, "wb") as fh:
+            fh.write(b"\x55" * t.size)
+        os.symlink(dev, os.path.join(root, "bylabel", "rtos2"))
+        open(os.path.join(root, "mounts"), "w").write("/dev/mmcblk0p8 / squashfs ro 0 0\n")
+        open(os.path.join(root, "drop_caches"), "w").close()
+
+        def setsys(name="rtos2", sectors=t.size // 512):
+            open(os.path.join(sysd, "uevent"), "w").write("MAJOR=179\nPARTN=4\nPARTNAME=%s\n" % name)
+            open(os.path.join(sysd, "size"), "w").write("%d\n" % sectors)
+
+        payload = b"RTOS-PAYLOAD" * 1000
+        with open(os.path.join(root, "stage", "zero2.bin"), "wb") as fh:
+            fh.write(payload)
+        plan = targets.RTOS2_ONLY.select("rtos2").plan_write(len(payload),
+                                                             hashlib.sha256(payload).hexdigest())
+
+        def run(p=plan):
+            script = device.rtos2_write_script(p, "zero2.bin")
+            for a, b in (("/sys/class/block/mmcblk0p4", sysd),
+                         ("/dev/disk/by-partlabel/", os.path.join(root, "bylabel") + "/"),
+                         ("/dev/mmcblk0p4", dev), ("/proc/mounts", os.path.join(root, "mounts")),
+                         ("/proc/sys/vm/drop_caches", os.path.join(root, "drop_caches")),
+                         ("/usr/data/nebulaos-hwagent", os.path.join(root, "stage"))):
+                script = script.replace(a, b)
+            proc = subprocess.run(["/bin/sh", "-c", script], capture_output=True, text=True)
+            return proc.returncode, proc.stdout
+
+        untouched = lambda: open(dev, "rb").read() == b"\x55" * t.size     # noqa: E731
+        setsys(name="rtos")
+        rc, out = run()
+        check("shell guard: a partition whose GPT name is not rtos2 is refused before dd",
+              rc == 3 and "guard=PARTNAME" in out and untouched(), out)
+        setsys(sectors=4096)
+        rc, out = run()
+        check("shell guard: a partition of the wrong size is refused", rc == 3 and "guard=SIZE" in out
+              and untouched(), out)
+        setsys()
+        with open(os.path.join(root, "mounts"), "a") as fh:
+            fh.write("%s /mnt vfat rw 0 0\n" % dev)
+        rc, out = run()
+        check("shell guard: a mounted target is refused", rc == 3 and "guard=MOUNTED" in out and untouched(), out)
+        open(os.path.join(root, "mounts"), "w").write("/dev/mmcblk0p8 / squashfs ro 0 0\n")
+        wrong = targets.RTOS2_ONLY.select("rtos2").plan_write(len(payload), "0" * 64)
+        rc, out = run(wrong)
+        check("shell guard: a staged file that does not hash to the plan is refused",
+              rc == 3 and "guard=STAGED_SHA" in out and untouched(), out)
+        rc, out = run()
+        data = open(dev, "rb").read()
+        check("a good plan writes exactly the payload and reads it back",
+              rc == 0 and "rtos2_dd_rc=0" in out
+              and "rtos2_readback_sha256=%s" % plan.payload_sha256 in out
+              and data[:len(payload)] == payload and data[len(payload):] == b"\x55" * (t.size - len(payload))
+              and len(data) == t.size, out)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def case_restart_script_in_a_real_shell():
     """The composed restart script, run by /bin/sh against a fixture tree with
     a stub wget - so the refusals are proven in shell, not only in the model."""
@@ -1712,6 +1987,8 @@ SCENARIOS = [
     ("closed vocabulary", case_no_raw_surface),
     ("diagnose and restart (repairs)", case_diagnose_and_restart),
     ("restart script in a real shell", case_restart_script_in_a_real_shell),
+    ("rtos-logo and rtos-logo-restore", case_rtos_logo),
+    ("rtos2 writer in a real shell", case_rtos2_write_script_in_a_real_shell),
     ("control provenance", case_control_provenance),
     ("attestation v2 required", case_attestation_required),
     ("happy path", case_happy_path),

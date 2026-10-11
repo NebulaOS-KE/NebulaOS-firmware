@@ -305,7 +305,19 @@ RECOVERY_BOTH_SIDES = Policy(
 )
 
 
-POLICIES = {p.name: p for p in (DEV_PRESERVE_STOCK, RECOVERY_STOCK_SIDE, RECOVERY_BOTH_SIDES)}
+# The rtos-logo / rtos-logo-restore operations: the NebulaOS RTOS copy and
+# nothing else. Not part of DEV_PRESERVE_STOCK - an install never writes rtos2 -
+# and never rtos (p3), which SPL loads for Creality's slot.
+RTOS2_ONLY = Policy(
+    "RTOS2_ONLY",
+    allowed={"rtos2"},
+    description=("NebulaOS boot logo: write the NebulaOS slot's RTOS image (rtos2) only; "
+                 "Creality's rtos and both slots' kernels and rootfs are untouched"),
+)
+
+
+POLICIES = {p.name: p for p in (DEV_PRESERVE_STOCK, RECOVERY_STOCK_SIDE, RECOVERY_BOTH_SIDES,
+                                RTOS2_ONLY)}
 
 
 def policy(name):

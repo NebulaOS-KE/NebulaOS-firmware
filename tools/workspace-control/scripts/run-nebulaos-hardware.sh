@@ -34,12 +34,16 @@
 #                                          (without the confirmation word, confirm on stdin)
 #   run-nebulaos-hardware.sh --device <id> --control <C> restart <service>
 #   run-nebulaos-hardware.sh --device <id> --control <C> reboot REBOOT_CONFIRM=NEBULAOS
+#   run-nebulaos-hardware.sh --device <id> --control <C> rtos-logo RTOS_LOGO_CONFIRM=RTOS2
+#   run-nebulaos-hardware.sh --device <id> --control <C> rtos-logo-restore <backup-sha256> RTOS_RESTORE_CONFIRM=RTOS2
 #   run-nebulaos-hardware.sh --device <id> --control <C> verify  <X> <ximage-sha256> <rootfs-sha256>
 #   run-nebulaos-hardware.sh --device <id> --control <C> install <X> <ximage-sha256> <rootfs-sha256>
 #
 # There is no --host, --password, --command, ssh, scp, dd, marker, flash or raw
 # usbboot - not filtered, absent. `reboot` only returns an idle NebulaOS to
-# NebulaOS; it writes nothing. The target is an ENROLLED DEVICE ID, not
+# NebulaOS; it writes nothing. `rtos-logo` writes the pinned NebulaOS RTOS image
+# to rtos2 (p4) only, after a verified host backup; `rtos-logo-restore` writes
+# such a backup back. Neither can name rtos (p3) or any other partition. The target is an ENROLLED DEVICE ID, not
 # an address: an address is not an identity, DHCP moves leases, and the machine
 # answering at a remembered IP may be a different one. Which addresses may be
 # spoken to at all is a property of the human-created device profile.
@@ -155,13 +159,23 @@ case "$OP" in
     # The agent refuses unless the OTA marker already selects NebulaOS.
     [ "$#" -eq 2 ] && [ "$2" = "REBOOT_CONFIRM=NEBULAOS" ] \
       || die "'reboot' requires exactly the confirmation word REBOOT_CONFIRM=NEBULAOS" ;;
+  rtos-logo)
+    # The NebulaOS boot logo into rtos2 (p4) only; backup first, read-back after.
+    [ "$#" -eq 2 ] && [ "$2" = "RTOS_LOGO_CONFIRM=RTOS2" ] \
+      || die "'rtos-logo' requires exactly the confirmation word RTOS_LOGO_CONFIRM=RTOS2" ;;
+  rtos-logo-restore)
+    [ "$#" -eq 3 ] || die "'rtos-logo-restore' requires <backup-sha256> RTOS_RESTORE_CONFIRM=RTOS2"
+    is_hex "$2" 64 || die "the backup sha256 must be 64 lowercase hex characters"
+    [ "$3" = "RTOS_RESTORE_CONFIRM=RTOS2" ] \
+      || die "'rtos-logo-restore' requires the confirmation word RTOS_RESTORE_CONFIRM=RTOS2" ;;
   verify|install)
     [ "$#" -eq 4 ] || die "'$OP' requires <source-head> <ximage-sha256> <rootfs-sha256>"
     is_hex "$2" 40 || die "source-head must be a full 40-character lowercase hex SHA"
     is_hex "$3" 64 || die "ximage-sha256 must be 64 lowercase hex characters"
     is_hex "$4" 64 || die "rootfs-sha256 must be 64 lowercase hex characters" ;;
-  *) die "unknown operation '${OP:-}'. The Hardware Agent has exactly nine:
-       inspect  status  diagnose  capture  exercise  restart  reboot  verify  install
+  *) die "unknown operation '${OP:-}'. The Hardware Agent has exactly eleven:
+       inspect  status  diagnose  capture  exercise  restart  reboot  rtos-logo
+       rtos-logo-restore  verify  install
        Motion, heating, extrusion, calibration and MCU flashing are Part 2 and have no
        operation here." ;;
 esac
