@@ -38,6 +38,9 @@ MCU_FLASH_FILE="${MCU_FLASH_FILE:-/etc/nebulaos/mcu_flash_file.py}"
 # Internal MCU lifecycle state (MCU_MANAGED_DIR above) stays separate and
 # is never moved here.
 MCU_UPLOAD_DIR="${MCU_UPLOAD_DIR:-/opt/printer_data/config/firmware/mcu}"
+# The shipped native application (hash-pinned at build time, 06-verify.sh).
+# Flashing a byte-identical file is a return to NebulaOS management.
+MCU_NATIVE_CANDIDATE="${MCU_NATIVE_CANDIDATE:-/opt/nebulaos/mcu-candidates/candidate-001.bin}"
 MOONRAKER_URL="${MOONRAKER_URL:-http://127.0.0.1:7125}"
 PYTHON3="${MCU_GUARD_PYTHON3:-/usr/bin/python3}"
 
@@ -200,7 +203,16 @@ cmd_flash() {
 
     restart_klipper_after_mcu_touch
 
-    if [ "$_flash_rc" -eq 0 ]; then
+    if [ "$_flash_rc" -eq 0 ] && [ -f "$MCU_NATIVE_CANDIDATE" ] \
+        && cmp -s "$FIRMWARE_FILE" "$MCU_NATIVE_CANDIDATE"; then
+        # Development run 4 (2026-10-11): reinstalling the shipped native
+        # firmware (e.g. from the touchscreen after a custom one) hands the
+        # MCU back to NebulaOS - the same state `managed` leaves behind.
+        set_managed "true"
+        echo ""
+        echo "MCU firmware flashed successfully."
+        echo "NebulaOS native firmware installed. Auto-restore enabled."
+    elif [ "$_flash_rc" -eq 0 ]; then
         set_managed "false"
         echo ""
         echo "MCU firmware flashed successfully."

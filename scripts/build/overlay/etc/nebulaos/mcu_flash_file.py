@@ -3,10 +3,14 @@
 
 Called by `nebulaos-mcu flash <file>`. Unlike mcu_restore.py (which validates
 candidate-001 hash and verifies post-flash identity), this module accepts any
-firmware file and does not check post-flash identity — the user is flashing
+firmware file built for this mainboard and does not check post-flash identity — the user is flashing
 firmware they chose, not the pinned native candidate.
 
 Safety contract:
+  - The file must be firmware for this mainboard BEFORE the MCU is touched
+    at all (mcu_image.prepare(): a packed Creality "mcu0" image, or a raw
+    NebulaOS-klipper-mcu build, which is packed here; size, CRC, vector
+    table). Anything else exits 1 with nothing restarted (run 4, 2026-10-11).
   - Verifies hardware identity BEFORE any erase/write (same allow-list as
     mcu_restore.py, via creality_flash.check_identity()).
   - Uses creality_flash backend only — never touches bootloader, only
@@ -45,12 +49,20 @@ def main():
     with open(firmware_path, "rb") as f:
         image = f.read()
 
-    if len(image) == 0:
-        print("Firmware file is empty", file=sys.stderr)
-        return 1
-
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     sys.path.insert(0, CREALITY_FLASH_PATH)
+
+    try:
+        import mcu_image
+    except ImportError as e:
+        print(f"Could not import mcu_image: {e}", file=sys.stderr)
+        return 1
+    try:
+        kind, image = mcu_image.prepare(image)
+    except mcu_image.ImageError as e:
+        print(f"REFUSED: {firmware_path}: {e.reason}", file=sys.stderr)
+        return 1
+    print(f"Image: {kind}, {len(image)} bytes, sha256 {mcu_image.sha256(image)}")
 
     try:
         import creality_flash
