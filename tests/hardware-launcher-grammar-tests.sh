@@ -108,6 +108,15 @@ accept "install"  --device p1 --control "$SHA" install "$SHA" "$S256" "$S256"
 accept "reboot back into NebulaOS (confirmed)" --device p1 --control "$SHA" reboot REBOOT_CONFIRM=NEBULAOS
 refuse "reboot confirming another target"     --device p1 --control "$SHA" reboot REBOOT_CONFIRM=STOCK
 refuse "reboot with an extra argument"        --device p1 --control "$SHA" reboot REBOOT_CONFIRM=NEBULAOS now
+accept "rtos-logo (confirmed)"                 --device p1 --control "$SHA" rtos-logo RTOS_LOGO_CONFIRM=RTOS2
+refuse "rtos-logo without confirmation"        --device p1 --control "$SHA" rtos-logo
+refuse "rtos-logo confirming rtos (p3)"        --device p1 --control "$SHA" rtos-logo RTOS_LOGO_CONFIRM=RTOS
+refuse "rtos-logo with a path argument"        --device p1 --control "$SHA" rtos-logo /tmp/zero.bin RTOS_LOGO_CONFIRM=RTOS2
+accept "rtos-logo-restore (confirmed)"         --device p1 --control "$SHA" rtos-logo-restore "$S256" RTOS_RESTORE_CONFIRM=RTOS2
+refuse "rtos-logo-restore with a short sha"    --device p1 --control "$SHA" rtos-logo-restore bbbb RTOS_RESTORE_CONFIRM=RTOS2
+refuse "rtos-logo-restore with a path"         --device p1 --control "$SHA" rtos-logo-restore /tmp/x.bin RTOS_RESTORE_CONFIRM=RTOS2
+refuse "rtos-logo-restore with the logo word"  --device p1 --control "$SHA" rtos-logo-restore "$S256" RTOS_LOGO_CONFIRM=RTOS2
+refuse "rtos-logo-restore without a word"      --device p1 --control "$SHA" rtos-logo-restore "$S256"
 accept "a device id using the full permitted character set" \
         --device printer_01-a --control "$SHA" status
 

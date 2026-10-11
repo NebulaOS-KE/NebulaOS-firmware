@@ -23,6 +23,8 @@ ON_DEVICE=(
 )
 
 HOST=(
+  scripts/package/assets/nebulaos-rtos-logo.jpg
+  scripts/package/rtos_logo.py
   tools/attest/nebulaos-attest.py
   tools/emmc/nebulaos_layout.py
   tools/hardware/nebulaos_agent.py
@@ -34,6 +36,7 @@ HOST=(
   tools/hardware/nebulaos_journal.py
   tools/hardware/nebulaos_marker.py
   tools/hardware/nebulaos_profile.py
+  tools/hardware/nebulaos_rtos.py
   tools/hardware/nebulaos_target.py
   tools/hardware/nebulaos_verify.py
   tools/hwcap/adxl_overflows.py

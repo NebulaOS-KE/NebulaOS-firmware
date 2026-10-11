@@ -212,6 +212,18 @@ class DeviceSession(abc.ABC):
         """
 
     @abc.abstractmethod
+    def read_target_image(self, target_name):
+        """-> the complete contents of a named target in BACKUP_READABLE, as
+        bytes, after checking the partition's name and size on the device.
+        For backups; there is no offset or length to choose."""
+
+    @abc.abstractmethod
+    def apply_rtos2_plan(self, plan, staged_name):
+        """Write one staged file to rtos2 (p4), per a validated WritePlan, and
+        read it back on the device. -> (ok, report dict). Refuses any target
+        other than rtos2: rtos (p3) is Creality's and is never written here."""
+
+    @abc.abstractmethod
     def region_sha256(self, target_name, length):
         """-> sha256 of the first `length` bytes of a named target.
 
@@ -392,6 +404,48 @@ def restart_script(name):
 
 _STAGE_DIR = "/usr/data/nebulaos-hwagent"
 _LOCK_PATH = _STAGE_DIR + "/flash.lock"
+
+# Targets whose whole contents may be copied to the host (rtos-logo backups).
+# Small, pre-Linux, never mounted - and nothing else: a full read of rootfs or
+# userdata is not a backup this agent takes.
+BACKUP_READABLE = frozenset({"rtos", "rtos2"})
+
+
+def partition_guard(target):
+    """Shell text that exits non-zero unless `target`'s device node really is
+    that partition: the GPT name in sysfs, the by-partlabel link and the size
+    must all agree with the vendor geometry. Composed from the target registry,
+    never from caller input."""
+    node = target.device.rsplit("/", 1)[1]
+    return ("s=/sys/class/block/%s; "
+            "[ \"$(sed -n 's/^PARTNAME=//p' $s/uevent 2>/dev/null)\" = %s ] || { echo guard=PARTNAME; exit 3; }; "
+            "[ \"$(readlink -f /dev/disk/by-partlabel/%s 2>/dev/null)\" = %s ] || { echo guard=PARTLABEL; exit 3; }; "
+            "[ \"$(( $(cat $s/size 2>/dev/null || echo 0) * 512 ))\" = %d ] || { echo guard=SIZE; exit 3; }; "
+            "grep -q '^%s ' /proc/mounts && { echo guard=MOUNTED; exit 3; }; "
+            % (node, target.name, target.name, target.device, target.size, target.device))
+
+
+def rtos2_write_script(plan, staged_name):
+    """-> shell text writing a staged file to rtos2 and reading it back.
+
+    Everything checked on the device before the first byte moves: the target
+    is rtos2 (name, label, size, not mounted), the staged file has the plan's
+    size and sha256. Then one dd with fsync, a cache drop, and the read-back
+    hash of the written length. Prints rtos2_* key=value lines."""
+    if plan.target.name != "rtos2":
+        raise DeviceError("refusing an RTOS write to %s: only rtos2 is writable here"
+                          % plan.target.name)
+    f = "%s/%s" % (_STAGE_DIR, shlex.quote(staged_name))
+    return (
+        partition_guard(plan.target)
+        + "f=%s; " % f
+        + "[ \"$(wc -c < $f 2>/dev/null)\" -eq %d ] 2>/dev/null || { echo guard=STAGED_SIZE; exit 3; }; " % plan.payload_size
+        + "[ \"$(sha256sum $f | cut -d' ' -f1)\" = %s ] || { echo guard=STAGED_SHA; exit 3; }; " % plan.payload_sha256
+        + "echo rtos2_write=STARTED; "
+        + "dd if=$f of=%s bs=4096 conv=notrunc,fsync 2>/dev/null; echo rtos2_dd_rc=$?; sync; " % plan.target.device
+        + "echo 3 > /proc/sys/vm/drop_caches 2>/dev/null; "
+        + "echo rtos2_readback_sha256=$(head -c %d %s | sha256sum | cut -d' ' -f1)"
+        % (plan.payload_size, plan.target.device))
 
 
 class SshDeviceSession(DeviceSession):
@@ -757,6 +811,43 @@ class SshDeviceSession(DeviceSession):
             % (_STAGE_DIR, _STAGE_DIR, _STAGE_DIR, _STAGE_DIR, shlex.quote(manifest_name)),
             timeout=1800)
         return rc == 0, out + err
+
+    def read_target_image(self, target_name):
+        if target_name not in BACKUP_READABLE:
+            raise DeviceError("%s is not a target this agent copies off the device" % target_name)
+        target = targets.resolve(target_name)
+        env = dict(os.environ)
+        env["SSH_ASKPASS"] = self._ensure_askpass()
+        env["SSH_ASKPASS_REQUIRE"] = "force"
+        # Binary stdout: the guard prints only on failure, before any data.
+        script = partition_guard(target) + "head -c %d %s" % (target.size, target.device)
+        argv = ["ssh"] + self._ssh_opts() + ["%s@%s" % (self.username, self.address), script]
+        try:
+            proc = subprocess.run(argv, capture_output=True, timeout=300, env=env)
+        except subprocess.TimeoutExpired:
+            raise DeviceError("reading %s timed out" % target_name)
+        if proc.returncode != 0:
+            raise DeviceError("reading %s refused or failed (rc=%d): %s"
+                              % (target_name, proc.returncode,
+                                 (proc.stdout[:80] + proc.stderr[:200]).decode("utf-8", "replace")))
+        if len(proc.stdout) != target.size:
+            raise DeviceError("read %d bytes of %s, expected %d"
+                              % (len(proc.stdout), target_name, target.size))
+        return proc.stdout
+
+    def apply_rtos2_plan(self, plan, staged_name):
+        rc, out, err = self._run(rtos2_write_script(plan, staged_name), timeout=300)
+        report = {}
+        for line in out.splitlines():
+            k, sep, v = line.partition("=")
+            if sep:
+                report[k.strip()] = v.strip()
+        report["rc"] = str(rc)
+        ok = (rc == 0 and report.get("rtos2_dd_rc") == "0"
+              and report.get("rtos2_readback_sha256") == plan.payload_sha256)
+        if err.strip():
+            report["stderr"] = err.strip()[:200]
+        return ok, report
 
     def region_sha256(self, target_name, length):
         target = targets.resolve(target_name)

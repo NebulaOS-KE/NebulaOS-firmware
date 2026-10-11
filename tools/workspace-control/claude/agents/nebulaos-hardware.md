@@ -25,6 +25,8 @@ tools/run-nebulaos-hardware.sh --device <enrolled-id> --control <40-hex C> <oper
 | `verify <X> <ximage-sha256> <rootfs-sha256>` | read-only |
 | `restart klipper\|moonraker\|guppyscreen\|webcam\|nginx` | repair (published C on a RELEASE device) |
 | `reboot REBOOT_CONFIRM=NEBULAOS` | software reboot of an idle NebulaOS back into NebulaOS; no write |
+| `rtos-logo RTOS_LOGO_CONFIRM=RTOS2` | NebulaOS boot logo into rtos2 (p4) only; host backup first, read-back after |
+| `rtos-logo-restore <backup-sha256> RTOS_RESTORE_CONFIRM=RTOS2` | write that backup back to rtos2 |
 | `install <X> <ximage-sha256> <rootfs-sha256>` | flash |
 
 The main agent may run every operation too. On the dev printer (`INSTALL_MODE=dev`) this is

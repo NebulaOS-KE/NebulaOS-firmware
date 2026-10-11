@@ -106,6 +106,52 @@ for given in (None, "", "yes", "REBOOT_CONFIRM=STOCK", "REBOOT_CONFIRM=nebulaos"
         agent.op_reboot(ns); check(False, "unconfirmed reboot refused (%r)" % given)
     except agent.AgentRefusal:
         check(True, "unconfirmed reboot refused (%r)" % given)
+# rtos ops: refused without their exact confirmation word, before any device contact
+for op, fn, extra in (("rtos-logo", agent.op_rtos_logo, {}),
+                      ("rtos-logo-restore", agent.op_rtos_logo_restore, {"backup_sha": "b" * 64})):
+    for given in (None, "", "yes", "RTOS_LOGO_CONFIRM=RTOS", "RTOS_RESTORE_CONFIRM=RTOS",
+                  "REBOOT_CONFIRM=NEBULAOS"):
+        ns = types.SimpleNamespace(device="p1", control_commit="a" * 40, confirm=given, **extra)
+        try:
+            fn(ns); check(False, "unconfirmed %s refused (%r)" % (op, given))
+        except agent.AgentRefusal:
+            check(True, "unconfirmed %s refused (%r)" % (op, given))
+# rtos-hashes: the real profile text, run by /bin/sh against a fixture /dev + sysfs
+import hashlib, subprocess, tempfile, shutil
+sys.path.insert(0, os.path.join(fw, "scripts", "package"))
+import rtos_logo
+root = tempfile.mkdtemp(prefix="rtos-hashes.", dir=os.environ.get("TMPDIR") or None)
+try:
+    size, n = 4 * 1024 * 1024, rtos_logo.STOCK_ZERO_SIZE
+    head = bytes(range(256)) * (n // 256) + bytes(n % 256)
+    parts = {"3": head + b"\x00" * (size - n), "4": head + b"\xff" * (size - n)}
+    for p, data in parts.items():
+        open(os.path.join(root, "mmcblk0p" + p), "wb").write(data)
+        os.makedirs(os.path.join(root, "sys", "mmcblk0p" + p))
+        open(os.path.join(root, "sys", "mmcblk0p" + p, "uevent"), "w").write(
+            "PARTNAME=%s\n" % ("rtos" if p == "3" else "rtos2"))
+        open(os.path.join(root, "sys", "mmcblk0p" + p, "size"), "w").write("%d\n" % (size // 512))
+    open(os.path.join(root, "mmcblk0p1"), "wb").write(b"ota:kernel2\n\n" + b"\x00" * 498)
+    body = c.CAPTURE_PROFILES["rtos-hashes"][0]
+    check("dd " not in body, "rtos-hashes reads with head/sha256sum, never dd")
+    body = body.replace(rtos_logo.STOCK_ZERO_SHA256, hashlib.sha256(head).hexdigest())
+    body = body.replace("/sys/class/block/", root + "/sys/").replace("/dev/", root + "/")
+    out = subprocess.run(["/bin/sh", "-c", body], capture_output=True, text=True).stdout
+    kv = dict(l.split("=", 1) for l in out.splitlines() if "=" in l and not l.startswith("=="))
+    check(kv.get("p3_sha256_full") == hashlib.sha256(parts["3"]).hexdigest()
+          and kv.get("p4_sha256_full") == hashlib.sha256(parts["4"]).hexdigest(),
+          "rtos-hashes reports the full-partition sha256 of p3 and p4")
+    check(kv.get("p3_first_432824_is") == "stock" and kv.get("p4_first_432824_is") == "stock",
+          "rtos-hashes classifies the first 432824 bytes against the pins")
+    check(kv.get("p3_tail_bytes_not_00") == "0" and kv.get("p4_tail_bytes_not_ff") == "0"
+          and kv.get("p3_tail_bytes_not_ff") == str(size - n),
+          "rtos-hashes characterises the bytes after the image (0x00 vs 0xFF fill)")
+    check(kv.get("p3_p4_identical") == "NO" and kv.get("ota_marker", "").startswith("ota:kernel2"),
+          "rtos-hashes compares p3 with p4 and prints the marker")
+    check(kv.get("p4_head64") == head[:64].hex() and "bytes=%d" % size in out and "name=rtos2" in out,
+          "rtos-hashes prints the first 64 bytes, the GPT name and the size")
+finally:
+    shutil.rmtree(root, ignore_errors=True)
 print("capture-profile python checks: %d passed, %d failed" % (passed, failed))
 sys.exit(1 if failed else 0)
 PYEOF

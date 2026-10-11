@@ -132,6 +132,11 @@ class SimulatedPrinter:
         self.print_state_readable = True         # False: Moonraker down, print state unknown
         self.restarts = []                       # services restarted, in order
         self.reboot_does_nothing = False         # marker set, device never reboots
+        self.backup_read_short = False           # rtos2 copy arrives one byte short
+        self.rtos_write_raises = False           # rtos2 write drops half-way
+        self.rtos_write_corrupt = False          # rtos2 write lands one byte wrong
+        self.busy_after_staging = None           # staged name after which a print starts
+        self.rtos2_writes = 0
 
         self._ops = 0
         self.log = []
@@ -382,6 +387,8 @@ class SimSession(device.DeviceSession):
         with open(local_path, "rb") as fh:
             data = fh.read()
         self.printer.staged[name] = data
+        if self.printer.busy_after_staging == name:
+            self.printer.printing = True
         return hashlib.sha256(data).hexdigest()
 
     def staged_sha256(self, name):
@@ -436,6 +443,42 @@ class SimSession(device.DeviceSession):
             self.printer.partitions[plan.target.name] = data
             written += len(data)
         return True, "flash-spare-slot.sh: wrote and verified %d plan(s)" % len(plans)
+
+    def read_target_image(self, target_name):
+        # Mirrors the SSH session: only BACKUP_READABLE, always the whole partition.
+        self._t()
+        if target_name not in device.BACKUP_READABLE:
+            raise device.DeviceError("%s is not a target this agent copies off the device" % target_name)
+        size = targets.resolve(target_name).size
+        data = self.printer.partitions.get(target_name, b"")
+        data = data + b"\x00" * max(0, size - len(data))
+        if self.printer.backup_read_short:
+            data = data[:-1]
+        if len(data) != size:
+            raise device.DeviceError("read %d bytes of %s, expected %d" % (len(data), target_name, size))
+        return data
+
+    def apply_rtos2_plan(self, plan, staged_name):
+        self._t()
+        # The same refusal the shell writer makes, before anything else.
+        device.rtos2_write_script(plan, staged_name)
+        data = self.printer.staged.get(staged_name)
+        if data is None or len(data) != plan.payload_size \
+                or hashlib.sha256(data).hexdigest() != plan.payload_sha256:
+            return False, {"guard": "STAGED_SHA"}
+        old = self.printer.partitions.get("rtos2", b"")
+        if self.printer.rtos_write_raises:
+            self.printer.partitions["rtos2"] = data[:len(data) // 2] + old[len(data) // 2:]
+            self.printer.log.append("rtos2 write interrupted")
+            raise SimTransportError("connection lost during the rtos2 write (simulated)")
+        if self.printer.rtos_write_corrupt:
+            data = data[:-1] + bytes([data[-1] ^ 0xFF])
+        self.printer.partitions["rtos2"] = data + old[len(data):]
+        self.printer.rtos2_writes += 1
+        self.printer.log.append("rtos2 written (%d bytes)" % len(data))
+        readback = hashlib.sha256(self.printer.partitions["rtos2"][:plan.payload_size]).hexdigest()
+        return readback == plan.payload_sha256, {
+            "rtos2_write": "STARTED", "rtos2_dd_rc": "0", "rtos2_readback_sha256": readback}
 
     def region_sha256(self, target_name, length):
         self._t()

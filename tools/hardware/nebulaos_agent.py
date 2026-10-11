@@ -13,6 +13,9 @@ THE PUBLIC INTERFACE IS SEMANTIC
     install   the developer install, NebulaOS -> Stock -> flash -> NebulaOS
     reboot    software reboot of an idle NebulaOS back into NebulaOS, for
               boot timing; refused unless the marker already selects NebulaOS
+    rtos-logo         write the NebulaOS boot logo RTOS image to rtos2 (p4)
+                      only, after a verified host backup (nebulaos_rtos)
+    rtos-logo-restore write such a backup back to rtos2, named by sha256
 
 There is no ssh, scp, dd, marker, raw reboot, flash, raw usbboot, --host, --password
 or --command. Not because they are filtered - because no such operation exists
@@ -54,6 +57,7 @@ import nebulaos_install as install      # noqa: E402
 import nebulaos_journal as journal      # noqa: E402
 import nebulaos_marker as marker        # noqa: E402
 import nebulaos_profile as profiles     # noqa: E402
+import nebulaos_rtos as rtos            # noqa: E402
 import nebulaos_target as targets       # noqa: E402
 import nebulaos_verify as verifylib     # noqa: E402
 
@@ -560,6 +564,74 @@ def op_reboot(args):
                        "was written; check it with `diagnose`." % (REBOOT_BACK_TIMEOUT, last))
 
 
+def op_rtos_logo(args):
+    """Write the pinned NebulaOS RTOS image (stock zero.bin + the NebulaOS boot
+    logo) to rtos2, after a verified host backup of the whole partition. Never
+    rtos (p3). See nebulaos_rtos for every guard."""
+    return _rtos_op(args, "rtos-logo", rtos.LOGO_CONFIRM_WORD)
+
+
+def op_rtos_logo_restore(args):
+    """Write a backup taken by rtos-logo back to rtos2, named by its sha256."""
+    return _rtos_op(args, "rtos-logo-restore", rtos.RESTORE_CONFIRM_WORD)
+
+
+def _rtos_op(args, op, word):
+    if args.confirm != word:
+        raise AgentRefusal("%s not confirmed (expected %s)" % (op, word))
+    backup_sha = getattr(args, "backup_sha", None)
+    if op == "rtos-logo-restore" and not (backup_sha and len(backup_sha) == 64
+                                          and all(c in "0123456789abcdef" for c in backup_sha)):
+        raise AgentRefusal("rtos-logo-restore needs the backup's 64-hex sha256")
+    profile, control_set, _ = prove_preconditions(
+        args.device, None, None, None, args.control_commit, destructive=False)
+    say(targets.RTOS2_ONLY.report(prefix="RTOS_POLICY"))
+    with journal.HostLock(args.device):
+        txn = journal.Transaction.open(args.device)
+        if txn is not None and txn.state not in journal.TERMINAL_STATES:
+            raise AgentRefusal("an install transaction is open (state %s); resolve it first" % txn.state)
+        session, which, address = _connect_matching(profile, (device.OS_NEBULAOS,))
+        owner = "%s-%d" % (op, os.getpid())
+        result = "REFUSED"
+        try:
+            say("RTOS_TARGET=%s@%s" % (which, address))
+            say("DEVICE_IDENTITY_MATCHES_PROFILE=YES")
+            got, holder = session.acquire_flash_lock(owner)
+            if not got:
+                raise AgentRefusal("the device-side hardware-agent lock is held by %s" % holder)
+            try:
+                work = rtos.RtosOperation(args.device, session, say, control_set.commit)
+                result = work.restore(backup_sha) if backup_sha else work.logo()
+            except rtos.RtosError as exc:
+                result = "FAILED" if exc.written else "REFUSED"
+                rtos.log(args.device, control_set.commit, op, result, str(exc))
+                if exc.written:
+                    say("RTOS2_WRITE_VERIFIED=NO")
+                    say("# rtos2 may hold a partial or wrong image. Do NOT reboot or power cycle")
+                    say("# NebulaOS: SPL would load this rtos2. Restore it first:")
+                    if exc.backup:
+                        say("#   rtos-logo-restore %s %s" % (exc.backup[1], rtos.RESTORE_CONFIRM_WORD))
+                        say("# (backup %s)" % exc.backup[0])
+                    say("# If the printer no longer boots NebulaOS, follow docs/DEVELOPER_RECOVERY.md")
+                    say("# 'RTOS logo: restoring rtos2' (USB mask-ROM).")
+                    say("RUN_NEBULAOS_HARDWARE=RTOS_WRITE_FAILED")
+                    return 1
+                raise AgentRefusal(str(exc))
+            except device.DeviceError as exc:
+                # Raised before the write: apply_rtos2_plan's own failures are
+                # converted to RtosError(written=True) inside RtosOperation.
+                rtos.log(args.device, control_set.commit, op, "REFUSED", str(exc))
+                raise AgentRefusal("%s stopped before writing anything: %s" % (op, exc))
+            finally:
+                session.release_flash_lock(owner)
+        finally:
+            session.close()
+    rtos.log(args.device, control_set.commit, op, result, "")
+    say("RTOS2_RESULT=%s" % result)
+    say("RUN_NEBULAOS_HARDWARE=RTOS_COMPLETE")
+    return 0
+
+
 def control_is_published(control_commit):
     """The seam tests replace. Repairs require a PUBLISHED control commit."""
     return evidence.product_is_published(FW_ROOT, control_commit)
@@ -746,6 +818,10 @@ def main(argv):
     p.add_argument("confirm", nargs="?", default=None)
     sub.add_parser("restart").add_argument("service")
     sub.add_parser("reboot").add_argument("confirm", nargs="?", default=None)
+    sub.add_parser("rtos-logo").add_argument("confirm", nargs="?", default=None)
+    p = sub.add_parser("rtos-logo-restore")
+    p.add_argument("backup_sha")
+    p.add_argument("confirm", nargs="?", default=None)
     for name in ("verify", "install"):
         p = sub.add_parser(name)
         p.add_argument("source_head")
@@ -756,6 +832,7 @@ def main(argv):
     handler = {"inspect": op_inspect, "status": op_status, "diagnose": op_diagnose,
                "capture": op_capture, "exercise": op_exercise,
                "restart": op_restart, "reboot": op_reboot,
+               "rtos-logo": op_rtos_logo, "rtos-logo-restore": op_rtos_logo_restore,
                "verify": op_verify, "install": op_install}[args.op]
     try:
         return handler(args)
