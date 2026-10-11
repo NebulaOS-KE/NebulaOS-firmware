@@ -131,8 +131,8 @@ def _version_note(entry, builtin_version):
     if theirs is None:
         return "Klipper version unknown - Klipper may not be able to use the board"
     if mine and theirs != mine:
-        return ("built from Klipper %s, NebulaOS uses %s - Klipper will probably not "
-                "connect; reinstall NebulaOS firmware to undo" % (theirs, mine))
+        return ("built from Klipper %s, NebulaOS uses %s: Klipper will probably not "
+                "connect" % (theirs, mine))
     return None
 
 
