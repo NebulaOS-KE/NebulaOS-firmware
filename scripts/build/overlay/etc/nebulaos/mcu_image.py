@@ -34,9 +34,12 @@ creality_validator from CREALITY_FLASH_PATH (/opt/nebulaos/tools).
 """
 
 import hashlib
+import json
 import os
+import re
 import struct
 import sys
+import zlib
 
 sys.path.insert(0, os.environ.get("CREALITY_FLASH_PATH", "/opt/nebulaos/tools"))
 import creality_validator as validator  # noqa: E402
@@ -116,6 +119,34 @@ def classify(data):
             board, PACK_TYPE)
     return None, ("not firmware for this printer's mainboard (no Creality header "
                   "and no NebulaOS placeholder at 0x200)")
+
+
+def klipper_version(data):
+    """The Klipper version a firmware was built from ("v0.13.0-742-g01a9c2f92"),
+    read from the zlib-compressed data dictionary Klipper embeds in every
+    build; None when there is none (not Klipper, or unreadable). G32."""
+    for i in range(len(data) - 2):
+        if data[i] != 0x78 or data[i + 1] not in (0x01, 0x5e, 0x9c, 0xda):
+            continue
+        try:
+            text = zlib.decompressobj().decompress(data[i:])
+        except zlib.error:
+            continue
+        if not text.startswith(b"{"):
+            continue
+        try:
+            version = json.loads(text.decode("utf-8")).get("version")
+        except ValueError:
+            continue
+        if isinstance(version, str) and version:
+            return version
+    return None
+
+
+def release_of(version):
+    """"v0.13.0" from "v0.13.0-742-g01a9c2f92"; None if not that shape."""
+    m = re.match(r"^(v\d+\.\d+\.\d+)", version or "")
+    return m.group(1) if m else None
 
 
 def prepare(data):

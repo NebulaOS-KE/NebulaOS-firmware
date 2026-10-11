@@ -16,6 +16,9 @@ SFTP_SERVER = "/usr/libexec/sftp-server"
 # boot (see /usr/libexec/nebulaos/nebulaos-clean-reset).
 CLEAN_RESET_FLAG = os.environ.get("NEBULAOS_CLEAN_RESET_FLAG",
                                   "/usr/data/.nebulaos-clean-reset")
+# Left by nebulaos-clean-reset in the fresh namespace (G2): the screen says
+# once that Wi-Fi has to be connected again, then clears it (ack-clean-reset).
+AFTER_RESET_MARKER = os.path.join(common.NEBULAOS_ROOT, ".after-clean-reset")
 CMDLINE = os.environ.get("NEBULAOS_CMDLINE", "/proc/cmdline")
 SLOT_SWAP = os.environ.get("NEBULAOS_SLOT_SWAP", "/usr/libexec/nebulaos/nebulaos-slot-swap")
 # docs/A_B_SLOT_MODEL.md: slot 1 = kernel/rootfs p5/p7 (the other system),
@@ -79,6 +82,7 @@ def info():
     return {"build": build_info(),
             "slot": boot_slot(),
             "clean_reset_pending": os.path.exists(CLEAN_RESET_FLAG),
+            "after_clean_reset": _read(AFTER_RESET_MARKER) or None,
             "kernel": {"release": uname.release, "version": uname.version},
             "hostname": _read("/proc/sys/kernel/hostname"),
             "storage": storage_info(),
@@ -94,6 +98,14 @@ def request_clean_reset():
     stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     common.atomic_write(CLEAN_RESET_FLAG, "requested=%s\n" % stamp, mode=0o600)
     return {"result": "SCHEDULED", "applies": "next boot"}
+
+
+def ack_clean_reset():
+    try:
+        os.unlink(AFTER_RESET_MARKER)
+    except FileNotFoundError:
+        pass
+    return {"result": "ACKNOWLEDGED"}
 
 
 def cancel_clean_reset():

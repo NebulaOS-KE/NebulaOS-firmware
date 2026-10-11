@@ -10,9 +10,16 @@
 # root password, the boot screen, GuppyScreen's settings. The rest of the boot
 # then seeds everything from this image, exactly as on a new printer.
 #
-# Kept: the Wi-Fi MAC seed (device identity, so the router keeps the same
-# address) and everything outside /usr/data/nebulaos - the other boot slot's
-# files and the shared G-code folder (/usr/data/printer_data/gcodes).
+# Kept: the device's identity - the Wi-Fi MAC seed (so the router keeps the
+# same address) and the SSH host keys (so SSH clients and the Hardware Agent
+# still recognise the printer, G1) - and everything outside /usr/data/nebulaos:
+# the other boot slot's files and the shared G-code folder
+# (/usr/data/printer_data/gcodes).
+#
+# Left behind for afterwards (G2, G28): a line in /usr/data/.nebulaos-clean-reset.log
+# (outside the wiped folder, so the reset itself stays on record) and the marker
+# /usr/data/nebulaos/.after-clean-reset, which makes the screen say once that
+# Wi-Fi has to be connected again (cleared by system ack-clean-reset).
 #
 # Crash-safe: the namespace is first renamed (one atomic step), then deleted;
 # a power cut in between leaves a .nebulaos-wiping-* directory that the next
@@ -22,10 +29,14 @@
 NCR_DATA="${NCR_DATA:-/usr/data}"
 NCR_ROOT="${NCR_ROOT:-$NCR_DATA/nebulaos}"
 NCR_FLAG="${NCR_FLAG:-$NCR_DATA/.nebulaos-clean-reset}"
-NCR_KEEP="${NCR_KEEP:-wifi-mac-seed}"
+NCR_KEEP="${NCR_KEEP:-wifi-mac-seed system/dropbear}"
+NCR_RECORD="${NCR_RECORD:-$NCR_DATA/.nebulaos-clean-reset.log}"
+NCR_MARKER_NAME=".after-clean-reset"
 
 ncr_log() {
 	echo "nebulaos-clean-reset: $*"
+	command -v logger >/dev/null 2>&1 && logger -t nebulaos-clean-reset -- "$*" 2>/dev/null
+	return 0
 }
 
 ncr_run() {
@@ -39,13 +50,20 @@ ncr_run() {
 		if [ -d "$NCR_ROOT" ]; then
 			mv "$NCR_ROOT" "$_doomed" || { ncr_log "could not move $NCR_ROOT aside - nothing wiped"; return 0; }
 			mkdir -p "$NCR_ROOT"
+			_kept=""
 			for _f in $NCR_KEEP; do
-				[ -f "$_doomed/$_f" ] && cp -p "$_doomed/$_f" "$NCR_ROOT/$_f"
+				[ -e "$_doomed/$_f" ] || continue
+				mkdir -p "$(dirname "$NCR_ROOT/$_f")"
+				cp -a "$_doomed/$_f" "$NCR_ROOT/$_f" && _kept="$_kept $_f"
 			done
+			date -u +%Y-%m-%dT%H:%M:%SZ > "$NCR_ROOT/$NCR_MARKER_NAME" 2>/dev/null
 		fi
+		printf '%s clean reset: NebulaOS data wiped (requested %s); kept:%s\n' \
+			"$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(sed -n 's/^requested=//p' "$NCR_FLAG" 2>/dev/null)" \
+			"${_kept:- nothing}" >> "$NCR_RECORD" 2>/dev/null
 		rm -f "$NCR_FLAG"
 		sync
-		ncr_log "NebulaOS data wiped; this boot sets the printer up from the image"
+		ncr_log "NebulaOS data wiped (kept:${_kept:- nothing}); this boot sets the printer up from the image"
 	fi
 	# Finish any wipe a power cut interrupted.
 	for _d in "$NCR_DATA"/.nebulaos-wiping-*; do

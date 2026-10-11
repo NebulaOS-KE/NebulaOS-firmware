@@ -26,6 +26,9 @@ setup() {
 	echo "[printer]" > "$T/d/nebulaos/printer_data/config/printer.cfg"
 	echo "root:hash:" > "$T/d/nebulaos/system/shadow"
 	echo "02:aa:bb:cc:dd:ee" > "$T/d/nebulaos/wifi-mac-seed"
+	mkdir -p "$T/d/nebulaos/system/dropbear"
+	echo "hostkey" > "$T/d/nebulaos/system/dropbear/dropbear_ed25519_host_key"
+	chmod 600 "$T/d/nebulaos/system/dropbear/dropbear_ed25519_host_key"
 	echo "benchy" > "$T/d/printer_data/gcodes/benchy.gcode"
 	echo "theirs" > "$T/d/creality/file"
 	export NCR_DATA="$T/d"
@@ -37,9 +40,11 @@ setup; run_ncr >/dev/null
 check "no flag: nothing changes" '[ -f "$T/d/nebulaos/printer_data/config/printer.cfg" ]'
 
 setup; echo "requested=x" > "$T/d/.nebulaos-clean-reset"; out=$(run_ncr)
-check "flag: namespace wiped" '[ ! -e "$T/d/nebulaos/printer_data" ] && [ ! -e "$T/d/nebulaos/system" ]'
+check "flag: namespace wiped" '[ ! -e "$T/d/nebulaos/printer_data" ] && [ ! -e "$T/d/nebulaos/system/shadow" ]'
 check "flag: MAC seed kept" '[ "$(cat "$T/d/nebulaos/wifi-mac-seed")" = "02:aa:bb:cc:dd:ee" ]'
-check "flag: only the MAC seed is left" '[ "$(ls -A "$T/d/nebulaos")" = wifi-mac-seed ]'
+check "flag: SSH host keys kept, mode kept (G1)" '[ "$(cat "$T/d/nebulaos/system/dropbear/dropbear_ed25519_host_key")" = hostkey ] && [ "$(stat -c %a "$T/d/nebulaos/system/dropbear/dropbear_ed25519_host_key")" = 600 ]'
+check "flag: only identity and the after-reset marker are left" '[ "$(cd "$T/d/nebulaos" && find . -type f | sort | tr "\n" " ")" = "./.after-clean-reset ./system/dropbear/dropbear_ed25519_host_key ./wifi-mac-seed " ]'
+check "flag: reset recorded outside the wiped folder (G28)" 'grep -q "clean reset: NebulaOS data wiped (requested x); kept: wifi-mac-seed system/dropbear" "$T/d/.nebulaos-clean-reset.log"'
 check "flag removed" '[ ! -e "$T/d/.nebulaos-clean-reset" ]'
 check "G-code folder untouched" '[ "$(cat "$T/d/printer_data/gcodes/benchy.gcode")" = benchy ]'
 check "other slot's files untouched" '[ "$(cat "$T/d/creality/file")" = theirs ]'

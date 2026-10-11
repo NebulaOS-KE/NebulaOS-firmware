@@ -2,7 +2,7 @@
 # (GUI/service readiness mission, 2026-10-09).
 #
 #   nebulaos-osconfig system info
-#   nebulaos-osconfig system clean-reset|cancel-clean-reset
+#   nebulaos-osconfig system clean-reset|cancel-clean-reset|ack-clean-reset
 #   nebulaos-osconfig system swap-slot|keep-slot
 #   nebulaos-osconfig wifi status|scan
 #   nebulaos-osconfig wifi connect --stdin     {"ssid": ..., "password": ...}
@@ -45,14 +45,50 @@ def _opts(args, allowed):
     return out
 
 
+READ_ONLY = {("system", "info"), ("network", "status"),
+             ("boot-display", "status"), ("display", "status"),
+             ("wifi", "status"), ("mcu", "status"), ("mcu", "list")}
+
+# G27 (2026-10-12): every change is one line in the system log (persistent
+# system.log), success or failure. Read-only verbs are not logged (the screen
+# polls them), nor is anything from stdin (the Wi-Fi password arrives there).
+# Display sleep/wake run at every screen timeout, so only failures of those.
+_QUIET_OK = {("display", "sleep"), ("display", "wake"), ("boot-display", "render")}
+_LOGGED_ARGS = ("--hostname", "--ssid", "--mode", "--file", "--level")
+_LOGGED_RESULT = ("result", "ssid", "address", "address_mode", "address_note",
+                  "next_boot", "applies")
+
+
+def _audit(argv, out):
+    if len(argv) < 2 or (argv[0], argv[1]) in READ_ONLY:
+        return
+    if out.get("ok") and (argv[0], argv[1]) in _QUIET_OK:
+        return
+    parts = [argv[0], argv[1]]
+    for i, arg in enumerate(argv[2:-1], start=2):
+        if arg in _LOGGED_ARGS:
+            parts.append("%s=%s" % (arg[2:], argv[i + 1]))
+    if out.get("ok"):
+        parts.append("ok")
+        parts += ["%s=%s" % (k, out[k]) for k in _LOGGED_RESULT
+                  if out.get(k) not in (None, "")]
+    else:
+        parts.append("FAILED %s: %s" % (out.get("error"), out.get("message")))
+    try:
+        import syslog
+        syslog.openlog("nebulaos-osconfig")
+        syslog.syslog(syslog.LOG_NOTICE if out.get("ok") else syslog.LOG_WARNING,
+                      " ".join(str(p) for p in parts)[:900])
+        syslog.closelog()
+    except Exception:  # logging never changes the outcome
+        pass
+
+
 def _dispatch(argv):
     if len(argv) < 2:
         raise common.invalid("USAGE", "usage: nebulaos-osconfig DOMAIN VERB [options]")
     domain, verb, rest = argv[0], argv[1], argv[2:]
-    read_only = {("system", "info"), ("network", "status"),
-                 ("boot-display", "status"), ("display", "status"),
-                 ("wifi", "status"), ("mcu", "status"), ("mcu", "list")}
-    if (domain, verb) in read_only:
+    if (domain, verb) in READ_ONLY:
         _opts(rest, {})
         if domain == "mcu":
             return mcu.status() if verb == "status" else mcu.list_files()
@@ -91,6 +127,7 @@ def _dispatch(argv):
         elif domain == "system":
             verbs = {"clean-reset": system.request_clean_reset,
                      "cancel-clean-reset": system.cancel_clean_reset,
+                     "ack-clean-reset": system.ack_clean_reset,
                      "swap-slot": system.swap_slot, "keep-slot": system.keep_slot}
             if verb in verbs:
                 _opts(rest, {})
@@ -130,5 +167,6 @@ def main(argv=None):
     except Exception as exc:  # never a traceback instead of the JSON contract
         out = {"ok": False, "error": "INTERNAL", "message": "%s: %s" % (type(exc).__name__, exc)}
         code = common.EXIT_FAILED
+    _audit(argv, out)
     sys.stdout.write(json.dumps(out, sort_keys=True) + "\n")
     return code

@@ -100,7 +100,7 @@ def status():
 def _inspect(path, size):
     """Common fields + the offline verdict for one regular file."""
     entry = {"size": size, "valid": False, "kind": None, "problem": None,
-             "sha256": None}
+             "sha256": None, "klipper_version": None}
     if size > MAX_FILE_BYTES:
         entry["problem"] = "too large (%d bytes) to be MCU firmware" % size
         return entry
@@ -114,7 +114,26 @@ def _inspect(path, size):
     entry["sha256"] = img.sha256(data)
     kind, reason = img.classify(data)
     entry.update(kind=kind, valid=kind is not None, problem=reason)
+    if kind is not None:
+        entry["klipper_version"] = img.klipper_version(data)
     return entry
+
+
+def _version_note(entry, builtin_version):
+    """G32: a firmware from another Klipper release than NebulaOS's own MCU
+    firmware usually lacks commands the host Klipper needs, and Klipper then
+    refuses the board. The same release (even another commit) is fine - that
+    is how NebulaOS's firmware and host Klipper relate today."""
+    img = _image_module()
+    mine, theirs = img.release_of(builtin_version), img.release_of(entry.get("klipper_version"))
+    if not entry.get("valid") or entry.get("native"):
+        return None
+    if theirs is None:
+        return "Klipper version unknown - Klipper may not be able to use the board"
+    if mine and theirs != mine:
+        return ("built from Klipper %s, NebulaOS uses %s - Klipper will probably not "
+                "connect; reinstall NebulaOS firmware to undo" % (theirs, mine))
+    return None
 
 
 def _builtin_sha():
@@ -181,14 +200,23 @@ def list_files():
                      "device": dev, "mtime": int(st.st_mtime)}
             entry.update(_inspect(os.path.join(USB_DIR, dev, rel), st.st_size))
             files.append(entry)
+    builtin_version = None
+    if native:
+        try:
+            with open(BUILTIN, "rb") as handle:
+                builtin_version = _image_module().klipper_version(handle.read(MAX_FILE_BYTES + 1))
+        except OSError:
+            pass
     for entry in files:
         entry["native"] = bool(native) and entry["sha256"] == native
+        entry["version_note"] = _version_note(entry, builtin_version)
     builtin = None
     if native:
         builtin = {"id": "builtin/" + os.path.basename(BUILTIN), "source": "builtin",
                    "name": "NebulaOS firmware", "sha256": native, "native": True,
                    "size": os.path.getsize(BUILTIN), "valid": True, "kind": "packed",
-                   "problem": None}
+                   "problem": None, "klipper_version": builtin_version,
+                   "version_note": None}
     return {"files": files, "builtin": builtin, "usb": mounts, "upload_dir": UPLOAD_DIR}
 
 

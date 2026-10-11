@@ -97,3 +97,15 @@ for i in "$INIT_DIR"/S??*; do
 done
 
 _bt_now; _bt_log "T=$_t EV=done"
+
+# G25 (2026-10-12): keep the boot timings across reboots - this boot's record
+# appended to boot-timing.log in Moonraker's logs folder (visible in Mainsail
+# and on the screen's Logs page), trimmed to the last 2000 lines (~20 boots).
+# Best effort: no persistent storage, no copy.
+NEBULAOS_BOOT_TIMING_KEEP="${NEBULAOS_BOOT_TIMING_KEEP:-/opt/printer_data/logs/boot-timing.log}"
+if [ -s "$NEBULAOS_BOOT_SCRIPTS_LOG" ] && [ -d "$(dirname "$NEBULAOS_BOOT_TIMING_KEEP")" ]; then
+	{ cat "$NEBULAOS_BOOT_TIMING_KEEP" 2>/dev/null; cat "$NEBULAOS_BOOT_SCRIPTS_LOG"; } \
+		| tail -n 2000 > "$NEBULAOS_BOOT_TIMING_KEEP.tmp" 2>/dev/null \
+		&& mv -f "$NEBULAOS_BOOT_TIMING_KEEP.tmp" "$NEBULAOS_BOOT_TIMING_KEEP" 2>/dev/null
+	rm -f "$NEBULAOS_BOOT_TIMING_KEEP.tmp" 2>/dev/null
+fi

@@ -145,9 +145,14 @@ start() {
 	fi
 	echo "Starting wpa_supplicant on wlan0"
 	mkdir -p /var/run/wpa_supplicant
+	# G22 (2026-10-12): Wi-Fi events into the system log - but only when this
+	# wpa_supplicant was built with syslog support; an unknown -s would make it
+	# refuse to start, and then there is no Wi-Fi at all.
+	WPA_LOG=""
+	/usr/sbin/wpa_supplicant -h 2>&1 | grep -q -- "-s = log output to syslog" && WPA_LOG="-s"
 	start-stop-daemon -S -b -m -p "$PIDFILE" \
 		-x /usr/sbin/wpa_supplicant -- \
-		-i wlan0 -c "$CONF"
+		-i wlan0 -c "$CONF" $WPA_LOG
 	# BOOT-02: fixed 2 s settle by default; a one-shot maintenance marker
 	# selects the bounded event-driven wait for exactly one boot.
 	if [ -f /etc/nebulaos-wifi-boot-wait.sh ]; then

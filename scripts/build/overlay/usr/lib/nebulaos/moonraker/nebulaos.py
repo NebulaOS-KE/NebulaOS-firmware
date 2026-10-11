@@ -80,6 +80,8 @@ class NebulaOS:
             ("/machine/nebulaos/system/clean_reset", RequestType.POST,
              self._clean_reset),
             ("/machine/nebulaos/system/swap_slot", RequestType.POST, self._swap_slot),
+            ("/machine/nebulaos/system/ack_clean_reset", RequestType.POST,
+             self._ack_clean_reset),
             ("/machine/nebulaos/mcu/status", RequestType.GET, self._mcu_status),
             ("/machine/nebulaos/mcu/files", RequestType.GET, self._mcu_files),
             ("/machine/nebulaos/mcu/flash", RequestType.POST, self._mcu_flash),
@@ -230,6 +232,10 @@ class NebulaOS:
         result = await self._write("system", "clean-reset")
         await self._reboot_or_undo(["system", "cancel-clean-reset"])
         return result
+
+    async def _ack_clean_reset(self, web_request: WebRequest) -> Dict[str, Any]:
+        # The screen showed the after-reset notice (G2).
+        return await self._write("system", "ack-clean-reset")
 
     async def _swap_slot(self, web_request: WebRequest) -> Dict[str, Any]:
         await self._refuse_while_printing()

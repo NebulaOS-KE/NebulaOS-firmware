@@ -17,6 +17,7 @@ import hashlib
 import json
 import os
 import re
+import signal
 import socket
 import time
 
@@ -26,6 +27,8 @@ from .common import invalid, OsConfigError
 IFACE = "wlan0"
 CTRL_DIR = os.environ.get("NEBULAOS_WPA_CTRL_DIR", "/var/run/wpa_supplicant")
 NETAPPLY = os.environ.get("NEBULAOS_NETAPPLY", "/usr/libexec/nebulaos/nebulaos-netapply")
+UDHCPC_PIDFILE = os.environ.get("NEBULAOS_UDHCPC_PIDFILE", "/var/run/udhcpc.%s.pid" % IFACE)
+ARPING = os.environ.get("NEBULAOS_ARPING", "arping")
 SCAN_SECONDS = float(os.environ.get("NEBULAOS_WIFI_SCAN_SECONDS", "10"))
 CONNECT_SECONDS = float(os.environ.get("NEBULAOS_WIFI_CONNECT_SECONDS", "30"))
 ADDRESS_SECONDS = float(os.environ.get("NEBULAOS_WIFI_ADDRESS_SECONDS", "20"))
@@ -330,12 +333,87 @@ def scan():
     return {"networks": results, "complete": got is not None, "status": st}
 
 
-def _readdress():
-    """A fresh DHCP lease (or the static address) for the new network,
-    through the same apply path the network settings use."""
-    with common.Lock("network"):
-        rc, _, err = common.run([NETAPPLY, "apply"], 60)
-    return rc
+def _udhcpc_pid():
+    try:
+        with open(UDHCPC_PIDFILE) as handle:
+            pid = int(handle.read().strip())
+        os.kill(pid, 0)
+        return pid
+    except (OSError, ValueError):
+        return None
+
+
+def _wait_ipv4(seconds):
+    deadline = time.monotonic() + seconds
+    while True:
+        address = _ipv4()
+        if address or time.monotonic() >= deadline:
+            return address
+        time.sleep(0.5)
+
+
+def _gateway_answers(gateway, seconds=5):
+    for _ in range(max(1, int(seconds))):
+        rc, _, _ = common.run([ARPING, "-q", "-c", "1", "-w", "1", "-I", IFACE, gateway], 3)
+        if rc == 0:
+            return True
+    return False
+
+
+def _readdress(ctrl, target):
+    """The address for the network just joined, WITHOUT taking wlan0 down:
+    a link bounce makes wpa_supplicant pick a saved network by itself (G20).
+    DHCP: release and renew the running udhcpc lease. Static: the configured
+    address stays; check that the gateway answers on this network (G5).
+    Returns (mode, address, ok, note)."""
+    from . import network
+    cfg, _ = network.load_config()
+    ipv4 = cfg["ipv4"]
+    if ipv4["mode"] == "static":
+        ok = _gateway_answers(ipv4["gateway"])
+        note = None if ok else (
+            "the static address %s does not work on this network (gateway %s does not "
+            "answer); switch to DHCP under Wi-Fi networks > this network > Static IP"
+            % (ipv4["address"], ipv4["gateway"]))
+        return "static", _ipv4(), ok, note
+    pid = _udhcpc_pid()
+    if pid is not None:
+        # Release the old network's lease, wait until the address is really
+        # gone, then ask the new network for one. Never both at once: pending
+        # signals are delivered lowest number first, so USR1 (renew) would run
+        # before USR2 (release) and leave wlan0 without an address.
+        os.kill(pid, signal.SIGUSR2)
+        deadline = time.monotonic() + 3
+        while _ipv4() is not None and time.monotonic() < deadline:
+            time.sleep(0.2)
+        os.kill(pid, signal.SIGUSR1)
+    else:
+        # No DHCP client running: the full apply path, then make sure the
+        # network the user chose is the one wlan0 came back on.
+        with common.Lock("network"):
+            common.run([NETAPPLY, "apply"], 60)
+        if wpa_status(ctrl).get("id") != target:
+            ctrl.request("SELECT_NETWORK %d" % target)
+            ctrl.wait_event(lambda e: "CTRL-EVENT-CONNECTED" in e, CONNECT_SECONDS)
+            ctrl.request("ENABLE_NETWORK all")
+    address = _wait_ipv4(ADDRESS_SECONDS)
+    note = None if address else "connected, but no address from this network's DHCP server yet"
+    return "dhcp", address, address is not None, note
+
+
+# Events that mean the passphrase was refused. wpa_supplicant marks the
+# network WRONG_KEY only after repeated failures; this Wi-Fi chip (BCM43430)
+# first reports the failed 4-way handshake and a disconnect with reason 15
+# (4-way handshake timeout), so those count too (G21). A disconnect that
+# wpa_supplicant itself caused (leaving the old network) does not.
+def _wrong_key_event(event, target):
+    if "CTRL-EVENT-SSID-TEMP-DISABLED" in event and "id=%d " % target in event + " ":
+        return "WRONG_KEY" in event
+    if "pre-shared key may be incorrect" in event:
+        return True
+    if "CTRL-EVENT-DISCONNECTED" in event and "locally_generated=1" not in event:
+        return re.search(r"\breason=15\b", event) is not None
+    return False
 
 
 def connect(spec):
@@ -378,12 +456,12 @@ def connect(spec):
         ctrl.attach()
         ctrl.ok("SELECT_NETWORK %d" % target)
         ev = ctrl.wait_event(
-            lambda e: "CTRL-EVENT-CONNECTED" in e
+            lambda e: "CTRL-EVENT-CONNECTED" in e or _wrong_key_event(e, target)
             or ("CTRL-EVENT-SSID-TEMP-DISABLED" in e and "id=%d " % target in e + " "),
             CONNECT_SECONDS)
         connected = ev is not None and "CTRL-EVENT-CONNECTED" in ev
         if not connected:
-            code = "WRONG_PASSWORD" if ev and "WRONG_KEY" in ev else "CONNECT_TIMEOUT"
+            code = "WRONG_PASSWORD" if ev and _wrong_key_event(ev, target) else "CONNECT_TIMEOUT"
             if new_id is not None:
                 ctrl.request("REMOVE_NETWORK %d" % new_id)
             if before.get("id") is not None and before["id"] != new_id:
@@ -401,18 +479,14 @@ def connect(spec):
         ctrl.request("ENABLE_NETWORK all")
         ctrl.ok("SAVE_CONFIG")
         after = wpa_status(ctrl)
-    readdress_rc = None
-    if before.get("ssid") != after.get("ssid") or before.get("state") != "COMPLETED":
-        readdress_rc = _readdress()
-    address = None
-    deadline = time.monotonic() + ADDRESS_SECONDS
-    while address is None:
-        address = _ipv4()
-        if address or time.monotonic() >= deadline:
-            break
-        time.sleep(0.5)
-    return {"result": "CONNECTED", "ssid": after.get("ssid") or ssid_name(raw),
-            "address": address, "readdress_rc": readdress_rc}
+        if before.get("ssid") != after.get("ssid") or before.get("state") != "COMPLETED":
+            mode, address, address_ok, note = _readdress(ctrl, target)
+        else:
+            mode, address, address_ok, note = "unchanged", _wait_ipv4(ADDRESS_SECONDS), True, None
+        final = wpa_status(ctrl)
+    return {"result": "CONNECTED", "ssid": final.get("ssid") or ssid_name(raw),
+            "address": address, "address_mode": mode, "address_ok": bool(address_ok),
+            "address_note": note}
 
 
 def forget(ssid):

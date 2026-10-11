@@ -76,6 +76,9 @@ class Env(object):
             "NEBULAOS_CLEAN_RESET_FLAG": os.path.join(self.tmp, "data", ".nebulaos-clean-reset"),
             "NEBULAOS_CMDLINE": os.path.join(self.tmp, "cmdline"),
             "NEBULAOS_SLOT_SWAP": os.path.join(self.bin, "slot-swap"),
+            # Wi-Fi re-addressing (G20/G5): never the host's udhcpc or arping.
+            "NEBULAOS_UDHCPC_PIDFILE": os.path.join(self.tmp, "udhcpc.pid"),
+            "NEBULAOS_ARPING": os.path.join(self.bin, "arping"),
             # MCU firmware (run 4): never the real upload dir, USB mount,
             # nebulaos-mcu or guard state.
             "NEBULAOS_MCU_UPLOAD_DIR": os.path.join(self.tmp, "mcu-upload"),
@@ -523,7 +526,8 @@ class FakeWpa(object):
     ATTACH/DETACH), replies first, then events to attached clients.
     `passwords` maps an SSID to the passphrase its access point accepts."""
 
-    def __init__(self, wifi_module, scan, passwords, saved=()):
+    def __init__(self, wifi_module, scan, passwords, saved=(), wrong_event="temp-disabled"):
+        self.wrong_event = wrong_event
         self.module = wifi_module
         self.real_transport = wifi_module.open_transport
         wifi_module.open_transport = lambda: FakeTransport(self)
@@ -645,6 +649,11 @@ class FakeWpa(object):
         if ok:
             self.current = nid
             self._event("<3>CTRL-EVENT-CONNECTED - Connection to aa:bb completed [id=%d id_str=]" % nid)
+        elif self.wrong_event == "reason15":
+            # What the BCM43430 reports first: a locally caused disconnect
+            # from the old network (must not count), then reason 15.
+            self._event("<3>CTRL-EVENT-DISCONNECTED bssid=aa:bb reason=3 locally_generated=1")
+            self._event("<3>CTRL-EVENT-DISCONNECTED bssid=aa:bb reason=15")
         else:
             self._event('<3>CTRL-EVENT-SSID-TEMP-DISABLED id=%d ssid="%s" auth_failures=1 '
                         'duration=10 reason=WRONG_KEY' % (nid, ssid))
@@ -665,9 +674,37 @@ class WifiTests(unittest.TestCase):
             self.wpa.close()
         self.e.cleanup()
 
-    def fake(self, passwords, saved=()):
-        self.wpa = FakeWpa(self.w, self.SCAN, passwords, saved)
+    def fake(self, passwords, saved=(), **kw):
+        self.wpa = FakeWpa(self.w, self.SCAN, passwords, saved, **kw)
         return self.wpa
+
+    def fake_udhcpc(self):
+        """A child process standing in for udhcpc: records USR1/USR2. It says
+        "ready" on stdout once its handlers are in place (a blocking read: other
+        tests in this file replace time.sleep)."""
+        import subprocess
+        log = os.path.join(self.e.tmp, "udhcpc.signals")
+        code = ("import os,signal,sys,time\n"
+                "def h(n,f):\n"
+                "    with open(sys.argv[1],'a') as fh: fh.write(str(n)+'\\n')\n"
+                "signal.signal(signal.SIGUSR1,h); signal.signal(signal.SIGUSR2,h)\n"
+                "print('ready', flush=True)\n"
+                "for _ in range(600): signal.pause() if hasattr(signal,'pause') else time.sleep(1)\n")
+        proc = subprocess.Popen([sys.executable, "-c", code, log], stdout=subprocess.PIPE)
+        self.assertEqual(proc.stdout.readline().strip(), b"ready")
+        open(os.environ["NEBULAOS_UDHCPC_PIDFILE"], "w").write("%d\n" % proc.pid)
+        self.addCleanup(proc.stdout.close)
+        self.addCleanup(proc.kill)
+        return log
+
+    def signals_seen(self, log, want):
+        """Waits (by real wall-clock polling) until `want` signals were logged."""
+        import select
+        for _ in range(200):
+            if os.path.exists(log) and len(open(log).read().split()) >= want:
+                break
+            select.select([], [], [], 0.05)
+        return open(log).read().split() if os.path.exists(log) else []
 
     def test_parse_scan(self):
         nets = self.w.parse_scan_results("h\n" + "\n".join(
@@ -713,7 +750,51 @@ class WifiTests(unittest.TestCase):
         self.assertFalse(any(n["disabled"] for n in saved.values()))
         # Hex SSID and hex PSK only: no passphrase or quote ever sent.
         self.assertFalse([c for c in wpa.commands if "pa\"ss" in c or "ss word" in c])
-        self.assertTrue(open(self.calls).read().startswith("apply"))   # re-addressed
+        self.assertTrue(open(self.calls).read().startswith("apply"))   # no udhcpc: full apply
+        self.assertEqual(out["address_mode"], "dhcp")
+
+    def test_dhcp_renew_without_link_bounce(self):
+        # G20: a running udhcpc is asked to release + renew; no netapply (no
+        # ifdown/ifup), so wpa_supplicant never gets to reselect a network.
+        log = self.fake_udhcpc()
+        self.fake({"Home": "secret123", "Cafe": None}, saved=[("Home", "secret123")])
+        out = self.w.connect({"ssid": "Cafe"})
+        self.assertEqual((out["result"], out["ssid"]), ("CONNECTED", "Cafe"))
+        import signal as _s
+        # Both arrive; their order is enforced by waiting for the release
+        # (this host has no wlan0 address, so that wait ends at once).
+        self.assertEqual(sorted(self.signals_seen(log, 2)),
+                         sorted([str(int(_s.SIGUSR2)), str(int(_s.SIGUSR1))]))
+        self.assertFalse(os.path.exists(self.calls))                     # no apply
+
+    def test_static_address_checked_on_new_network(self):
+        # G5: static mode keeps the address and reports when the gateway is silent.
+        self.e.common.atomic_write_json(self.e.network.CONFIG, {"schema": 1, "hostname": "nebulaos",
+            "ipv4": {"mode": "static", "address": "10.0.0.5", "prefix": 24,
+                     "gateway": "10.0.0.1", "dns": []}})
+        write_exe(os.environ["NEBULAOS_ARPING"], "exit 1\n")
+        self.fake({"Home": "secret123", "Cafe": None}, saved=[("Home", "secret123")])
+        out = self.w.connect({"ssid": "Cafe"})
+        self.assertEqual((out["address_mode"], out["address_ok"]), ("static", False))
+        self.assertIn("switch to DHCP", out["address_note"])
+        write_exe(os.environ["NEBULAOS_ARPING"], "exit 0\n")
+        out = self.w.connect({"ssid": "Home"})
+        self.assertEqual((out["address_mode"], out["address_ok"], out["address_note"]),
+                         ("static", True, None))
+
+    def test_wrong_password_reason15(self):
+        # G21: the BCM43430 reports disconnect reason 15, not WRONG_KEY.
+        wpa = self.fake({"Home": "secret123", "Office \u2713": "right-one"},
+                        saved=[("Home", "secret123")], wrong_event="reason15")
+        with self.assertRaises(self.e.common.OsConfigError) as cm:
+            self.w.connect({"ssid": "Office \u2713", "password": "wrong-one"})
+        self.assertEqual(cm.exception.code, "WRONG_PASSWORD")
+        self.assertEqual(wpa.current, 0)
+        self.assertFalse(self.w._wrong_key_event(
+            "<3>CTRL-EVENT-DISCONNECTED bssid=aa reason=3 locally_generated=1", 1))
+        self.assertTrue(self.w._wrong_key_event(
+            "<3>WPA: 4-Way Handshake failed - pre-shared key may be incorrect", 1))
+        self.assertFalse(self.w._wrong_key_event("<3>CTRL-EVENT-DISCONNECTED bssid=aa reason=150", 1))
 
     def test_wrong_password_reverts(self):
         wpa = self.fake({"Home": "secret123", "Office ✓": "right-one"},
@@ -755,6 +836,38 @@ class WifiTests(unittest.TestCase):
             self.w.forget("Old")
         self.assertEqual(cm.exception.code, "NOT_SAVED")
 
+    def test_changes_are_logged_without_secrets(self):
+        # G27: one system-log line per change; never the password; reads silent.
+        lines = []
+        fake = types.ModuleType("syslog")
+        fake.LOG_NOTICE, fake.LOG_WARNING = 5, 4
+        fake.openlog = lambda *a, **k: None
+        fake.closelog = lambda: None
+        fake.syslog = lambda prio, msg: lines.append((prio, msg))
+        old = sys.modules.get("syslog")
+        sys.modules["syslog"] = fake
+        try:
+            self.fake({"Home": "secret123", "Cafe": None}, saved=[("Home", "secret123")])
+            stdin = sys.stdin
+            sys.stdin = io.StringIO(json.dumps({"ssid": "Home", "password": "secret123"}))
+            try:
+                CliContractTests.run_cli(self, "wifi", "connect", "--stdin")
+            finally:
+                sys.stdin = stdin
+            CliContractTests.run_cli(self, "wifi", "status")
+            CliContractTests.run_cli(self, "network", "set-hostname", "--hostname", "bad_name")
+        finally:
+            if old is None:
+                del sys.modules["syslog"]
+            else:
+                sys.modules["syslog"] = old
+        text = " | ".join(m for _, m in lines)
+        self.assertEqual(len(lines), 2, text)                       # status not logged
+        self.assertIn("wifi connect ok result=CONNECTED ssid=Home", text)
+        self.assertNotIn("secret123", text)
+        self.assertIn("network set-hostname hostname=bad_name FAILED INVALID_HOSTNAME", text)
+        self.assertEqual(lines[1][0], 4)
+
     def test_cli_connect_reads_stdin_only(self):
         self.fake({"Home": "secret123"})
         rc, out = CliContractTests.run_cli(self, "wifi", "connect", "--ssid", "Home")
@@ -793,6 +906,16 @@ class SystemResetSlotTests(unittest.TestCase):
         info = self.s.info()
         self.assertIn("slot", info)
         self.assertFalse(info["clean_reset_pending"])
+
+    def test_after_clean_reset_marker(self):
+        # G2: info reports the marker until the screen acknowledges it.
+        self.assertIsNone(self.s.info()["after_clean_reset"])
+        os.makedirs(os.path.dirname(self.s.AFTER_RESET_MARKER), exist_ok=True)
+        open(self.s.AFTER_RESET_MARKER, "w").write("2026-10-12T01:00:00Z\n")
+        self.assertEqual(self.s.info()["after_clean_reset"], "2026-10-12T01:00:00Z")
+        self.assertEqual(self.s.ack_clean_reset()["result"], "ACKNOWLEDGED")
+        self.assertIsNone(self.s.info()["after_clean_reset"])
+        self.s.ack_clean_reset()      # idempotent
 
     def test_clean_reset_flag(self):
         self.assertEqual(self.s.request_clean_reset()["result"], "SCHEDULED")
@@ -1127,6 +1250,40 @@ class McuFlashFileTests(unittest.TestCase):
         self.assertIn("Image: raw", text)
 
 
+class McuVersionTests(unittest.TestCase):
+    """G32: the Klipper version inside an MCU image and the release check."""
+
+    def setUp(self):
+        self.e = Env()
+        os.environ["CREALITY_FLASH_PATH"] = MCU_TOOLS
+        self.m = self.e.mcu
+        self.img = self.m._image_module()
+
+    def tearDown(self):
+        self.e.cleanup()
+
+    def test_version_from_shipped_image(self):
+        builtin = os.path.join(OVERLAY, "opt", "nebulaos", "mcu-candidates", "candidate-001.bin")
+        data = open(builtin, "rb").read()
+        self.assertEqual(self.img.klipper_version(data), "v0.13.0-742-g01a9c2f92")
+        self.assertEqual(self.img.release_of("v0.13.0-742-g01a9c2f92"), "v0.13.0")
+        self.assertIsNone(self.img.klipper_version(b"\x78\x9c not zlib" + b"\x00" * 64))
+        import zlib
+        blob = b"\x00" * 16 + zlib.compress(b'{"version": "v0.12.0-1-gabc"}') + b"\x00" * 16
+        self.assertEqual(self.img.klipper_version(blob), "v0.12.0-1-gabc")
+
+    def test_release_note(self):
+        note = self.m._version_note
+        ok = {"valid": True, "native": False, "klipper_version": "v0.13.0-1-gdead"}
+        self.assertIsNone(note(ok, "v0.13.0-742-g01a9c2f92"))           # same release
+        old = dict(ok, klipper_version="v0.12.0-300-gbeef")
+        self.assertIn("Klipper v0.12.0, NebulaOS uses v0.13.0", note(old, "v0.13.0-742-g01a9c2f92"))
+        unknown = dict(ok, klipper_version=None)
+        self.assertIn("unknown", note(unknown, "v0.13.0-742-g01a9c2f92"))
+        self.assertIsNone(note(dict(old, valid=False), "v0.13.0-742-g01a9c2f92"))
+        self.assertIsNone(note(dict(old, native=True), "v0.13.0-742-g01a9c2f92"))
+
+
 class CliContractTests(unittest.TestCase):
     def setUp(self):
         self.e = Env()
@@ -1354,7 +1511,7 @@ class ComponentTests(unittest.TestCase):
 
     def test_wifi_endpoints(self):
         for p in ("wifi/status", "wifi/scan", "wifi/connect", "wifi/forget",
-                  "system/clean_reset", "system/swap_slot"):
+                  "system/clean_reset", "system/swap_slot", "system/ack_clean_reset"):
             self.assertIn("/machine/nebulaos/" + p, self.server.endpoints)
         self.call("/machine/nebulaos/wifi/connect", {"ssid": "Home", "password": "s3cret pw"})
         self.assertEqual(self.argv()[:3], ["wifi", "connect", "--stdin"])

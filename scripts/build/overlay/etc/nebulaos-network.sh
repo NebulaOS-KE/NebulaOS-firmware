@@ -148,6 +148,8 @@ nnet_render() {
 			echo "iface $NNET_IFACE inet dhcp"
 			echo "  hostname $NNET_HOSTNAME"
 			echo "  wait-delay 15"
+			# G23 (2026-10-12): lease events into the (persistent) system log.
+			echo "  udhcpc_opts -S"
 		fi
 	} > "$_tmp" 2>/dev/null || { rm -f "$_tmp"; return 1; }
 	mv -f "$_tmp" "$NNET_IFACES" 2>/dev/null || { rm -f "$_tmp"; return 1; }

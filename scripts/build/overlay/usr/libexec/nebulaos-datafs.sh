@@ -199,9 +199,19 @@ ndf_shutdown() {
 			|| ndf_log "shutdown: swapoff $NDF_SWAPFILE failed"
 	fi
 	sync
+	_failed_mounts=""
 	for _m in $(ndf_dependent_mounts); do
-		"$NDF_UMOUNT" "$_m" 2>/dev/null || ndf_log "shutdown: could not unmount $_m"
+		"$NDF_UMOUNT" "$_m" 2>/dev/null || { ndf_log "shutdown: could not unmount $_m"; _failed_mounts="$_failed_mounts $_m"; }
 	done
+	# G4 (2026-10-12): the persistent record of what still holds the
+	# filesystem right before the final unmount. The system log is already
+	# stopped at this point (and was in RAM before G24), so without this the
+	# reason for a "not clean" next boot was never visible anywhere.
+	_hold=$(ndf_holders)
+	_names=""
+	for _p in $_hold; do _names="$_names $_p:$(cat "/proc/$_p/comm" 2>/dev/null)"; done
+	printf '%s shutdown: before unmount - holders:%s; mounts left:%s\n' \
+		"$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${_names:- none}" "${_failed_mounts:- none}" >> "$_log" 2>/dev/null
 	sync
 	if "$NDF_UMOUNT" "$NDF_MNT" 2>/dev/null; then
 		NDF_SHUTDOWN_RESULT=CLEAN
@@ -214,7 +224,16 @@ ndf_shutdown() {
 	fi
 	case "$NDF_SHUTDOWN_RESULT" in
 		CLEAN|CLEAN_RO) ndf_log "shutdown: $NDF_MNT $NDF_SHUTDOWN_RESULT" ;;
-		*) ndf_log "shutdown: $NDF_MNT $NDF_SHUTDOWN_RESULT - left mounted read-write (holders: $(ndf_holders))" ;;
+		*)
+			ndf_log "shutdown: $NDF_MNT $NDF_SHUTDOWN_RESULT - left mounted read-write (holders: $(ndf_holders))"
+			# Still writable, so the outcome can go into the persistent record.
+			_names=""
+			for _p in $(ndf_holders); do _names="$_names $_p:$(cat "/proc/$_p/comm" 2>/dev/null)"; done
+			printf '%s shutdown: %s - left read-write; holders:%s; open for writing: %s\n' \
+				"$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$NDF_SHUTDOWN_RESULT" "${_names:- none}" \
+				"$(ls -l /proc/[0-9]*/fd 2>/dev/null | grep -c "$NDF_MNT")" >> "$_log" 2>/dev/null
+			sync
+			;;
 	esac
 	return 0
 }

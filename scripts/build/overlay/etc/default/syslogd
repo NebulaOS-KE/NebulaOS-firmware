@@ -1,0 +1,15 @@
+# Read by S01syslogd (Buildroot). G24 (2026-10-12): the system log is kept on
+# /usr/data, in Moonraker's logs folder, so it survives reboots and shows up in
+# Mainsail and on the screen's Logs page: system.log, rotated at 512 KiB, two
+# older copies (system.log.0, system.log.1) - at most about 1.5 MiB.
+#
+# S01syslogd runs after S01persistent-datastore (alphabetical within S01), so
+# /opt/printer_data is the persistent bind by now, and it stops before it at
+# shutdown, so the file is closed before /usr/data is unmounted.
+NEBULAOS_SYSLOG=/opt/printer_data/logs/system.log
+SYSLOGD_ARGS="-O $NEBULAOS_SYSLOG -s 512 -b 2"
+
+# Readers that still look in the old place (/var/log -> /tmp, RAM).
+mkdir -p /var/log "$(dirname "$NEBULAOS_SYSLOG")" 2>/dev/null
+[ -e /var/log/messages ] && [ ! -L /var/log/messages ] && rm -f /var/log/messages
+ln -sfn "$NEBULAOS_SYSLOG" /var/log/messages 2>/dev/null
