@@ -44,6 +44,7 @@ HOST=(
   tools/hwcap/gs_display.sh
   tools/hwcap/gs_services.sh
   tools/hwcap/gs_sleep.sh
+  tools/hwcap/gs_wifi.sh
   tools/hwcap/kduty.py
   tools/hwcap/lv_cam.sh
   tools/hwcap/lv_g10.sh

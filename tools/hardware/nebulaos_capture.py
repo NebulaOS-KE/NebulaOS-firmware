@@ -29,7 +29,7 @@ HWCAP_DIR = os.path.join(FW_ROOT, "tools", "hwcap")
 
 PROBES = ("schedsnap.py", "timerlat.py", "ptyrtt.py", "kduty.py", "adxl_overflows.py", "qualmcu.py",
           "lv_m1.py", "lv_s1.sh", "lv_s2.sh", "lv_g5.sh", "lv_cam.sh", "lv_g6.sh", "lv_g7.sh", "lv_g8.sh", "lv_g9.sh", "lv_g10.sh", "lv_ng1.py", "pf_cam.sh", "fb_ng3.sh", "fb_cam10.sh",
-          "gs_services.sh", "gs_display.sh", "gs_sleep.sh", "gs_bootmode.sh")
+          "gs_services.sh", "gs_display.sh", "gs_sleep.sh", "gs_bootmode.sh", "gs_wifi.sh")
 # Pinned data files embedded compressed (dropbear refuses a command longer than
 # MAX_CMD_LEN = 9000 bytes, so a whole profile must stay under SCRIPT_LIMIT).
 DATA_FILES = ("klipper-dict-board.json",)
@@ -892,6 +892,8 @@ EXERCISE_PROFILES["fb-camera-10"] = (
 # Read only: [nebulaos] component, network/hostname/mDNS, SFTP, sudo adapter
 # refusals, PLR status, boot display, backlight. See tools/hwcap/gs_services.sh.
 CAPTURE_PROFILES["gs-services"] = (". $T/gs_services.sh", False, "gs_services.sh", 240)
+# Wi-Fi diagnosis (Q3), read only, keys redacted. See tools/hwcap/gs_wifi.sh.
+CAPTURE_PROFILES["gs-wifi"] = (". $T/gs_wifi.sh", False, "gs_wifi.sh", 120)
 # Self-undoing backlight brightness exercise through nebulaos-osconfig (the GUI
 # path, standard backlight device). The undo runs only once gs_display.sh has
 # recorded the starting state: the original sysfs brightness and the original
