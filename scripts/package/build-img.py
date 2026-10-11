@@ -88,6 +88,9 @@ import tempfile
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "tools", "emmc"))
 import nebulaos_layout as layout  # noqa: E402
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import rtos_logo  # noqa: E402
+
 CHUNK_BYTES = 1048576
 BOARD_SHORT_NAME = "F005"
 SECRET_INPUT = "%sC3_7e_bz" % BOARD_SHORT_NAME
@@ -154,6 +157,17 @@ def manifest_get(path, key):
             if line.startswith(key + "="):
                 return line.split("=", 1)[1].strip()
     return None
+
+
+def rtos_provenance(digest):
+    """Named from the pins, never from what a caller says the file is."""
+    if digest is None:
+        return "absent"
+    if digest == rtos_logo.STOCK_ZERO_SHA256:
+        return "stock copy, carried through unchanged"
+    if digest == rtos_logo.NEBULAOS_ZERO_SHA256:
+        return "stock zero.bin with the NebulaOS boot logo in its logo slot (pinned)"
+    return "UNPINNED (neither the stock nor the NebulaOS RTOS image)"
 
 
 def chunk_payload(source, out_dir, name):
@@ -241,14 +255,22 @@ def build(args):
         # rtos/zero.bin. A two-record manifest is not the vendor shape, and a
         # structural validator cannot discover that by construction.
         #
-        # zero.bin is stock RTOS material. NebulaOS has no reason to replace it,
-        # so the stock copy is carried through unchanged - retained, not
-        # regenerated. It comes from the official .ingenic template, which is the
-        # only place this project has a genuine copy of it.
-        rtos_md5 = rtos_size = None
+        # zero.bin is stock RTOS material, from the official .ingenic template
+        # (the only genuine copy this project has). package-release.sh passes
+        # the stock image with ONE change - NebulaOS's boot logo in its logo
+        # slot (rtos_logo.py). The record keeps the vendor name zero.bin.
+        # UNVERIFIED: which rtos partition the stock updater writes this
+        # record to has not been read from its scripts. The expectation is the
+        # inactive set's (rtos2 when applied from stock), the one SPL loads
+        # with ota:kernel2; it must be confirmed before relying on the .img to
+        # deliver the logo. Either way the image differs from stock only in
+        # the logo JPEG, so a stock boot from it shows the NebulaOS logo at
+        # worst - the code is stock.
+        rtos_md5 = rtos_size = rtos_sha = None
         rtos_chunks = []
         if args.rtos:
             rtos_size = os.path.getsize(args.rtos)
+            rtos_sha = sha256_file(args.rtos)
             rtos_md5, rtos_chunks = chunk_payload(args.rtos, payload_dir, "zero.bin")
 
         # The metadata the updater parses. Sizes and digests are the REAL ones
@@ -358,7 +380,8 @@ def build(args):
         "RTOS_MD5=%s" % (rtos_md5 or ""),
         "RTOS_SIZE=%s" % (rtos_size if rtos_size is not None else ""),
         "RTOS_CHUNKS=%d" % len(rtos_chunks),
-        "RTOS_PROVENANCE=%s" % ("stock copy, carried through unchanged" if args.rtos else "absent"),
+        "RTOS_SHA256=%s" % (rtos_sha or ""),
+        "RTOS_PROVENANCE=%s" % rtos_provenance(rtos_sha),
         "IMG_SHA256=%s" % img_sha,
         "IMG_SIZE=%d" % os.path.getsize(out),
         "IMG_CHUNK_BYTES=%d" % CHUNK_BYTES,
@@ -399,7 +422,7 @@ def main(argv):
     parser.add_argument("--ota-config-template",
                         help="a vendor ota_config.in to copy instead of synthesising one")
     parser.add_argument("--rtos",
-                        help="stock zero.bin (RTOS). The real vendor ota_update.in lists three "
+                        help="the RTOS zero.bin: stock, or stock with the NebulaOS logo. The real vendor ota_update.in lists three "
                              "payloads; omitting this produces a two-record manifest that does "
                              "not match the vendor shape. Extracted from the official .ingenic.")
     return build(parser.parse_args(argv))
