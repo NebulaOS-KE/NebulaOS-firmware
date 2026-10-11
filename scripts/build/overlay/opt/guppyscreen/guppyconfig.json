@@ -23,6 +23,5 @@
     }
   },
   "guppy_init_script": "/etc/init.d/S58guppyscreen",
-  "thumbnail_path": "/opt/guppyscreen/thumbnails",
-  "wpa_supplicant": "/var/run/wpa_supplicant"
+  "thumbnail_path": "/opt/guppyscreen/thumbnails"
 }

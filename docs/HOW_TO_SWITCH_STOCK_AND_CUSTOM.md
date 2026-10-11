@@ -15,6 +15,20 @@ way** that only matters if the easy way is unavailable (e.g. the printer won't c
 
 ---
 
+## From the touchscreen (NebulaOS to the other slot)
+
+On NebulaOS: **Settings → Reset → Swap boot slot (A/B)**. After you confirm, NebulaOS sets
+the boot marker to the other slot and restarts at once. It refuses while a print is running.
+
+This only goes one way. To come back, use **Method 1** from the other system (Creality's own
+switcher, step 3), or **Method 2** if you can't reach it over the network.
+
+**Do not switch the printer off and on while the other slot is running.** A real power cycle
+lets Creality's firmware re-flash the printer board with its own MCU firmware (see the warning
+in Method 1). A plain `reboot` is safe.
+
+---
+
 ## Method 1: The easy way (SSH) — use this one
 
 You need: a computer, and the printer connected to your Wi-Fi network (either OS can be running

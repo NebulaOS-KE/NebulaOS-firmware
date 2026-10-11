@@ -792,9 +792,11 @@ rm -rf "$GUPPYSCREEN_SRC/build" "$GUPPYSCREEN_SRC/libhv/build-mips" "$GUPPYSCREE
 		export PATH="$GUPPYSCREEN_TOOLCHAIN_BIN:$PATH"
 	fi
 	# wiki/Building-from-Source.md step 3 ("Build the bundled libraries") -
-	# scripts/build-mips.sh backs up and restores these three native
+	# scripts/build-mips.sh backs up and restores these two native
 	# archives around its own MIPS rebuild, so they must already exist.
-	# Deliberately NOT setting CROSS_COMPILE for these three - the top-level
+	# (The wpa_supplicant client library is gone: GuppyScreen's Wi-Fi goes
+	# through machine.nebulaos.wifi.* since 2026-10-11.)
+	# Deliberately NOT setting CROSS_COMPILE for these two - the top-level
 	# Makefile switches CC/AR/etc the moment CROSS_COMPILE is non-empty (see
 	# its own `ifdef CROSS_COMPILE` block), and these three targets need a
 	# plain NATIVE build here (confirmed: setting it broke `make libhv.a`
@@ -802,7 +804,6 @@ rm -rf "$GUPPYSCREEN_SRC/build" "$GUPPYSCREEN_SRC/libhv/build-mips" "$GUPPYSCREE
 	# cross-compile correctly through this simple CC override, unlike
 	# build-mips.sh below, which cross-compiles libhv/spdlog itself via a
 	# proper CMake toolchain file).
-	make wpaclient
 	make libhv.a
 	make libspdlog.a
 	# build-mips.sh defaults CROSS_COMPILE to mipsel-linux- itself when
