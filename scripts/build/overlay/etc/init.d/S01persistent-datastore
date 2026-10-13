@@ -106,6 +106,9 @@ start() {
 	# docs/NEBULAOS_CONFIG_MATERIALIZATION.md. Deliberately just an empty
 	# directory here; nothing seeds content into it.
 	mkdir -p "$PDATA/config/firmware/mcu"
+	# On-printer image updates (2026-10-14): system images (.img) uploaded in
+	# Mainsail land here, next to the MCU firmware folder.
+	mkdir -p "$PDATA/config/firmware/os"
 
 	# /opt/printer_data ships baked-in defaults on the read-only squashfs
 	# (printer.cfg, moonraker.conf) for the seed step above - bind-mounting

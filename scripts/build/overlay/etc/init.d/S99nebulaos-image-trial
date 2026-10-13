@@ -1,0 +1,25 @@
+#!/bin/sh
+#
+# S99nebulaos-image-trial - the one-time automatic fallback after an on-printer
+# image install (human decision 2026-10-14). When the install left a trial
+# record for this slot, `nebulaos-osconfig image trial` waits (in the
+# background, the boot is not held up) for Klipper and the screen to come up:
+# then the new version is confirmed; otherwise the marker goes back to the
+# previous slot ONCE and the printer reboots. The record is removed before
+# that switch, so it can never loop. Limit: a kernel that does not start at all
+# never gets here (the bootloader counts no boots) - that needs USB recovery.
+
+TRIAL=/usr/data/nebulaos/system/image-update-trial.json
+OSCONFIG=/usr/libexec/nebulaos/nebulaos-osconfig
+
+case "$1" in
+	start)
+		if [ -f "$TRIAL" ] && [ -x "$OSCONFIG" ]; then
+			echo "S99nebulaos-image-trial: checking the newly installed version in the background"
+			( "$OSCONFIG" image trial >/dev/null 2>&1 & )
+		fi
+		;;
+	*)
+		;;
+esac
+exit 0

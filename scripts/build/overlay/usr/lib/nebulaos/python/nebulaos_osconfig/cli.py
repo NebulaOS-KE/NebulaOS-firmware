@@ -4,6 +4,9 @@
 #   nebulaos-osconfig system info
 #   nebulaos-osconfig system clean-reset|cancel-clean-reset|ack-clean-reset
 #   nebulaos-osconfig system swap-slot|keep-slot
+#   nebulaos-osconfig image list|status|ack
+#   nebulaos-osconfig image check --file ID
+#   nebulaos-osconfig image install --file ID --sha256 HEX   (starts "image worker")
 #   nebulaos-osconfig wifi status|scan
 #   nebulaos-osconfig wifi connect --stdin     {"ssid": ..., "password": ...}
 #   nebulaos-osconfig wifi forget --ssid SSID
@@ -47,14 +50,15 @@ def _opts(args, allowed):
 
 READ_ONLY = {("system", "info"), ("network", "status"),
              ("boot-display", "status"), ("display", "status"),
-             ("wifi", "status"), ("mcu", "status"), ("mcu", "list")}
+             ("wifi", "status"), ("mcu", "status"), ("mcu", "list"),
+             ("image", "list"), ("image", "status")}
 
 # G27 (2026-10-12): every change is one line in the system log (persistent
 # system.log), success or failure. Read-only verbs are not logged (the screen
 # polls them), nor is anything from stdin (the Wi-Fi password arrives there).
 # Display sleep/wake run at every screen timeout, so only failures of those.
 _QUIET_OK = {("display", "sleep"), ("display", "wake"), ("boot-display", "render")}
-_LOGGED_ARGS = ("--hostname", "--ssid", "--mode", "--file", "--level")
+_LOGGED_ARGS = ("--hostname", "--ssid", "--mode", "--file", "--level", "--sha256")
 _LOGGED_RESULT = ("result", "ssid", "address", "address_mode", "address_note",
                   "next_boot", "applies")
 
@@ -88,10 +92,19 @@ def _dispatch(argv):
     if len(argv) < 2:
         raise common.invalid("USAGE", "usage: nebulaos-osconfig DOMAIN VERB [options]")
     domain, verb, rest = argv[0], argv[1], argv[2:]
+    if (domain, verb) == ("image", "trial"):
+        _opts(rest, {})
+        return image.trial()
+    if (domain, verb) == ("image", "worker"):
+        o = _opts(rest, {"file": True, "sha256": True})
+        image.run_job(o.get("file"), o.get("sha256"))
+        return {"result": "DONE"}
     if (domain, verb) in READ_ONLY:
         _opts(rest, {})
         if domain == "mcu":
             return mcu.status() if verb == "status" else mcu.list_files()
+        if domain == "image":
+            return image.status() if verb == "status" else image.list_files()
         return {"system": system.info, "network": network.status,
                 "boot-display": bootdisplay.status, "display": display.status,
                 "wifi": wifi.status}[domain]()
@@ -132,6 +145,15 @@ def _dispatch(argv):
             if verb in verbs:
                 _opts(rest, {})
                 return verbs[verb]()
+        elif domain == "image":
+            if verb == "check":
+                return image.check(_opts(rest, {"file": True}).get("file"))
+            if verb == "install":
+                o = _opts(rest, {"file": True, "sha256": True})
+                return image.install(o.get("file"), o.get("sha256"))
+            if verb == "ack":
+                _opts(rest, {})
+                return image.ack()
         elif domain == "wifi":
             if verb == "scan":
                 _opts(rest, {})

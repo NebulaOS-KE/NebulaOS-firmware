@@ -96,7 +96,7 @@ class Env(object):
             if name.startswith("nebulaos_osconfig"):
                 del sys.modules[name]
         self.pkg = importlib.import_module("nebulaos_osconfig")
-        for mod in ("common", "network", "display", "bootdisplay", "system", "wifi", "mcu",
+        for mod in ("common", "network", "display", "bootdisplay", "system", "wifi", "mcu", "image",
                     "cli"):
             setattr(self, mod, importlib.import_module("nebulaos_osconfig." + mod))
 
@@ -925,16 +925,19 @@ class SystemResetSlotTests(unittest.TestCase):
         self.assertFalse(os.path.exists(self.s.CLEAN_RESET_FLAG))
         self.s.cancel_clean_reset()     # idempotent
 
-    def test_swap_only_from_nebulaos_slot(self):
+    def test_swap_either_slot(self):
+        # 2026-10-14: NebulaOS may run from either slot; swap goes to the other.
+        self.cmdline("/dev/mmcblk0p8")
+        self.assertEqual(self.s.swap_slot()["next_boot"], "A")
+        self.s.keep_slot()
         self.cmdline("/dev/mmcblk0p7")
+        self.assertEqual(self.s.swap_slot()["next_boot"], "B")
+        self.assertEqual(open(self.log).read().split(), ["A", "B", "B"])
+        self.cmdline("/dev/sda1")
         with self.assertRaises(self.e.common.OsConfigError) as cm:
             self.s.swap_slot()
-        self.assertEqual(cm.exception.code, "NOT_ON_NEBULAOS_SLOT")
-        self.assertFalse(os.path.exists(self.log))
+        self.assertEqual(cm.exception.code, "SLOT_UNKNOWN")
         self.cmdline("/dev/mmcblk0p8")
-        self.assertEqual(self.s.swap_slot()["result"], "ARMED")
-        self.s.keep_slot()
-        self.assertEqual(open(self.log).read().split(), ["other", "nebulaos"])
         open(self.log + ".fail", "w").close()
         with self.assertRaises(self.e.common.OsConfigError) as cm:
             self.s.swap_slot()
@@ -1284,6 +1287,248 @@ class McuVersionTests(unittest.TestCase):
         self.assertIsNone(note(dict(old, native=True), "v0.13.0-742-g01a9c2f92"))
 
 
+FAKE_7ZA = r"""#!/usr/bin/env python3
+# Fake 7za for the image tests: an "archive" is a text file naming a fixture
+# directory; l -slt / x -so / x -o behave like 7za on that tree.
+import fnmatch, os, shutil, sys
+args = [a for a in sys.argv[1:] if not a.startswith("-p") and a != "-y"]
+if "-p" + os.environ["FAKE_7Z_PASSWORD"] not in sys.argv:
+    sys.exit(2)
+cmd = args[0]
+outdir = None
+rest = []
+for a in args[1:]:
+    if a.startswith("-o"):
+        outdir = a[2:]
+    elif a != "-slt" and a != "-so":
+        rest.append(a)
+archive = rest[0]
+root = open(archive).read().strip()
+files = []
+for d, _, names in os.walk(root):
+    for n in names:
+        files.append(os.path.relpath(os.path.join(d, n), root))
+files.sort()
+if cmd == "l":
+    print("Path = " + archive)
+    for f in files:
+        print("Path = " + f)
+elif "-so" in sys.argv:
+    sys.stdout.write(open(os.path.join(root, rest[1])).read())
+else:
+    for f in files:
+        if any(fnmatch.fnmatch(f, pat) for pat in rest[1:]):
+            dst = os.path.join(outdir, f)
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            shutil.copyfile(os.path.join(root, f), dst)
+"""
+
+
+class ImageTests(unittest.TestCase):
+    """On-printer image install (2026-10-14) against fake 7za, block devices,
+    sysfs and cmdline - never a real partition."""
+
+    def setUp(self):
+        self.e = Env()
+        self.i = self.e.image
+        t = self.e.tmp
+        self.dev = os.path.join(t, "dev")
+        self.sys = os.path.join(t, "sys")
+        os.makedirs(self.dev)
+        for part, name, mb in (("mmcblk0p5", "kernel", 8), ("mmcblk0p6", "kernel2", 8),
+                               ("mmcblk0p7", "rootfs", 16), ("mmcblk0p8", "rootfs2", 16)):
+            open(os.path.join(self.dev, part), "wb").write(b"\x00" * (mb * 1048576))
+            os.makedirs(os.path.join(self.sys, part))
+            open(os.path.join(self.sys, part, "uevent"), "w").write("PARTNAME=%s\n" % name)
+            open(os.path.join(self.sys, part, "size"), "w").write("%d\n" % (mb * 2048))
+        self.mounts = os.path.join(t, "mounts")
+        open(self.mounts, "w").write("/dev/mmcblk0p8 / squashfs ro 0 0\n")
+        self.upload = os.path.join(t, "os")
+        os.makedirs(self.upload)
+        self.fake = os.path.join(self.e.bin, "7za")
+        open(self.fake, "w").write(FAKE_7ZA)
+        os.chmod(self.fake, 0o755)
+        self.calls = os.path.join(t, "calls")
+        write_exe(os.path.join(self.e.bin, "swap"), 'echo "swap $1" >> "%s"\n' % self.calls)
+        write_exe(os.path.join(self.e.bin, "reboot"), 'echo reboot >> "%s"\n' % self.calls)
+        os.environ.update({"FAKE_7Z_PASSWORD": self.i.ENVELOPE_PASSWORD})
+        m = self.i
+        m.SEVENZA, m.UPLOAD_DIR, m.DEV_DIR, m.SYS_BLOCK = self.fake, self.upload, self.dev, self.sys
+        m.PROC_MOUNTS, m.SLOT_SWAP, m.REBOOT = self.mounts, os.path.join(self.e.bin, "swap"), os.path.join(self.e.bin, "reboot")
+        m.WORK_PARENT = os.path.join(t, "work")
+        m.JOB_DIR = os.path.join(t, "job")
+        m.JOB_STATE = os.path.join(m.JOB_DIR, "state.json")
+        m.TRIAL = os.path.join(t, "trial.json")
+        m.LAST = os.path.join(t, "last.json")
+        self.cmdline("B")
+
+    def tearDown(self):
+        self.e.cleanup()
+
+    def cmdline(self, slot):
+        open(os.environ["NEBULAOS_CMDLINE"], "w").write(
+            "console=ttyS4 root=%s rootfstype=squashfs\n" % {"A": "/dev/mmcblk0p7", "B": "/dev/mmcblk0p8"}[slot])
+
+    def kernel(self, name="Linux-6.6.157-rt79", arch=5, size=1500000):
+        head = bytearray(64)
+        struct.pack_into(">I", head, 0, 0x27051956)
+        head[29] = arch
+        head[32:32 + len(name)] = name.encode()
+        return bytes(head) + os.urandom(size - 64)
+
+    def package(self, fname="nebula.img", kernel=None, rootfs=None, corrupt=None):
+        import hashlib
+        kernel = kernel if kernel is not None else self.kernel()
+        rootfs = rootfs if rootfs is not None else b"hsqs" + os.urandom(3 * 1048576 + 1234)
+        tree = os.path.join(self.e.tmp, "pkg-" + fname)
+        inner = os.path.join(tree, "Ender-3_V3_KE_F005_ota_img_V9.9", "ota_v9.9")
+        os.makedirs(inner)
+        records = ["ota_version=9.9", ""]
+        for kind, name, data in (("kernel", "xImage", kernel), ("rootfs", "rootfs.squashfs", rootfs)):
+            whole = hashlib.md5(data).hexdigest()
+            prev, sums = whole, []
+            for idx in range(0, (len(data) + 1048575) // 1048576):
+                chunk = data[idx * 1048576:(idx + 1) * 1048576]
+                if corrupt == (name, idx):
+                    chunk = b"X" + chunk[1:]
+                open(os.path.join(inner, "%s.%04d.%s" % (name, idx, prev)), "wb").write(chunk)
+                prev = hashlib.md5(data[idx * 1048576:(idx + 1) * 1048576]).hexdigest()
+                sums.append(prev)
+            open(os.path.join(inner, "ota_md5_%s.%s" % (name, whole)), "w").write("\n".join(sums) + "\n")
+            records += ["img_type=" + kind, "img_name=" + name, "img_size=%d" % len(data),
+                        "img_md5=" + whole, ""]
+        open(os.path.join(inner, "ota_update.in"), "w").write("\n".join(records))
+        archive = os.path.join(self.upload, fname)
+        open(archive, "w").write(tree)
+        return archive, kernel, rootfs
+
+    def test_list_check_and_slots(self):
+        self.package()
+        open(os.path.join(self.dev, "mmcblk0p6"), "r+b").write(self.kernel()[:64])
+        open(os.path.join(self.dev, "mmcblk0p5"), "r+b").write(self.kernel("Linux-4.4.94")[:64])
+        out = self.i.list_files()
+        self.assertEqual([f["id"] for f in out["files"]], ["upload/nebula.img"])
+        self.assertEqual(out["slots"]["running"], "B")
+        self.assertEqual((out["slots"]["A"]["system"], out["slots"]["B"]["system"]), ("creality", "nebulaos"))
+        c = self.i.check("upload/nebula.img")
+        self.assertEqual((c["result"], c["version"], c["target"]), ("OK", "9.9", "A"))
+        self.assertEqual(len(c["sha256"]), 64)
+
+    def test_bad_packages_refused(self):
+        archive, _, _ = self.package()
+        open(archive, "w").write(os.path.join(self.e.tmp, "nowhere"))
+        with self.assertRaises(self.e.common.OsConfigError):
+            self.i.check("upload/nebula.img")
+        for bad in ("../x.img", "upload/../../etc/passwd", "usb/x", "", None):
+            with self.assertRaises(self.e.common.OsConfigError):
+                self.i.resolve(bad)
+
+    def test_install_writes_inactive_slot_and_arms_trial(self):
+        archive, kernel, rootfs = self.package()
+        sha = self.i.sha256_file(archive)
+        self.i.run_job("upload/nebula.img", sha)
+        st = json.load(open(self.i.JOB_STATE))
+        self.assertEqual(st["state"], "restarting", st)
+        self.assertEqual(open(os.path.join(self.dev, "mmcblk0p5"), "rb").read(len(kernel)), kernel)
+        self.assertEqual(open(os.path.join(self.dev, "mmcblk0p7"), "rb").read(len(rootfs)), rootfs)
+        # the running slot (B) is untouched
+        self.assertEqual(open(os.path.join(self.dev, "mmcblk0p8"), "rb").read(16), b"\x00" * 16)
+        self.assertEqual(open(self.calls).read().split("\n")[:2], ["swap A", "reboot"])
+        trial = json.load(open(self.i.TRIAL))
+        self.assertEqual((trial["from"], trial["to"], trial["system"]), ("B", "A", "nebulaos"))
+        self.assertFalse(os.listdir(self.i.WORK_PARENT))           # work dir cleaned
+
+    def test_install_from_slot_a_writes_slot_b(self):
+        self.cmdline("A")
+        open(self.mounts, "w").write("/dev/mmcblk0p7 / squashfs ro 0 0\n")
+        archive, kernel, _ = self.package()
+        self.i.run_job("upload/nebula.img", self.i.sha256_file(archive))
+        self.assertEqual(open(os.path.join(self.dev, "mmcblk0p6"), "rb").read(len(kernel)), kernel)
+        self.assertIn("swap B", open(self.calls).read())
+
+    def test_damaged_chunk_never_switches(self):
+        archive, _, _ = self.package(corrupt=("rootfs.squashfs", 2))
+        self.i.run_job("upload/nebula.img", self.i.sha256_file(archive))
+        st = json.load(open(self.i.JOB_STATE))
+        self.assertEqual((st["state"], st["error"]), ("failed", "INVALID_IMAGE"))
+        self.assertFalse(os.path.exists(self.calls))                 # no swap, no reboot
+        self.assertFalse(os.path.exists(self.i.TRIAL))
+
+    def test_refusals_before_writing(self):
+        archive, _, _ = self.package()
+        sha = self.i.sha256_file(archive)
+        self.i.run_job("upload/nebula.img", "0" * 64)                # file changed
+        self.assertEqual(json.load(open(self.i.JOB_STATE))["error"], "FILE_CHANGED")
+        open(os.path.join(self.sys, "mmcblk0p7", "uevent"), "w").write("PARTNAME=userdata\n")
+        self.i.run_job("upload/nebula.img", sha)                     # wrong partition
+        self.assertEqual(json.load(open(self.i.JOB_STATE))["error"], "PARTITION_MISMATCH")
+        open(os.path.join(self.sys, "mmcblk0p7", "uevent"), "w").write("PARTNAME=rootfs\n")
+        open(self.mounts, "a").write("/dev/mmcblk0p7 /mnt ext4 ro 0 0\n")
+        self.i.run_job("upload/nebula.img", sha)                     # target mounted
+        self.assertEqual(json.load(open(self.i.JOB_STATE))["error"], "TARGET_MOUNTED")
+        open(os.environ["NEBULAOS_CMDLINE"], "w").write("root=/dev/sda1\n")
+        self.i.run_job("upload/nebula.img", sha)                     # unknown slot
+        self.assertEqual(json.load(open(self.i.JOB_STATE))["error"], "SLOT_UNKNOWN")
+        self.assertFalse(os.path.exists(self.calls))
+        self.assertEqual(open(os.path.join(self.dev, "mmcblk0p5"), "rb").read(16), b"\x00" * 16)
+
+    def test_non_mips_kernel_refused(self):
+        archive, _, _ = self.package(kernel=self.kernel(arch=2))
+        self.i.run_job("upload/nebula.img", self.i.sha256_file(archive))
+        self.assertIn("MIPS", json.load(open(self.i.JOB_STATE))["message"])
+
+    def test_install_starts_worker_and_refuses_busy(self):
+        archive, _, _ = self.package()
+        started = []
+        import subprocess as sp
+        old = sp.Popen
+        sp.Popen = lambda *a, **k: started.append(a[0])
+        try:
+            with self.assertRaises(self.e.common.OsConfigError):
+                self.i.install("upload/nebula.img", "nothex")
+            out = self.i.install("upload/nebula.img", self.i.sha256_file(archive))
+            self.assertEqual(out["result"], "STARTED")
+            self.assertEqual(started[0][1:3], ["image", "worker"])
+            with self.assertRaises(self.e.common.OsConfigError) as cm:
+                self.i.install("upload/nebula.img", self.i.sha256_file(archive))
+            self.assertEqual(cm.exception.code, "BUSY")
+        finally:
+            sp.Popen = old
+
+    def trial_file(self, frm="B", to="A"):
+        json.dump({"from": frm, "to": to, "file": "upload/nebula.img", "version": "9.9",
+                   "system": "nebulaos"}, open(self.i.TRIAL, "w"))
+
+    def test_trial_confirmed(self):
+        self.cmdline("A")
+        self.trial_file()
+        self.i._klipper_ready = lambda: True
+        self.i._gui_running = lambda: True
+        self.assertEqual(self.i.trial()["result"], "CONFIRMED")
+        self.assertFalse(os.path.exists(self.i.TRIAL))
+        self.assertEqual(self.i.status()["last"]["result"], "CONFIRMED")
+        self.i.ack()
+        self.assertIsNone(self.i.status()["last"])
+
+    def test_trial_rolls_back_once(self):
+        self.cmdline("A")
+        self.trial_file()
+        self.i.TRIAL_SECONDS, self.i.TRIAL_POLL = 0, 0
+        self.i._klipper_ready = lambda: False
+        self.i._gui_running = lambda: True
+        self.assertEqual(self.i.trial()["result"], "ROLLED_BACK")
+        self.assertEqual(open(self.calls).read().split(), ["swap", "B", "reboot"])
+        self.assertFalse(os.path.exists(self.i.TRIAL))               # never a second time
+        self.assertEqual(self.i.trial()["result"], "NO_TRIAL")
+        self.assertEqual(json.load(open(self.i.LAST))["result"], "ROLLED_BACK")
+
+    def test_trial_not_started(self):
+        self.cmdline("B")                                            # still the old slot
+        self.trial_file()
+        self.assertEqual(self.i.trial()["result"], "NOT_STARTED")
+        self.assertFalse(os.path.exists(self.calls))
+
+
 class CliContractTests(unittest.TestCase):
     def setUp(self):
         self.e = Env()
@@ -1511,7 +1756,8 @@ class ComponentTests(unittest.TestCase):
 
     def test_wifi_endpoints(self):
         for p in ("wifi/status", "wifi/scan", "wifi/connect", "wifi/forget",
-                  "system/clean_reset", "system/swap_slot", "system/ack_clean_reset"):
+                  "system/clean_reset", "system/swap_slot", "system/ack_clean_reset",
+                  "image/list", "image/status", "image/check", "image/install", "image/ack"):
             self.assertIn("/machine/nebulaos/" + p, self.server.endpoints)
         self.call("/machine/nebulaos/wifi/connect", {"ssid": "Home", "password": "s3cret pw"})
         self.assertEqual(self.argv()[:3], ["wifi", "connect", "--stdin"])

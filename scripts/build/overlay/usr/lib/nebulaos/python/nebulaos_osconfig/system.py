@@ -21,8 +21,8 @@ CLEAN_RESET_FLAG = os.environ.get("NEBULAOS_CLEAN_RESET_FLAG",
 AFTER_RESET_MARKER = os.path.join(common.NEBULAOS_ROOT, ".after-clean-reset")
 CMDLINE = os.environ.get("NEBULAOS_CMDLINE", "/proc/cmdline")
 SLOT_SWAP = os.environ.get("NEBULAOS_SLOT_SWAP", "/usr/libexec/nebulaos/nebulaos-slot-swap")
-# docs/A_B_SLOT_MODEL.md: slot 1 = kernel/rootfs p5/p7 (the other system),
-# slot 2 = p6/p8 (NebulaOS's permanent home).
+# docs/A_B_SLOT_MODEL.md: slot 1 (A) = kernel/rootfs p5/p7, slot 2 (B) =
+# p6/p8. NebulaOS may run from either since 2026-10-14 (image updates).
 ROOT_SLOTS = {"/dev/mmcblk0p7": "A", "/dev/mmcblk0p8": "B"}
 
 
@@ -126,14 +126,20 @@ def _slot_swap(target):
 
 
 def swap_slot():
-    if boot_slot() != "B":
-        raise common.OsConfigError("NOT_ON_NEBULAOS_SLOT",
-                                   "NebulaOS is not running from its own slot; "
-                                   "nothing was changed")
-    _slot_swap("other")
-    return {"result": "ARMED", "next_boot": "A", "applies": "next boot"}
+    """Next boot from the other slot (A <-> B), whichever is running."""
+    current = boot_slot()
+    if current not in ("A", "B"):
+        raise common.OsConfigError("SLOT_UNKNOWN",
+                                   "cannot tell which slot is running; nothing was changed")
+    target = "A" if current == "B" else "B"
+    _slot_swap(target)
+    return {"result": "ARMED", "next_boot": target, "from": current, "applies": "next boot"}
 
 
 def keep_slot():
-    _slot_swap("nebulaos")
-    return {"result": "DISARMED", "next_boot": "B"}
+    """Undo swap_slot: next boot from the running slot again."""
+    current = boot_slot()
+    if current not in ("A", "B"):
+        raise common.OsConfigError("SLOT_UNKNOWN", "cannot tell which slot is running")
+    _slot_swap(current)
+    return {"result": "DISARMED", "next_boot": current}

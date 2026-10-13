@@ -82,6 +82,11 @@ class NebulaOS:
             ("/machine/nebulaos/system/swap_slot", RequestType.POST, self._swap_slot),
             ("/machine/nebulaos/system/ack_clean_reset", RequestType.POST,
              self._ack_clean_reset),
+            ("/machine/nebulaos/image/list", RequestType.GET, self._image_list),
+            ("/machine/nebulaos/image/status", RequestType.GET, self._image_status),
+            ("/machine/nebulaos/image/check", RequestType.POST, self._image_check),
+            ("/machine/nebulaos/image/install", RequestType.POST, self._image_install),
+            ("/machine/nebulaos/image/ack", RequestType.POST, self._image_ack),
             ("/machine/nebulaos/mcu/status", RequestType.GET, self._mcu_status),
             ("/machine/nebulaos/mcu/files", RequestType.GET, self._mcu_files),
             ("/machine/nebulaos/mcu/flash", RequestType.POST, self._mcu_flash),
@@ -232,6 +237,28 @@ class NebulaOS:
         result = await self._write("system", "clean-reset")
         await self._reboot_or_undo(["system", "cancel-clean-reset"])
         return result
+
+    # -- system images (on-printer updates, 2026-10-14) -------------------------
+    # Offered on the touchscreen only (no Mainsail button); refused while a
+    # print is active. install only starts the background job - the screen
+    # follows it through image/status; the printer reboots at the end.
+
+    async def _image_list(self, web_request: WebRequest) -> Dict[str, Any]:
+        return await self._read("image", "list")
+
+    async def _image_status(self, web_request: WebRequest) -> Dict[str, Any]:
+        return await self._read("image", "status")
+
+    async def _image_check(self, web_request: WebRequest) -> Dict[str, Any]:
+        return await self._write("image", "check", "--file", web_request.get_str("file"))
+
+    async def _image_install(self, web_request: WebRequest) -> Dict[str, Any]:
+        await self._refuse_while_printing()
+        return await self._write("image", "install", "--file", web_request.get_str("file"),
+                                 "--sha256", web_request.get_str("sha256"))
+
+    async def _image_ack(self, web_request: WebRequest) -> Dict[str, Any]:
+        return await self._write("image", "ack")
 
     async def _ack_clean_reset(self, web_request: WebRequest) -> Dict[str, Any]:
         # The screen showed the after-reset notice (G2).

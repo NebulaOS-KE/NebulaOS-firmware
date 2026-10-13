@@ -77,18 +77,18 @@ sed "s#/dev/mmcblk0p1#$T/ota/p1#g; s#/opt/nebulaos/tools/plr_tombstone.py#$T/ota
 fresh_marker() { printf 'ota:kernel2\n\n' > "$T/ota/p1"; head -c 499 /dev/zero >> "$T/ota/p1"; }
 swap() { OTA_MARKER_LIB="$T/ota/lib.sh" OTA_MARKER_DEV="$T/ota/p1" sh "$SWAP" "$@"; }
 
-fresh_marker; swap other >/dev/null; rc=$?
-check "other: exit 0" '[ $rc -eq 0 ]'
-check "other: exact marker bytes" '[ "$(head -c 12 "$T/ota/p1" | od -An -tx1 | tr -d " \n")" = "6f74613a6b65726e656c0a0a" ]'
-check "other: rest zeroed, size kept" '[ "$(tail -c 500 "$T/ota/p1" | tr -d "\000" | wc -c)" -eq 0 ] && [ "$(wc -c < "$T/ota/p1")" -eq 512 ]'
-swap nebulaos >/dev/null; rc=$?
-check "nebulaos: back to ota:kernel2" '[ $rc -eq 0 ] && [ "$(head -n1 "$T/ota/p1")" = ota:kernel2 ]'
-swap "ota:kernel" >/dev/null 2>&1; rc=$?
-check "raw marker values refused (usage 64)" '[ $rc -eq 64 ] && [ "$(head -n1 "$T/ota/p1")" = ota:kernel2 ]'
+fresh_marker; swap A >/dev/null; rc=$?
+check "A: exit 0" '[ $rc -eq 0 ]'
+check "A: exact marker bytes" '[ "$(head -c 12 "$T/ota/p1" | od -An -tx1 | tr -d " \n")" = "6f74613a6b65726e656c0a0a" ]'
+check "A: rest zeroed, size kept" '[ "$(tail -c 500 "$T/ota/p1" | tr -d "\000" | wc -c)" -eq 0 ] && [ "$(wc -c < "$T/ota/p1")" -eq 512 ]'
+swap B >/dev/null; rc=$?
+check "B: back to ota:kernel2" '[ $rc -eq 0 ] && [ "$(head -n1 "$T/ota/p1")" = ota:kernel2 ]'
+swap other >/dev/null 2>&1; rc=$?
+check "old/raw names refused (usage 64)" '[ $rc -eq 64 ] && [ "$(head -n1 "$T/ota/p1")" = ota:kernel2 ]'
 swap >/dev/null 2>&1; rc=$?
 check "no argument: usage 64" '[ $rc -eq 64 ]'
 printf 'write_ota_marker() { :; }\n' > "$T/ota/broken.sh"
-fresh_marker; OTA_MARKER_LIB="$T/ota/broken.sh" OTA_MARKER_DEV="$T/ota/p1" sh "$SWAP" other >/dev/null 2>&1; rc=$?
+fresh_marker; OTA_MARKER_LIB="$T/ota/broken.sh" OTA_MARKER_DEV="$T/ota/p1" sh "$SWAP" A >/dev/null 2>&1; rc=$?
 check "write not landing: read-back fails (exit 2)" '[ $rc -eq 2 ]'
 
 echo "nebulaos-reset-slot-tests: PASS=$PASS FAIL=$FAIL"

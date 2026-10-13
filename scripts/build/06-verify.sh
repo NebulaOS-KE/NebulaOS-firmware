@@ -1631,6 +1631,9 @@ check /usr/lib/nebulaos/python/nebulaos_osconfig/system.py
 check /usr/lib/nebulaos/python/nebulaos_osconfig/wifi.py
 check /usr/libexec/nebulaos/nebulaos-clean-reset
 check /usr/libexec/nebulaos/nebulaos-slot-swap
+check /usr/lib/nebulaos/python/nebulaos_osconfig/image.py
+check /etc/init.d/S99nebulaos-image-trial
+check /usr/bin/7za
 check /usr/lib/nebulaos/moonraker/nebulaos.py
 check /opt/moonraker/moonraker/components/nebulaos.py
 check /etc/nebulaos/moonraker/nebulaos.conf
