@@ -222,6 +222,21 @@ def list_members(path):
             if line.startswith("Path = ")][1:]      # the first Path is the archive
 
 
+def _member_head(path, member, size=64):
+    """The first bytes of one member, streamed (7za x -so) and cut off there."""
+    if not os.access(SEVENZA, os.X_OK):
+        raise OsConfigError("NO_7ZA", "7-Zip is not installed in this image")
+    proc = subprocess.Popen([SEVENZA, "x", "-so", path, member, "-p" + ENVELOPE_PASSWORD, "-y"],
+                            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                            stderr=subprocess.DEVNULL)
+    try:
+        head = proc.stdout.read(size)
+    finally:
+        proc.kill()
+        proc.wait()
+    return head
+
+
 def parse_update_in(text):
     """ota_update.in -> {"version", "images": {type: {name, size, md5}}}."""
     out = {"version": None, "images": {}}
@@ -288,8 +303,11 @@ def describe(path):
             raise invalid("INVALID_IMAGE", "the %s chunk chain does not match its record" % kind)
         if len(chunks) != (rec["size"] + CHUNK - 1) // CHUNK:
             raise invalid("INVALID_IMAGE", "the %s chunk count does not match its size" % kind)
+    kname, arch = uimage_name(_member_head(path, chunk_names(members, payload_dir,
+                                                         upd["images"]["kernel"]["name"])[0][2]))
     return {"version": upd["version"], "images": upd["images"], "payload_dir": payload_dir,
-            "members": members}
+            "members": members, "kernel_name": kname, "kernel_arch": arch,
+            "system": system_kind(kname)}
 
 
 def check(file_id):
@@ -305,7 +323,8 @@ def check(file_id):
             "kernel_size": info["images"]["kernel"]["size"],
             "rootfs_size": info["images"]["rootfs"]["size"],
             "has_rtos": "rtos" in info["images"], "slots": slots,
-            "target": other_slot(slots["running"])}
+            "target": other_slot(slots["running"]),
+            "system": info["system"], "kernel": info["kernel_name"]}
 
 
 # -- partitions ---------------------------------------------------------------------
@@ -467,9 +486,18 @@ def run_job(file_id, sha256):
         progress(96, "switching")
         kname, _ = uimage_name(_read_head(parts["kernel"]))
         kind = system_kind(kname)
-        common.atomic_write_json(TRIAL, {"from": running, "to": target, "file": file_id,
-                                         "version": info["version"], "system": kind,
-                                         "started": started})
+        # The fallback check runs from NebulaOS's own init (S99nebulaos-image-trial).
+        # Creality's firmware never runs it, so a Creality image gets no trial:
+        # going back from there is flashing a NebulaOS .img with Creality's updater.
+        if kind != "creality":
+            common.atomic_write_json(TRIAL, {"from": running, "to": target, "file": file_id,
+                                             "version": info["version"], "system": kind,
+                                             "started": started})
+        else:
+            try:
+                os.unlink(TRIAL)
+            except OSError:
+                pass
         rc, out, err = common.run([SLOT_SWAP, target], 30)
         if rc != 0:
             try:

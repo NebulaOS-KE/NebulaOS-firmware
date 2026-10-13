@@ -1314,7 +1314,7 @@ if cmd == "l":
     for f in files:
         print("Path = " + f)
 elif "-so" in sys.argv:
-    sys.stdout.write(open(os.path.join(root, rest[1])).read())
+    sys.stdout.buffer.write(open(os.path.join(root, rest[1]), "rb").read())
 else:
     for f in files:
         if any(fnmatch.fnmatch(f, pat) for pat in rest[1:]):
@@ -1412,6 +1412,7 @@ class ImageTests(unittest.TestCase):
         self.assertEqual((out["slots"]["A"]["system"], out["slots"]["B"]["system"]), ("creality", "nebulaos"))
         c = self.i.check("upload/nebula.img")
         self.assertEqual((c["result"], c["version"], c["target"]), ("OK", "9.9", "A"))
+        self.assertEqual((c["system"], c["kernel"]), ("nebulaos", "Linux-6.6.157-rt79"))
         self.assertEqual(len(c["sha256"]), 64)
 
     def test_bad_packages_refused(self):
@@ -1437,6 +1438,18 @@ class ImageTests(unittest.TestCase):
         trial = json.load(open(self.i.TRIAL))
         self.assertEqual((trial["from"], trial["to"], trial["system"]), ("B", "A", "nebulaos"))
         self.assertFalse(os.listdir(self.i.WORK_PARENT))           # work dir cleaned
+
+    def test_creality_image_arms_no_trial(self):
+        # Creality's firmware never runs the fallback check: no trial, and a
+        # stale one from earlier is removed.
+        open(self.i.TRIAL, "w").write("{}")
+        archive, kernel, _ = self.package(kernel=self.kernel("Linux-4.4.94"))
+        self.assertEqual(self.i.check("upload/nebula.img")["system"], "creality")
+        self.i.run_job("upload/nebula.img", self.i.sha256_file(archive))
+        st = json.load(open(self.i.JOB_STATE))
+        self.assertEqual((st["state"], st["system"]), ("restarting", "creality"))
+        self.assertEqual(open(os.path.join(self.dev, "mmcblk0p5"), "rb").read(len(kernel)), kernel)
+        self.assertFalse(os.path.exists(self.i.TRIAL))
 
     def test_install_from_slot_a_writes_slot_b(self):
         self.cmdline("A")
