@@ -1466,6 +1466,15 @@ class ImageTests(unittest.TestCase):
         self.assertEqual((st["state"], st["error"]), ("failed", "INVALID_IMAGE"))
         self.assertFalse(os.path.exists(self.calls))                 # no swap, no reboot
         self.assertFalse(os.path.exists(self.i.TRIAL))
+        # The kernel was already written: it is blanked, and swap refuses the slot.
+        self.assertTrue(st["target_cleared"])
+        self.assertEqual(open(os.path.join(self.dev, "mmcblk0p5"), "rb").read(64), b"\x00" * 64)
+        self.assertFalse(self.i.slot_bootable("A"))
+        with self.assertRaises(self.e.common.OsConfigError) as cm:
+            self.e.system.swap_slot()
+        self.assertEqual(cm.exception.code, "SLOT_EMPTY")
+        open(os.path.join(self.dev, "mmcblk0p5"), "r+b").write(self.kernel()[:64])
+        self.assertTrue(self.i.slot_bootable("A"))
 
     def test_refusals_before_writing(self):
         archive, _, _ = self.package()
@@ -1482,6 +1491,7 @@ class ImageTests(unittest.TestCase):
         open(os.environ["NEBULAOS_CMDLINE"], "w").write("root=/dev/sda1\n")
         self.i.run_job("upload/nebula.img", sha)                     # unknown slot
         self.assertEqual(json.load(open(self.i.JOB_STATE))["error"], "SLOT_UNKNOWN")
+        self.assertFalse(json.load(open(self.i.JOB_STATE))["target_cleared"])   # nothing written
         self.assertFalse(os.path.exists(self.calls))
         self.assertEqual(open(os.path.join(self.dev, "mmcblk0p5"), "rb").read(16), b"\x00" * 16)
 

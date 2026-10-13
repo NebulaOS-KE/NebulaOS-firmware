@@ -119,6 +119,28 @@ def slots_info():
     return out
 
 
+def slot_bootable(slot):
+    """False when the slot's kernel partition was read and holds no U-Boot
+    image - e.g. after an install into it failed (run_job blanks the header
+    then). True when it holds one, or cannot be read here at all."""
+    head = _read_head(SLOTS[slot]["kernel"])
+    if len(head) < 64:
+        return True
+    return uimage_name(head)[0] is not None
+
+
+def _blank_kernel(dev):
+    """Make a half-written slot unbootable on purpose: the bootloader has no
+    way back from a kernel that cannot mount its system."""
+    try:
+        with open(os.path.join(DEV_DIR, dev), "r+b", buffering=0) as out:
+            out.write(b"\x00" * 64)
+            os.fsync(out.fileno())
+        return True
+    except OSError:
+        return False
+
+
 # -- sources ---------------------------------------------------------------------
 
 def _scan(root, depth):
@@ -451,6 +473,7 @@ def run_job(file_id, sha256):
     started = int(time.time())
     base = {"file": file_id, "started": started}
     work = None
+    touched = None      # the kernel partition, once writing has started
 
     def progress(percent, phase="writing"):
         _state(state="running", phase=phase, percent=percent, **base)
@@ -479,6 +502,7 @@ def run_job(file_id, sha256):
         rc, _, err = _7za(["x", "-o" + work, path, info["payload_dir"] + "/*"], 1800)
         if rc != 0:
             raise OsConfigError("INVALID_IMAGE", "the package could not be unpacked")
+        touched = parts["kernel"]
         _write_payload(work, info["payload_dir"], info["images"]["kernel"], parts["kernel"],
                        "kernel", progress, (30, 35))
         _write_payload(work, info["payload_dir"], info["images"]["rootfs"], parts["rootfs"],
@@ -504,16 +528,20 @@ def run_job(file_id, sha256):
                 os.unlink(TRIAL)
             except OSError:
                 pass
+            touched = None      # fully written and verified: it may still be swapped to
             raise OsConfigError("SLOT_SWAP_FAILED", "the new slot is written but could not be "
                                 "selected; the printer stays on the current version")
         _state(state="restarting", phase="restarting", percent=100, target=target,
                system=kind, version=info["version"], **base)
         common.run([REBOOT], 30)
-    except OsConfigError as exc:
-        _state(state="failed", phase="failed", error=exc.code, message=exc.message, **base)
     except Exception as exc:  # the job must always end in a state the screen can show
-        _state(state="failed", phase="failed", error="INTERNAL",
-               message="%s: %s" % (type(exc).__name__, exc), **base)
+        if isinstance(exc, OsConfigError):
+            code, message = exc.code, exc.message
+        else:
+            code, message = "INTERNAL", "%s: %s" % (type(exc).__name__, exc)
+        cleared = bool(touched) and _blank_kernel(touched)
+        _state(state="failed", phase="failed", error=code, message=message,
+               target_cleared=cleared, **base)
     finally:
         if work:
             shutil.rmtree(work, ignore_errors=True)

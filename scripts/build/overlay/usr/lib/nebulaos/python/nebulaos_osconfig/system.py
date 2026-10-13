@@ -132,6 +132,10 @@ def swap_slot():
         raise common.OsConfigError("SLOT_UNKNOWN",
                                    "cannot tell which slot is running; nothing was changed")
     target = "A" if current == "B" else "B"
+    from . import image   # image imports this module
+    if not image.slot_bootable(target):
+        raise common.OsConfigError("SLOT_EMPTY", "slot %s holds no system (an image install "
+                                   "into it did not finish); install an image first" % target)
     _slot_swap(target)
     return {"result": "ARMED", "next_boot": target, "from": current, "applies": "next boot"}
 
