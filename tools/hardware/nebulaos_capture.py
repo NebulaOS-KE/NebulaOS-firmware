@@ -187,10 +187,10 @@ _DATAFS_CHECK_READONLY = (
     "(dumpe2fs -h $D || tune2fs -l $D) 2>&1 | grep -i -e 'state' -e 'mount count' -e 'last checked' | head -n 6; "
     "E=$(command -v e2fsck || command -v fsck.ext4 || command -v fsck.ext2); "
     "[ -n \"$E\" ] || { echo NO_E2FSCK; exit 0; }; echo \"checker=$E\"; "
-    "S=$(date +%s); ( timeout 240 $E -n -f $D; echo \"e2fsck_rc=$?\" ) 2>&1 | tail -n 120; "
+    "S=$(date +%s); ( $E -n -f $D </dev/null; echo \"e2fsck_rc=$?\" ) 2>&1 | tail -n 120; "
     "echo \"seconds=$(( $(date +%s) - S ))\"; "
     "echo; echo '== what the preen pass alone would do (still -n) =='; "
-    "( timeout 240 $E -n $D; echo \"e2fsck_rc=$?\" ) 2>&1 | tail -n 20"
+    "( $E -n $D </dev/null; echo \"e2fsck_rc=$?\" ) 2>&1 | tail -n 20"
 )
 
 # Profiles that may also run on Creality's system (the other slot): read-only
