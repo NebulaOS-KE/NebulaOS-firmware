@@ -99,6 +99,12 @@ Here's the actual procedure, including a couple of gotchas we hit doing this for
    instructions.
 2. Optional sanity check: `lsusb`, look for `ID a108:eaef Ingenic Semiconductor Co.,Ltd Ingenic USB
    BOOT DEVICE`.
+**Shortcut (2026-10-14):** steps 3 and 4 are scripted, idempotent and verified in
+`tools/recovery/usb-set-boot-slot.sh` - `sudo sh tools/recovery/usb-set-boot-slot.sh A` (or `B`). It
+reads the real marker bytes, swaps only when needed, reads them back, and ends with `RESULT=OK` or
+`RESULT=NOT_OK`. Note: once u-boot is loaded, a second `usbboot --uboot` fails until the next power
+cycle; that is not an error.
+
 3. **Load u-boot before you try to swap the marker** — the raw mask-ROM stage doesn't support that
    request at all, and running it first just fails with `Could not open USB device` or a transfer
    error.
