@@ -191,6 +191,14 @@ class DeviceSession(abc.ABC):
     def stock_wayout_facts(self):
         """-> dict of the read-only facts that decide whether Stock is usable."""
 
+    @abc.abstractmethod
+    def slot_facts(self):
+        """-> dict of read-only facts about BOTH slots (slot_facts_script):
+        uImage magic and name of each kernel partition, squashfs magic of each
+        rootfs, and the structural NebulaOS/Creality markers inside each rootfs
+        (the running one in place, the other mounted read-only on the device).
+        Classified by nebulaos_slots; nothing is written."""
+
     # --- payload and flashing ---------------------------------------------
     @abc.abstractmethod
     def free_space(self, path):
@@ -208,7 +216,9 @@ class DeviceSession(abc.ABC):
     def apply_write_plans(self, plans, manifest_name):
         """Execute validated write plans. -> (ok, report).
 
-        Takes WritePlan objects, never paths or offsets.
+        Takes WritePlan objects, never paths or offsets. The plans name exactly
+        one slot's kernel and rootfs (slot 1 or slot 2); the on-device helper
+        re-resolves the live root from /proc/cmdline and refuses that slot.
         """
 
     @abc.abstractmethod
@@ -411,6 +421,25 @@ _LOCK_PATH = _STAGE_DIR + "/flash.lock"
 BACKUP_READABLE = frozenset({"rtos", "rtos2"})
 
 
+# The one shape a slot write may have: one slot's kernel and rootfs, together.
+_SLOT_PAIRS = {frozenset({"kernel", "rootfs"}): 1, frozenset({"kernel2", "rootfs2"}): 2}
+
+
+def plans_slot(plans):
+    """-> 1 or 2: the slot a set of write plans covers, or raise DeviceError.
+
+    The on-device flash helper writes a whole slot (kernel then rootfs) and
+    takes the slot as --target-slot; anything that is not exactly one slot's
+    pair - a mixed pair, a single partition, the marker, an rtos - is not
+    something it can express."""
+    names = frozenset(p.target.name for p in plans)
+    if len(plans) != 2 or names not in _SLOT_PAIRS:
+        raise DeviceError(
+            "the on-device flash helper writes exactly one slot's kernel and rootfs; %s is not "
+            "such a pair" % ", ".join(sorted(names)))
+    return _SLOT_PAIRS[names]
+
+
 def partition_guard(target):
     """Shell text that exits non-zero unless `target`'s device node really is
     that partition: the GPT name in sysfs, the by-partlabel link and the size
@@ -446,6 +475,54 @@ def rtos2_write_script(plan, staged_name):
         + "echo 3 > /proc/sys/vm/drop_caches 2>/dev/null; "
         + "echo rtos2_readback_sha256=$(head -c %d %s | sha256sum | cut -d' ' -f1)"
         % (plan.payload_size, plan.target.device))
+
+
+# The slot-facts probe. Read-only: dd/od reads of the first bytes of the four
+# slot partitions, and for the rootfs that is NOT the live root a read-only
+# squashfs mount in a private temporary directory, unmounted before it returns
+# (the same mechanism the stock way-out proof uses). The live root is inspected
+# in place - it is never mounted a second time. A slot whose rootfs does not
+# start with a squashfs superblock is not mounted at all. A mount that fails
+# yields inspect=failed and no markers: fail closed.
+#
+# `dev_prefix`, `cmdline` and `tmp_dir` exist for the offline tests only, which
+# run this exact text in a real shell against fixture files; production uses
+# the defaults.
+def slot_facts_script(dev_prefix="", cmdline="/proc/cmdline", tmp_dir="/tmp"):
+    q = shlex.quote
+    return (
+        "D=%s; C=%s; T=%s; "
+        "root=$(tr ' ' '\\n' < \"$C\" 2>/dev/null | sed -n 's/^root=//p' | head -n 1); "
+        "printf 'slot_root=%%s\\n' \"$root\"; "
+        "hx(){ dd if=\"$1\" bs=4 count=1 2>/dev/null | od -An -tx1 | tr -d ' \\n'; }; "
+        "for s in 1 2; do "
+        "if [ $s = 1 ]; then k=/dev/mmcblk0p5; f=/dev/mmcblk0p7; "
+        "else k=/dev/mmcblk0p6; f=/dev/mmcblk0p8; fi; "
+        "km=$(hx \"$D$k\"); "
+        "kn=$(dd if=\"$D$k\" bs=1 skip=32 count=32 2>/dev/null | tr -d '\\000' "
+        "| tr -c 'A-Za-z0-9._+-' '_'); "
+        "rm_=$(hx \"$D$f\"); ins=skipped; t=; m=; "
+        "if [ \"$root\" = \"$f\" ]; then t=\"$D/\"; ins=running; "
+        "elif [ \"$root\" != /dev/mmcblk0p7 ] && [ \"$root\" != /dev/mmcblk0p8 ]; then ins=root_unknown; "
+        "elif [ \"$rm_\" = %s ]; then "
+        "m=$(mktemp -d \"$T/.nebulaos-slotro.XXXXXX\" 2>/dev/null); "
+        "if [ -n \"$m\" ] && mount -t squashfs -o ro \"$D$f\" \"$m\" 2>/dev/null; then "
+        "t=\"$m/\"; ins=mounted; else ins=failed; fi; fi; "
+        "n=0; c=0; fh=; "
+        "if [ -n \"$t\" ]; then "
+        "[ -f \"${t}etc/ota_marker.sh\" ] && [ -d \"${t}opt/nebulaos\" ] && n=1; "
+        "[ -d \"${t}etc/ota_bin\" ] && c=1; "
+        "fh=$(sed -n 's/.*\"firmware_head\": *\"\\([0-9a-f]*\\)\".*/\\1/p' "
+        "\"${t}opt/nebulaos-seeds/seed-manifest.json\" 2>/dev/null | head -n 1); fi; "
+        "if [ \"$ins\" = mounted ]; then umount \"$m\" 2>/dev/null; fi; "
+        "[ -n \"$m\" ] && rmdir \"$m\" 2>/dev/null; "
+        "printf 'slot%%s_kernel_magic=%%s\\nslot%%s_kernel_name=%%s\\nslot%%s_rootfs_magic=%%s\\n' "
+        "$s \"$km\" $s \"$kn\" $s \"$rm_\"; "
+        "printf 'slot%%s_inspect=%%s\\nslot%%s_nebulaos_markers=%%s\\nslot%%s_creality_markers=%%s\\n' "
+        "$s \"$ins\" $s \"$n\" $s \"$c\"; "
+        "printf 'slot%%s_firmware_head=%%s\\n' $s \"$fh\"; "
+        "done; true"
+        % (q(dev_prefix), q(cmdline), q(tmp_dir), "68737173"))
 
 
 class SshDeviceSession(DeviceSession):
@@ -767,6 +844,9 @@ class SshDeviceSession(DeviceSession):
             "printf 'stock_kernel=%s\\n' \"$([ -b /dev/mmcblk0p5 ] && echo present || echo absent)\"; "
             "printf 'free_kib=%s\\n' \"$(df -k /usr/data | awk 'NR==2{print $4}')\"")
 
+    def slot_facts(self):
+        return self._kv(slot_facts_script(), timeout=120)
+
     # -- payload -----------------------------------------------------------
     def free_space(self, path):
         facts = self._kv("printf 'free=%%s\\n' \"$(df -k %s | awk 'NR==2{print $4}')\"" % shlex.quote(path))
@@ -790,7 +870,7 @@ class SshDeviceSession(DeviceSession):
         return facts.get("sha", "")
 
     def apply_write_plans(self, plans, manifest_name):
-        """Delegate to scripts/flash-spare-slot.sh, which owns slot-2 writes.
+        """Delegate to scripts/flash-spare-slot.sh, which owns slot writes.
 
         Not reimplemented here. That script carries the live-target collision
         refusal, the partlabel and major/minor checks, the capacity checks and
@@ -800,15 +880,10 @@ class SshDeviceSession(DeviceSession):
         The plans are still validated here first, so the write that reaches it
         has been through the target/policy layer.
         """
-        for plan in plans:
-            if plan.target.name not in ("kernel2", "rootfs2"):
-                raise DeviceError(
-                    "the on-device flash helper is specialised for slot 2; %s needs the "
-                    "generic backend, which this session does not expose"
-                    % plan.target.name)
+        slot = plans_slot(plans)
         rc, out, err = self._run(
-            "sh %s/flash-spare-slot.sh %s/xImage %s/rootfs.squashfs %s/%s"
-            % (_STAGE_DIR, _STAGE_DIR, _STAGE_DIR, _STAGE_DIR, shlex.quote(manifest_name)),
+            "sh %s/flash-spare-slot.sh --target-slot %d %s/xImage %s/rootfs.squashfs %s/%s"
+            % (_STAGE_DIR, slot, _STAGE_DIR, _STAGE_DIR, _STAGE_DIR, shlex.quote(manifest_name)),
             timeout=1800)
         return rc == 0, out + err
 

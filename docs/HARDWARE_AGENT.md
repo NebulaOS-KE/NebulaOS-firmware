@@ -3,17 +3,22 @@
 The autonomous developer install: take a printer running NebulaOS, put a new
 NebulaOS on it, and prove what landed.
 
+Since 2026-10-14 NebulaOS may occupy **either or both** A/B slots (human
+decision; [`A_B_SLOT_MODEL.md`](A_B_SLOT_MODEL.md)). The install reads the
+printer's slot state first and takes one of two paths:
+
 ```
-NebulaOS running
-  ↓  prove printer identity, prove the exact attested candidate
-  ↓  prove Stock is reachable and safe to use
-  ↓  software reboot to Stock
-  ↓  write the NebulaOS slot
-  ↓  verify the written bytes
-  ↓  select NebulaOS
-  ↓  software reboot
-  ↓  verify the exact installed build
-PART1_INSTALL_VERIFIED=YES
+PRESERVE_STOCK (NebulaOS in slot 2,          INACTIVE_SLOT (NebulaOS in slot N, the
+Creality in slot 1, kept)                    other slot NebulaOS or released)
+  ↓  identity, exact product                   ↓  identity, exact product
+  ↓  prove Stock is reachable and safe          ↓  prove the running slot is the way back
+  ↓  software reboot to Stock                   ↓  re-read the live root (/proc/cmdline)
+  ↓  write slot 2                               ↓  write the OTHER slot from NebulaOS
+  ↓  verify the written bytes                   ↓  verify the written bytes
+  ↓  select slot 2                              ↓  select the other slot
+  ↓  software reboot                            ↓  software reboot into it
+  ↓  verify the exact installed build           ↓  verify the exact installed build
+PART1_INSTALL_VERIFIED=YES                    PART1_INSTALL_VERIFIED=YES
 ```
 
 ## The interface
@@ -33,6 +38,7 @@ run-nebulaos-hardware.sh --device <id> --control <C> install <X> <ximage-sha256>
 |---|---|---|---|
 | `inspect`, `status`, `diagnose`, `verify` | read-only | yes | yes |
 | `restart <service>` | repair | yes | yes |
+| `reboot REBOOT_CONFIRM=NEBULAOS` | software reboot, writes nothing | yes | yes |
 | `install` | flash | **no** | yes |
 
 Enforced by the PreToolUse hook, which also binds the launcher to its committed
@@ -78,7 +84,7 @@ refuses:
 Every attempt is appended to `~/.local/state/nebulaos-hardware/repairs/<device>.log`.
 
 There is deliberately **no package install**. The Moonraker venv lives in
-persistent `/usr/data`, and DEV_INSTALL writes only p6/p8. A package installed
+persistent `/usr/data`, and DEV_INSTALL writes only one slot's kernel and rootfs. A package installed
 there would survive the next install, pass S04's venv smoke test, and be
 snapshotted as the supervisor's last-known-good env, so a later image missing
 the same package would verify PASS. Product defects are fixed in the product and
@@ -92,7 +98,9 @@ also reports the first 64 bytes, what fills the rest of each partition, and the 
 
 `rtos-logo RTOS_LOGO_CONFIRM=RTOS2` writes the pinned NebulaOS RTOS image (stock `zero.bin` with only
 its boot-logo JPEG replaced, `scripts/package/rtos_logo.py`) to rtos2, the RTOS SPL loads for
-`ota:kernel2`. It runs only on NebulaOS from p8, with the marker on `ota:kernel2`, idle with heater
+`ota:kernel2`. It runs only on NebulaOS from p8 (slot 2). NebulaOS running from slot 1 is refused
+with that reason: SPL then loads rtos (p3), which is out of scope. It needs the marker on
+`ota:kernel2`, idle with heater
 targets at zero, no open install transaction, and both locks held. The patch input is the printer's
 own rtos2, and only if it starts with the pinned stock image. Before writing, it copies the whole 4
 MiB to `<state>/rtos-backups/<device>/` and checks the copy against the device's hash. It then
@@ -104,7 +112,17 @@ If a write fails, the output names the restore command and says not to reboot. P
 cannot select rtos, and an install never writes rtos2. USB recovery:
 `docs/DEVELOPER_RECOVERY.md`, "RTOS logo: restoring rtos2". Rehearse it before the first write.
 
-There is no `ssh`, `scp`, `dd`, `marker`, `reboot`, `flash`, raw `usbboot`,
+### `reboot`
+
+`reboot REBOOT_CONFIRM=NEBULAOS` software-reboots an idle NebulaOS printer and writes nothing. It
+reads the slot state and refuses unless the marker selects a slot that **holds NebulaOS**: slot 1 or
+slot 2, whichever it is. A marker on a Creality slot, on an empty slot or on one it cannot
+identify is refused. Writing nothing means the next boot can never be Creality. The output says
+`REBOOT_INTO_SLOT=<n>` and `REBOOT_SWITCHES_SLOT=YES|NO`. `YES` means the marker already selects
+the other NebulaOS slot, for example after an on-printer update. Success means the printer is
+rediscovered as NebulaOS, with a changed boot id, running from that slot.
+
+There is no `ssh`, `scp`, `dd`, `marker`, raw reboot, `flash`, raw `usbboot`,
 `--host`, `--password` or `--command`. Not filtered — **absent**. `DeviceSession`
 defines a closed vocabulary with no method that takes a command, a block device
 or an offset, so this is a property of the code rather than a promise about
@@ -144,12 +162,16 @@ GENERIC_FLASH_CAPABILITY_NEBULAOS=YES
 
 A recovery tool that cannot rewrite Creality's slot is not a recovery tool, and
 the device belongs to its owner. The developer `install` operation is separately
-narrow:
+narrow. It uses exactly one of three policies, chosen from the device's slot
+state (`nebulaos_slots.plan_install`):
 
-```
-DEV_INSTALL_POLICY=PRESERVE_STOCK
-DEV_INSTALL_POLICY_WRITES_STOCK=NO
-```
+| policy | may write | when |
+|---|---|---|
+| `PRESERVE_STOCK` | kernel2, rootfs2, marker | NebulaOS runs from slot 2, Creality is in slot 1 and is not released |
+| `INACTIVE_SLOT_1` | kernel, rootfs, marker | NebulaOS runs from slot 2 and slot 1 holds NebulaOS or is released |
+| `INACTIVE_SLOT_2` | kernel2, rootfs2, marker | NebulaOS runs from slot 1 and slot 2 holds NebulaOS or is released |
+
+No policy can select both slots, and none can select rtos/rtos2 or `sn_mac`.
 
 That's the policy of one operation, not a limit of the backend. Safety lives in
 validated target selection, vendor-derived bounds, identity, provenance and
@@ -173,7 +195,8 @@ printer into dev mode.
 | Product proof | build record + build manifest + bytes agree on PRODUCT_HEAD and both hashes | HMAC v2 attestation (human key), release/candidate profile |
 | Control code | CONTROL_HEAD's git objects in the local repo; executing host modules must equal it | control commit C from the protected mirror, published |
 | Product publication | reported, not required | required |
-| Identity, strict host key, idle, heaters, stock way-out, software reboot, p6/p8-only write, read-back SHA-256, select NebulaOS, reboot, PART1 | **required** | required |
+| Identity, strict host key, idle, heaters, way-out/way-back proof, one-slot-only write (never the running slot), read-back SHA-256, select the new slot, reboot, PART1 | **required** | required |
+| `INSTALL_OTHER_SLOT=expendable` (may overwrite a Creality or unidentified other slot) | honoured | **ignored**, the other slot is preserved |
 | Report | `DEV_INSTALL=YES RELEASE_QUALIFIED=NO HARDWARE_QUALIFIED=NO` | `RELEASE_INSTALL=YES HARDWARE_QUALIFIED=NO` |
 
 PRODUCT_HEAD (the commit that produced xImage/rootfs) and CONTROL_HEAD (the host
@@ -185,7 +208,89 @@ at flash time every canonical repository must be clean and pushed. That is
 stricter than DEV_INSTALL needs; relaxing it is a privilege-layer change and is
 deliberately not part of this path.
 
-## What `install` proves before it commits
+## NebulaOS in either or both slots
+
+### Slot state
+
+`inspect` and `verify` print the slot state. `install` prints it before it decides anything and
+again after the reboot, and it records it in the journal. `status` never contacts the printer and
+shows the recorded values as `TRANSACTION_LAST_OBSERVED_*`:
+
+```
+SLOT_RUNNING=1|2            from root= in /proc/cmdline
+SLOT_MARKER_SELECTS=1|2     from the marker bytes in p1
+SLOT_NEXT_BOOT_HOLDS=...
+SLOT_<n>_HOLDS=nebulaos|creality|empty|unknown
+SLOT_<n>_KERNEL=<uImage name, e.g. Linux-6.6.18-rt23>
+SLOT_<n>_FIRMWARE_HEAD=<firmware_head from /opt/nebulaos-seeds/seed-manifest.json>
+SLOT_<n>_EVIDENCE=...
+SLOT_NEBULAOS_IN=1,2
+INSTALL_WOULD_TAKE=INACTIVE_SLOT|PRESERVE_STOCK|REFUSED (...)     (inspect)
+```
+
+The running slot holds what is running. `which_os` identifies it with the same structural markers
+described below. The other slot is classified **on the printer**, read-only
+(`nebulaos_device.slot_facts_script`):
+
+- it reads the uImage header (magic and name) of each kernel partition and the squashfs magic of
+  each rootfs;
+- it mounts the other rootfs read-only in a private temporary directory, the same way the stock
+  way-out proof does. The live root is inspected in place and never mounted again, and a
+  partition without a squashfs superblock is not mounted at all;
+- it looks for `/etc/ota_marker.sh` plus `/opt/nebulaos` (NebulaOS) or `/etc/ota_bin` (Creality).
+  These are the markers `which_os` uses;
+- the kernel name must not contradict the rootfs. NebulaOS ships Linux 6.x and Creality's KE
+  firmware ships 4.4.
+
+The result is `empty` when there is no squashfs or no uImage header, so the slot has nothing
+bootable. It is `unknown` when the mount failed, when both or neither marker is present, or when
+the kernel and the rootfs disagree (a half-written slot). Nothing is ever loop-mounted on the
+host.
+
+### Which path, and the human's permission
+
+| running | other slot holds | `INSTALL_OTHER_SLOT` | result |
+|---|---|---|---|
+| slot 2 | Creality | unset / `preserve` | `PRESERVE_STOCK`: via Creality, as before |
+| slot 1 or 2 | NebulaOS | any | `INACTIVE_SLOT`: write the other slot |
+| slot 1 or 2 | Creality, empty, unknown | `expendable` (DEV device) | `INACTIVE_SLOT`, `DEV_INSTALL_OVERWRITES_CREALITY=YES` if Creality |
+| slot 1 | Creality | unset / `preserve` | refused: the agent does not boot Creality from slot 2 |
+| slot 1 or 2 | empty, unknown | unset / `preserve` | refused |
+| unknown root | – | – | refused |
+| already running Creality from slot 1 | Creality (slot 2) | unset / `preserve` | refused; otherwise the stock path writes slot 2, NebulaOS's original home, as before |
+
+The permission to destroy a Creality system is explicit. It is a human-owned key in
+`~/.config/nebulaos-hardware/devices/<id>/profile.conf`:
+
+```
+INSTALL_OTHER_SLOT=expendable     # absent or "preserve" = keep it
+```
+
+The tool never infers it and never writes it. Any other value refuses the install. On a RELEASE
+device the key is ignored and reported as ignored. Every refusal that the key would lift names it.
+
+### The INACTIVE_SLOT path
+
+- The way back is the NebulaOS slot that is running now. No policy can select it, and the
+  way-back proof checks all of the following: the root is still that slot, the system is NebulaOS,
+  the target is the other slot, the policy cannot reach the running slot, the marker selects the
+  running slot, and the staging area has room.
+- If the marker selects the other slot when the install starts, the install first points it back
+  at the running slot and reads it back. That slot is about to be written. If the other slot is
+  Creality, the original `ARMED_STOCK` disarm handles it.
+- The live root is re-read just before the write. `scripts/flash-spare-slot.sh --target-slot N`
+  then resolves the live root from `/proc/cmdline` twice and refuses the running slot itself. The
+  default without the option is still slot 2.
+- The marker moves only after both partitions verify by SHA-256. If the marker write does not
+  verify, the marker is put back on the running slot and read back, and nothing reboots.
+- Creality is never booted on this path. There is no stock window, no MCU exposure and no
+  `POWER_CYCLE_DANGEROUS` state. The journal uses `SLOT_FLASHING` / `SLOT_FLASH_VERIFIED`, which
+  are not stock-window states.
+- PART1 verifies the target slot's partitions, root and marker. If the new slot does not come back,
+  the previous NebulaOS is still intact in the old slot, and setting the marker to it returns
+  there.
+
+## What `install` proves before it commits (PRESERVE_STOCK)
 
 Setting the marker to `ota:kernel` while NebulaOS runs is the point of no easy
 return: after the reboot, the only way forward *or back* is through stock. So
@@ -274,11 +379,24 @@ and printing are Part 2, and nothing here touches them.
 
 ## Testing
 
-`tests/hardware-install-simulation-tests.py` — 89 assertions across 28
-scenarios, driving the real state machine against a simulated printer whose
-`boot()` derives which slot comes up **from the marker bytes**, exactly as the
-bootloader does. An installer that mis-parses the marker boots the wrong thing
-there too.
+`tests/hardware-install-simulation-tests.py` drives the real state machine
+against a simulated printer. It has 299 assertions across 55 scenarios; in this
+sandbox the 3 way-out shell checks fail because `mount` is blocked. The
+simulator's `boot()` derives the slot that comes up **from the marker bytes**,
+exactly as the bootloader does, and what that slot holds from its bytes. An
+installer that mis-parses the marker, or writes the wrong slot, boots the wrong
+thing there too. The both-slots scenarios cover:
+
+- B=NebulaOS + A=Creality, with and without the key;
+- A+B NebulaOS, in both directions;
+- A=NebulaOS + B=Creality;
+- an unidentifiable other slot;
+- three independent refusals to write the running slot;
+- marker and flash failures;
+- reboot and rtos-logo rules;
+- the slot probe itself, run in a real shell against fixtures.
+
+`tests/flash-spare-slot-preflight-tests.sh` covers `--target-slot`.
 
 The simulator lives under `tests/`; production has no import path to it. The
 seam is `session_factory` — SSH in production, simulator in tests.

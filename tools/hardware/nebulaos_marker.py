@@ -5,8 +5,12 @@ WHAT THE MARKER IS
 /dev/mmcblk0p1 holds one of two strings that tell the vendor bootloader which
 slot to boot next:
 
-    ota:kernel    -> slot 1, Creality's stock
-    ota:kernel2   -> slot 2, NebulaOS
+    ota:kernel    -> slot 1 (kernel p5, rootfs p7) - Creality's from the factory
+    ota:kernel2   -> slot 2 (kernel2 p6, rootfs2 p8) - NebulaOS's original home
+
+Since 2026-10-14 NebulaOS may occupy either or both slots, so a marker names a
+SLOT, not an OS. What a slot holds is nebulaos_slots' question, answered from
+the device; this module only owns the bytes.
 
 This module owns the byte format and the parse. It performs no I/O: a caller
 hands it 512 bytes read from the device and gets back a state, or asks it for
@@ -148,12 +152,14 @@ def parse(block):
 
 
 def is_armed_for_stock(state):
-    """True when the marker selects stock.
+    """True when the marker selects slot 1.
 
-    Named rather than compared inline because 'the marker says kernel' and 'this
-    device is armed to boot Creality's slot, which auto-flashes the MCU on a
-    power cycle' are the same fact, and the second phrasing is the one that
-    matters at a call site.
+    Named rather than compared inline because, on the PRESERVE_STOCK path
+    (Creality in slot 1, NebulaOS running from slot 2), 'the marker says
+    kernel' and 'this device is armed to boot Creality's slot, which
+    auto-flashes the MCU on a power cycle' are the same fact. With NebulaOS in
+    slot 1 they are not: callers that may see that state ask nebulaos_slots
+    what the selected slot holds.
     """
     return state == KERNEL
 

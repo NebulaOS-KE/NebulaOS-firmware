@@ -1978,6 +1978,688 @@ def case_no_raw_surface():
 
 
 # ---------------------------------------------------------------------------
+# NebulaOS in either or both slots (human decision 2026-10-14)
+# ---------------------------------------------------------------------------
+
+import nebulaos_slots as slots        # noqa: E402
+
+OLD_NEB_K = b"NEBULAOS-XIMAGE-OLD-" + b"o" * 512
+OLD_NEB_R = b"NEBULAOS-ROOTFS-OLD-" + b"o" * 2048
+CRE_K = b"\xde\xad" * 1024
+CRE_R = b"\xbe\xef" * 4096
+
+
+def set_profile(fx, **keys):
+    """Append human-owned keys to the fixture profile and reload it."""
+    conf = os.path.join(os.environ[profiles.ENV_HOME], "devices", "printer-sim", "profile.conf")
+    with open(conf, "a") as fh:
+        for k, v in keys.items():
+            fh.write("%s=%s\n" % (k, v))
+    os.chmod(conf, 0o600)
+    fx.profile = profiles.DeviceProfile.load("printer-sim")
+
+
+def layout(fx, running, slot1, slot2, marker_slot=None):
+    """Put the simulated printer into a both-slots state.
+    slotN is 'nebulaos' (an OLDER NebulaOS), 'creality', 'empty' or 'junk'."""
+    p = fx.printer
+    for n, holds in ((1, slot1), (2, slot2)):
+        k, r = p.SLOT_PARTS[n]
+        p.partitions[k], p.partitions[r] = {
+            "nebulaos": (OLD_NEB_K, OLD_NEB_R), "creality": (CRE_K, CRE_R),
+            "empty": (b"", b""), "junk": (b"\x11" * 64, b"\x22" * 64)}[holds]
+    p.running_slot = running
+    p.running_os = {"nebulaos": device.OS_NEBULAOS, "creality": device.OS_STOCK}[
+        slot1 if running == 1 else slot2]
+    p.partitions["ota"] = marker.canonical(slots.SLOTS[marker_slot or running].marker)
+
+
+def sha(b):
+    return hashlib.sha256(b or b"").hexdigest()
+
+
+def run_install_keep(fx, txn=None):
+    """-> (installer, result, error): run_install, keeping the installer's output."""
+    inst = fx.installer(txn=txn)
+    try:
+        return inst, inst.run(), None
+    except install.InstallError as exc:
+        return inst, None, exc
+    except Exception as exc:                      # noqa: BLE001 - surfaced as a failure
+        return inst, None, exc
+
+
+def booted_stock(printer):
+    return any("stock MCU updater" in l for l in printer.log) or \
+        getattr(printer, "_stock_boots", 0) > 0
+
+
+def _count_stock_boots(printer):
+    real = printer.boot
+
+    def boot():
+        real()
+        if printer.running_os == device.OS_STOCK:
+            printer._stock_boots = getattr(printer, "_stock_boots", 0) + 1
+    printer.boot = boot
+
+
+def case_slot_classification():
+    """nebulaos_slots.classify: pure, fail-closed rules."""
+    base = {"slot1_kernel_magic": "27051956", "slot1_kernel_name": "Linux-4.4.94",
+            "slot1_rootfs_magic": "68737173", "slot1_inspect": "mounted",
+            "slot1_nebulaos_markers": "0", "slot1_creality_markers": "1"}
+    check("slots: Creality markers + 4.4 kernel classify as creality",
+          slots.classify(base, 1)[0] == slots.HOLDS_CREALITY, slots.classify(base, 1)[1])
+    f = dict(base, slot1_nebulaos_markers="1", slot1_creality_markers="0")
+    check("slots: NebulaOS rootfs behind a 4.4 kernel is UNKNOWN (mixed/half-written)",
+          slots.classify(f, 1)[0] == slots.HOLDS_UNKNOWN, slots.classify(f, 1)[1])
+    f = dict(base, slot1_kernel_name="Linux-6.6.18-rt23", slot1_nebulaos_markers="1",
+             slot1_creality_markers="0")
+    check("slots: NebulaOS markers + 6.x kernel classify as nebulaos",
+          slots.classify(f, 1)[0] == slots.HOLDS_NEBULAOS)
+    f = dict(base, slot1_inspect="failed")
+    check("slots: a squashfs that could not be mounted is UNKNOWN, never assumed",
+          slots.classify(f, 1)[0] == slots.HOLDS_UNKNOWN)
+    f = dict(base, slot1_rootfs_magic="11111111")
+    check("slots: no squashfs superblock is EMPTY",
+          slots.classify(f, 1)[0] == slots.HOLDS_EMPTY)
+    f = dict(base, slot1_kernel_magic="00000000")
+    check("slots: no uImage header on the kernel partition is EMPTY",
+          slots.classify(f, 1)[0] == slots.HOLDS_EMPTY)
+    f = dict(base, slot1_nebulaos_markers="1")
+    check("slots: both markers at once is UNKNOWN",
+          slots.classify(f, 1)[0] == slots.HOLDS_UNKNOWN)
+    check("slots: an unknown kernel name does not override the rootfs markers",
+          slots.classify(dict(base, slot1_kernel_name="custom"), 1)[0] == slots.HOLDS_CREALITY)
+    check("slots: slot_of_root knows exactly p7 and p8",
+          slots.slot_of_root("/dev/mmcblk0p7") == 1 and slots.slot_of_root("/dev/mmcblk0p8") == 2
+          and slots.slot_of_root("/dev/mmcblk0p9") is None and slots.slot_of_root("") is None)
+
+    # The policies: one slot each, never the running one by construction.
+    for n, pol in ((1, targets.DEV_INACTIVE_SLOT_1), (2, targets.DEV_INACTIVE_SLOT_2)):
+        other = slots.SLOTS[slots.other(n)]
+        refused = []
+        for name in (other.kernel, other.rootfs, "sn_mac", "rtos", "rtos2"):
+            try:
+                pol.select(name)
+            except targets.TargetError:
+                refused.append(name)
+        check("policy %s selects only slot %d (+ marker)" % (pol.name, n),
+              len(refused) == 5 and pol.allowed == {slots.SLOTS[n].kernel, slots.SLOTS[n].rootfs, "ota"},
+              "refused %s" % refused)
+    try:
+        device.plans_slot([targets.DEV_INACTIVE_SLOT_1.select("kernel").plan_write(1, "a" * 64),
+                           targets.RECOVERY_BOTH_SIDES.select("rootfs2").plan_write(1, "a" * 64)])
+        bad("a mixed kernel/rootfs2 plan set is refused by the session", "accepted")
+    except device.DeviceError:
+        ok("a mixed kernel/rootfs2 plan set is refused by the session")
+    try:
+        device.plans_slot([targets.DEV_INACTIVE_SLOT_1.select("kernel").plan_write(1, "a" * 64)])
+        bad("a lone kernel plan is refused by the session", "accepted")
+    except device.DeviceError:
+        ok("a lone kernel plan is refused by the session")
+
+
+def case_slot_facts_script_in_a_real_shell():
+    """The exact probe text, run by sh against fixture partitions, with a fake
+    mount that logs what it mounts. Proves: the running root is inspected in
+    place and never mounted; the other rootfs is mounted read-only and
+    unmounted; markers, kernel names and the seed manifest's firmware_head are
+    read; a slot without a squashfs superblock is not mounted at all."""
+    import struct
+    root = tempfile.mkdtemp(prefix="slotfacts.", dir=os.environ.get("TMPDIR") or None)
+    try:
+        dev = os.path.join(root, "dev"); os.makedirs(dev)
+        bin_dir = os.path.join(root, "bin"); os.makedirs(bin_dir)
+        tmp = os.path.join(root, "tmp"); os.makedirs(tmp)
+        mlog = os.path.join(root, "mount.log")
+
+        def uimage(name):
+            return struct.pack(">I", 0x27051956) + b"\0" * 28 + name.encode().ljust(32, b"\0")
+
+        def tree(name, nebulaos):
+            t = os.path.join(root, name)
+            if nebulaos:
+                os.makedirs(os.path.join(t, "etc")); os.makedirs(os.path.join(t, "opt", "nebulaos"))
+                open(os.path.join(t, "etc", "ota_marker.sh"), "w").close()
+                os.makedirs(os.path.join(t, "opt", "nebulaos-seeds"))
+                with open(os.path.join(t, "opt", "nebulaos-seeds", "seed-manifest.json"), "w") as fh:
+                    fh.write('{\n  "firmware_head": "%s",\n  "x": 1\n}\n' % ("ab" * 20))
+            else:
+                os.makedirs(os.path.join(t, "etc", "ota_bin"))
+            return t
+
+        def run(cmdline, p5, p6, p7, p8, other_tree, mount_ok=True):
+            for n, data in (("p5", p5), ("p6", p6), ("p7", p7), ("p8", p8)):
+                with open(os.path.join(dev, "mmcblk0" + n), "wb") as fh:
+                    fh.write(data)
+            with open(os.path.join(root, "cmdline"), "w") as fh:
+                fh.write(cmdline + "\n")
+            with open(os.path.join(bin_dir, "mount"), "w") as fh:
+                fh.write("#!/bin/sh\necho \"$*\" >> %s\n" % mlog
+                         + ("for a; do d=$a; done; cp -R %s/. \"$d\"\n" % other_tree if mount_ok
+                            else "exit 32\n"))
+            with open(os.path.join(bin_dir, "umount"), "w") as fh:
+                fh.write("#!/bin/sh\necho \"umount $*\" >> %s\nrm -rf \"$1\"/* 2>/dev/null; exit 0\n" % mlog)
+            for n in ("mount", "umount"):
+                os.chmod(os.path.join(bin_dir, n), 0o755)
+            if os.path.exists(mlog):
+                os.unlink(mlog)
+            script = device.slot_facts_script(dev_prefix=root, cmdline=os.path.join(root, "cmdline"),
+                                              tmp_dir=tmp)
+            out = subprocess.run(["sh", "-c", script], capture_output=True, text=True,
+                                 env=dict(os.environ, PATH=bin_dir + ":" + os.environ.get("PATH", "")))
+            facts = dict(l.split("=", 1) for l in out.stdout.splitlines() if "=" in l)
+            mounts = open(mlog).read() if os.path.exists(mlog) else ""
+            return out.returncode, facts, mounts
+
+        running_tree = tree("running", True)
+        # The running slot is inspected at $D/ = the fixture root.
+        for rel in ("etc", "opt"):
+            shutil.copytree(os.path.join(running_tree, rel), os.path.join(root, rel))
+        cre = tree("creality", False)
+        sq = b"hsqs" + b"\0" * 60
+        rc, facts, mounts = run("console=ttyS4 root=/dev/mmcblk0p8 rw", uimage("Linux-4.4.94"),
+                                uimage("Linux-6.6.18-rt23"), sq, sq, cre)
+        check("slot probe: exits 0", rc == 0, str(rc))
+        check("slot probe: slot 2 (the live root) is inspected in place, never mounted",
+              facts.get("slot2_inspect") == "running" and "mmcblk0p8" not in mounts, mounts)
+        check("slot probe: slot 1 is mounted READ-ONLY as squashfs and unmounted",
+              facts.get("slot1_inspect") == "mounted" and "-t squashfs -o ro" in mounts
+              and "mmcblk0p7" in mounts and "umount" in mounts, mounts)
+        check("slot probe: Creality markers found in slot 1, NebulaOS markers in slot 2",
+              facts.get("slot1_creality_markers") == "1" and facts.get("slot1_nebulaos_markers") == "0"
+              and facts.get("slot2_nebulaos_markers") == "1", str(facts))
+        check("slot probe: uImage magic and kernel names read",
+              facts.get("slot1_kernel_magic") == "27051956"
+              and facts.get("slot1_kernel_name") == "Linux-4.4.94"
+              and facts.get("slot2_kernel_name") == "Linux-6.6.18-rt23", str(facts))
+        check("slot probe: the running NebulaOS's firmware_head is read from its seed manifest",
+              facts.get("slot2_firmware_head") == "ab" * 20, facts.get("slot2_firmware_head"))
+        check("slot probe: its private mount point is removed",
+              not [n for n in os.listdir(tmp) if n.startswith(".nebulaos-slotro")], str(os.listdir(tmp)))
+        state = slots.SlotState("nebulaos", "/dev/mmcblk0p8", marker.KERNEL2, "", facts)
+        check("slot probe -> SlotState: 1=creality 2=nebulaos",
+              state.holds == {1: "creality", 2: "nebulaos"}, state.describe())
+
+        neb_other = tree("nebother", True)
+        rc, facts, mounts = run("root=/dev/mmcblk0p7", uimage("Linux-6.6.18-rt23"),
+                                uimage("Linux-6.6.18-rt23"), sq, sq, neb_other)
+        state = slots.SlotState("nebulaos", "/dev/mmcblk0p7", marker.KERNEL, "", facts)
+        check("slot probe: NebulaOS in slot 1 running, older NebulaOS in slot 2 mounted",
+              state.holds == {1: "nebulaos", 2: "nebulaos"} and "mmcblk0p7" not in mounts
+              and "mmcblk0p8" in mounts, state.describe() + " | " + mounts)
+        rc, facts, mounts = run("root=/dev/mmcblk0p7", uimage("Linux-6.6.18-rt23"),
+                                b"\0" * 64, sq, b"\xff" * 64, neb_other)
+        check("slot probe: a rootfs without a squashfs superblock is not mounted at all",
+              facts.get("slot2_inspect") == "skipped" and not mounts, mounts)
+        rc, facts, mounts = run("root=/dev/mmcblk0p7", uimage("Linux-6.6.18-rt23"),
+                                uimage("Linux-4.4.94"), sq, sq, cre, mount_ok=False)
+        state = slots.SlotState("nebulaos", "/dev/mmcblk0p7", marker.KERNEL, "", facts)
+        check("slot probe: a failed mount fails closed (slot 2 unknown, no markers)",
+              facts.get("slot2_inspect") == "failed" and state.holds[2] == slots.HOLDS_UNKNOWN,
+              state.describe())
+        rc, facts, mounts = run("root=PARTUUID=dead-beef", uimage("Linux-6.6.18-rt23"),
+                                uimage("Linux-4.4.94"), sq, sq, cre)
+        check("slot probe: an unrecognised root= mounts nothing (both slots root_unknown)",
+              facts.get("slot1_inspect") == "root_unknown" and facts.get("slot2_inspect") == "root_unknown"
+              and not mounts, str(facts))
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def case_both_slots_b_nebulaos_a_creality_default():
+    """NebulaOS in slot 2 + Creality in slot 1, no profile key: the original
+    PRESERVE_STOCK path, unchanged."""
+    fx, root = scenario("bs-preserve")
+    try:
+        inst, result, err = run_install_keep(fx)
+        out = "\n".join(inst.result.lines)
+        check("B=NebulaOS A=Creality (no key): install succeeds", err is None and result.ok,
+              str(err)[:200])
+        check("B=NebulaOS A=Creality (no key): path is PRESERVE_STOCK via Creality",
+              "DEV_INSTALL_PATH=PRESERVE_STOCK" in out and "STATE=STOCK_RUNNING" in out)
+        check("B=NebulaOS A=Creality (no key): only slot 2 written, Creality intact",
+              getattr(fx.printer, "slot_writes", []) == [2]
+              and fx.printer.partitions["kernel"] == CRE_K and fx.printer.partitions["rootfs"] == CRE_R)
+        check("B=NebulaOS A=Creality (no key): the slot state is reported",
+              "SLOT_1_HOLDS=creality" in out and "SLOT_2_HOLDS=nebulaos" in out
+              and "SLOT_RUNNING=2" in out and "SLOT_MARKER_SELECTS=2" in out)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def case_both_slots_b_nebulaos_a_creality_expendable():
+    """NebulaOS in slot 2 + Creality in slot 1 + INSTALL_OTHER_SLOT=expendable
+    on a DEV device: slot 1 is written directly, Creality is never booted."""
+    fx, root = scenario("bs-expend")
+    try:
+        set_profile(fx, INSTALL_MODE="dev", INSTALL_OTHER_SLOT="expendable")
+        _count_stock_boots(fx.printer)
+        old2 = (fx.printer.partitions["kernel2"], fx.printer.partitions["rootfs2"])
+        inst, result, err = run_install_keep(fx)
+        out = "\n".join(inst.result.lines)
+        check("B=NebulaOS A=Creality (expendable): install succeeds", err is None and result.ok,
+              str(err)[:300] + out[-600:])
+        check("B=NebulaOS A=Creality (expendable): INACTIVE_SLOT, writes slot 1, overwrites Creality",
+              "DEV_INSTALL_PATH=INACTIVE_SLOT" in out and "DEV_INSTALL_TARGET_SLOT=1" in out
+              and "DEV_INSTALL_OVERWRITES_CREALITY=YES" in out)
+        check("B=NebulaOS A=Creality (expendable): Creality was never booted",
+              not booted_stock(fx.printer) and "STOCK_RUNNING" not in out)
+        check("B=NebulaOS A=Creality (expendable): slot 1 holds exactly the new build",
+              sha(fx.printer.partitions["kernel"]) == fx.artifacts.ximage_sha
+              and sha(fx.printer.partitions["rootfs"]) == fx.artifacts.rootfs_sha)
+        check("B=NebulaOS A=Creality (expendable): the running slot 2 was never written",
+              (fx.printer.partitions["kernel2"], fx.printer.partitions["rootfs2"]) == old2
+              and getattr(fx.printer, "slot_writes", []) == [1])
+        check("B=NebulaOS A=Creality (expendable): ends running NebulaOS from slot 1, marker on slot 1",
+              fx.printer.running_os == device.OS_NEBULAOS and fx.printer.running_slot == 1
+              and marker_state(fx.printer) == marker.KERNEL)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def case_both_slots_a_and_b_nebulaos():
+    """NebulaOS running in slot 1, an older NebulaOS in slot 2: no key needed;
+    slot 2 is written and booted; then the reverse direction."""
+    fx, root = scenario("bs-both")
+    try:
+        layout(fx, running=1, slot1="nebulaos", slot2="nebulaos")
+        _count_stock_boots(fx.printer)
+        inst, result, err = run_install_keep(fx)
+        out = "\n".join(inst.result.lines)
+        check("A=NebulaOS(run) B=NebulaOS: install succeeds without any profile key",
+              err is None and result.ok, str(err)[:300] + out[-400:])
+        check("A=NebulaOS(run) B=NebulaOS: INACTIVE_SLOT writes slot 2 under INACTIVE_SLOT_2",
+              "DEV_INSTALL_PATH=INACTIVE_SLOT" in out and "DEV_INSTALL_POLICY=INACTIVE_SLOT_2" in out
+              and getattr(fx.printer, "slot_writes", []) == [2])
+        check("A=NebulaOS(run) B=NebulaOS: slot 1 (the way back) untouched",
+              fx.printer.partitions["kernel"] == OLD_NEB_K and fx.printer.partitions["rootfs"] == OLD_NEB_R)
+        check("A=NebulaOS(run) B=NebulaOS: runs the new build from slot 2, marker on slot 2, no stock",
+              fx.printer.running_slot == 2 and marker_state(fx.printer) == marker.KERNEL2
+              and sha(fx.printer.partitions["rootfs2"]) == fx.artifacts.rootfs_sha
+              and not booted_stock(fx.printer))
+        check("A=NebulaOS(run) B=NebulaOS: PART1 verified against slot 2's partitions",
+              "kernel2 holds exactly the expected xImage" in out and "PART1_INSTALL_VERIFIED=YES" in out)
+        check("A=NebulaOS(run) B=NebulaOS: no power-cycle-dangerous state on this path",
+              "POWER_CYCLE_DANGEROUS=YES" not in out and "ARMED_STOCK" not in out)
+
+        # Now the reverse: running slot 2 (the new build), slot 1 holds the old one.
+        fx.printer.slot_writes = []
+        inst, result, err = run_install_keep(fx)
+        out = "\n".join(inst.result.lines)
+        check("B=NebulaOS(run) A=NebulaOS: install writes slot 1 and boots it",
+              err is None and result.ok and getattr(fx.printer, "slot_writes", []) == [1]
+              and fx.printer.running_slot == 1 and marker_state(fx.printer) == marker.KERNEL,
+              str(err)[:300] + out[-300:])
+        check("B=NebulaOS(run) A=NebulaOS: PART1 verified against slot 1's partitions",
+              "kernel holds exactly the expected xImage" in out and "PART1_INSTALL_VERIFIED=YES" in out)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def case_both_slots_a_nebulaos_b_creality():
+    """NebulaOS running in slot 1 and Creality in slot 2: refused without the
+    human's key (naming it), written with it."""
+    fx, root = scenario("bs-acreb")
+    try:
+        layout(fx, running=1, slot1="nebulaos", slot2="creality")
+        before = dict(fx.printer.partitions)
+        inst, result, err = run_install_keep(fx)
+        out = "\n".join(inst.result.lines)
+        check("A=NebulaOS(run) B=Creality (no key): refused", err is not None and result is None)
+        check("A=NebulaOS(run) B=Creality (no key): the refusal names INSTALL_OTHER_SLOT=expendable",
+              err is not None and "INSTALL_OTHER_SLOT=expendable" in str(err), str(err)[:300])
+        check("A=NebulaOS(run) B=Creality (no key): nothing written, marker still on slot 1, not rebooted",
+              fx.printer.partitions == before and fx.printer.boot_id == "boot-0001"
+              and fx.printer.staged == {})
+        check("A=NebulaOS(run) B=Creality (no key): the refusal state is SAFE_NEBULAOS",
+              getattr(err, "state", None) == journal.SAFE_NEBULAOS, str(getattr(err, "state", None)))
+
+        set_profile(fx, INSTALL_OTHER_SLOT="expendable")          # still a RELEASE device
+        inst, result, err = run_install_keep(fx)
+        check("A=NebulaOS(run) B=Creality: expendable is IGNORED on a RELEASE device",
+              err is not None and "ignored on a RELEASE device" in "\n".join(inst.result.lines)
+              and fx.printer.partitions == before, str(err)[:200])
+
+        set_profile(fx, INSTALL_MODE="dev")
+        _count_stock_boots(fx.printer)
+        inst, result, err = run_install_keep(fx)
+        out = "\n".join(inst.result.lines)
+        check("A=NebulaOS(run) B=Creality (dev, expendable): slot 2 written and booted",
+              err is None and result.ok and fx.printer.running_slot == 2
+              and sha(fx.printer.partitions["kernel2"]) == fx.artifacts.ximage_sha
+              and not booted_stock(fx.printer), str(err)[:300] + out[-300:])
+        check("A=NebulaOS(run) B=Creality (dev, expendable): slot 1 untouched",
+              fx.printer.partitions["kernel"] == OLD_NEB_K and fx.printer.partitions["rootfs"] == OLD_NEB_R)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def case_both_slots_unknown_other_slot():
+    """An other slot that cannot be identified is overwritten only with the key."""
+    fx, root = scenario("bs-unknown")
+    try:
+        layout(fx, running=1, slot1="nebulaos", slot2="junk")
+        before = dict(fx.printer.partitions)
+        inst, result, err = run_install_keep(fx)
+        check("A=NebulaOS(run) B=unknown (no key): refused, nothing written",
+              err is not None and fx.printer.partitions == before
+              and "INSTALL_OTHER_SLOT=expendable" in str(err), str(err)[:200])
+        layout(fx, running=1, slot1="nebulaos", slot2="nebulaos")
+        fx.printer.slot_facts_fail = True                     # the probe cannot mount slot 2
+        before = dict(fx.printer.partitions)
+        inst, result, err = run_install_keep(fx)
+        check("A=NebulaOS(run) B=NebulaOS but unmountable (no key): UNKNOWN, refused",
+              err is not None and fx.printer.partitions == before
+              and "SLOT_2_HOLDS=unknown" in "\n".join(inst.result.lines), str(err)[:200])
+        fx.printer.slot_facts_fail = False
+        layout(fx, running=1, slot1="nebulaos", slot2="empty")
+        set_profile(fx, INSTALL_MODE="dev", INSTALL_OTHER_SLOT="expendable")
+        inst, result, err = run_install_keep(fx)
+        check("A=NebulaOS(run) B=empty (dev, expendable): written and booted",
+              err is None and result.ok and fx.printer.running_slot == 2, str(err)[:200])
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+    # Already running Creality from slot 1 with a SECOND Creality in slot 2.
+    fx, root = scenario("bs-stock2")
+    try:
+        layout(fx, running=1, slot1="creality", slot2="creality")
+        fx.printer.staged.update({"xImage": XIMAGE, "rootfs.squashfs": ROOTFS,
+                                  "build-manifest.txt": b"x"})
+        before = (fx.printer.partitions["kernel2"], fx.printer.partitions["rootfs2"])
+        inst, result, err = run_install_keep(fx)
+        check("on stock with Creality in slot 2 too (no key): slot 2 is not overwritten",
+              err is not None and "INSTALL_OTHER_SLOT=expendable" in str(err)
+              and (fx.printer.partitions["kernel2"], fx.printer.partitions["rootfs2"]) == before,
+              str(err)[:200])
+        set_profile(fx, INSTALL_MODE="dev", INSTALL_OTHER_SLOT="expendable")
+        inst, result, err = run_install_keep(fx)
+        check("on stock with Creality in slot 2 (dev, expendable): the stock path writes slot 2",
+              err is None and result.ok and sha(fx.printer.partitions["kernel2"]) == fx.artifacts.ximage_sha,
+              str(err)[:200])
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def case_both_slots_never_write_running_slot():
+    """Refusal to write the running slot, at every layer that can refuse it."""
+    fx, root = scenario("bs-running")
+    try:
+        layout(fx, running=1, slot1="nebulaos", slot2="nebulaos")
+        # (1) the simulated helper (as flash-spare-slot.sh) refuses the live slot.
+        session = sim.SimSession(fx.printer, device.OS_NEBULAOS, fx.printer.addresses[device.OS_NEBULAOS],
+                                 fx.printer.host_keys[device.OS_NEBULAOS],
+                                 fx.printer.passwords[device.OS_NEBULAOS])
+        fx.printer.staged["flash-spare-slot.sh"] = b"x"
+        fx.printer.staged["xImage"], fx.printer.staged["rootfs.squashfs"] = XIMAGE, ROOTFS
+        pol = targets.inactive_slot_policy(1)
+        okw, report = session.apply_write_plans(
+            [pol.select("kernel").plan_write(len(XIMAGE), sha(XIMAGE)),
+             pol.select("rootfs").plan_write(len(ROOTFS), sha(ROOTFS))], "build-manifest.txt")
+        check("the flash helper refuses the live slot's pair",
+              not okw and fx.printer.partitions["kernel"] == OLD_NEB_K, report)
+        fx.printer.staged = {}
+
+        # (2) a plan that names the running slot is caught by the way-back proof.
+        real_plan = slots.plan_install
+
+        def evil(state, policy):
+            return slots.InstallPlan(slots.PATH_INACTIVE_SLOT, 1, 1, targets.inactive_slot_policy(1),
+                                     "nebulaos", "sabotaged")
+        slots.plan_install = evil
+        try:
+            before = dict(fx.printer.partitions)
+            inst, result, err = run_install_keep(fx)
+        finally:
+            slots.plan_install = real_plan
+        out = "\n".join(inst.result.lines)
+        check("a plan targeting the running slot fails the way-back proof, nothing written",
+              err is not None and "way-back proof failed" in str(err)
+              and fx.printer.partitions == before and fx.printer.boot_id == "boot-0001",
+              str(err)[:200])
+
+        # (3) the live root changes between the proof and the write.
+        real_root = sim.SimSession.active_root
+        calls = {"n": 0}
+
+        def moving_root(self):
+            # Only once everything is proven and staged: the re-check right
+            # before the write is the one that must catch it.
+            if "flash-spare-slot.sh" in self.printer.staged:
+                calls["n"] += 1
+                return "/dev/mmcblk0p8"          # the target's root
+            return real_root(self)
+        sim.SimSession.active_root = moving_root
+        try:
+            before = dict(fx.printer.partitions)
+            inst, result, err = run_install_keep(fx)
+        finally:
+            sim.SimSession.active_root = real_root
+        out = "\n".join(inst.result.lines)
+        check("a live root that changes before the write refuses it (re-checked from /proc/cmdline)",
+              err is not None and fx.printer.partitions["kernel2"] == before["kernel2"]
+              and fx.printer.partitions["rootfs2"] == before["rootfs2"]
+              and marker_state(fx.printer) == marker.KERNEL and fx.printer.flash_lock_holder is None
+              and "ACTIVE_ROOT_RECHECK=/dev/mmcblk0p8" in out and "live root is now" in str(err),
+              str(err)[:200] + " calls=%d" % calls["n"])
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def case_both_slots_marker_and_failures():
+    """The marker on the other NebulaOS slot is pointed home BEFORE writing;
+    a failed write or marker flip leaves the running slot selected."""
+    fx, root = scenario("bs-marker")
+    try:
+        layout(fx, running=1, slot1="nebulaos", slot2="nebulaos", marker_slot=2)
+        order = []
+        real_write = sim.SimSession.write_marker
+        real_apply = sim.SimSession.apply_write_plans
+
+        def w(self, state):
+            order.append(("marker", state))
+            return real_write(self, state)
+
+        def a(self, plans, manifest):
+            order.append(("write", device.plans_slot(plans)))
+            return real_apply(self, plans, manifest)
+        sim.SimSession.write_marker, sim.SimSession.apply_write_plans = w, a
+        try:
+            inst, result, err = run_install_keep(fx)
+        finally:
+            sim.SimSession.write_marker, sim.SimSession.apply_write_plans = real_write, real_apply
+        check("marker on the other NebulaOS slot: pointed back home BEFORE slot 2 is written",
+              err is None and order[:3] == [("marker", marker.KERNEL), ("write", 2),
+                                            ("marker", marker.KERNEL2)],
+              str(order) + str(err)[:200])
+
+        layout(fx, running=1, slot1="nebulaos", slot2="nebulaos")
+        fx.printer.corrupt_flash = True
+        inst, result, err = run_install_keep(fx)
+        check("a slot write that does not verify: refused, marker still on the running slot, no reboot",
+              err is not None and marker_state(fx.printer) == marker.KERNEL
+              and fx.printer.running_slot == 1 and getattr(err, "state", None) == journal.SAFE_NEBULAOS,
+              str(err)[:200])
+        fx.printer.corrupt_flash = False
+
+        layout(fx, running=1, slot1="nebulaos", slot2="nebulaos")
+        boot = fx.printer.boot_id
+        fx.printer.fail_marker_write = True
+        inst, result, err = run_install_keep(fx)
+        fx.printer.fail_marker_write = False
+        check("a marker flip that does not land: refused, marker on the running slot, not rebooted",
+              err is not None and marker_state(fx.printer) == marker.KERNEL
+              and fx.printer.boot_id == boot and "put back on the running slot" in str(err),
+              str(err)[:200])
+
+        layout(fx, running=1, slot1="nebulaos", slot2="nebulaos")
+        fx.printer.flash_helper_fails = True
+        inst, result, err = run_install_keep(fx)
+        fx.printer.flash_helper_fails = False
+        check("a flash helper refusal: marker on the running slot, lock released",
+              err is not None and marker_state(fx.printer) == marker.KERNEL
+              and fx.printer.flash_lock_holder is None, str(err)[:200])
+
+        # A busy printer is refused before anything is staged.
+        layout(fx, running=1, slot1="nebulaos", slot2="nebulaos")
+        fx.printer.staged = {}
+        fx.printer.printing = True
+        inst, result, err = run_install_keep(fx)
+        fx.printer.printing = False
+        check("INACTIVE_SLOT refuses a printing printer before staging anything",
+              err is not None and "idle" in str(err) and fx.printer.staged == {}, str(err)[:200])
+
+        # The journal remembers the path for `status`; nothing is power-cycle dangerous.
+        os.environ[journal.ENV_STATE_HOME] = os.path.join(root, "jstate")
+        layout(fx, running=1, slot1="nebulaos", slot2="nebulaos")
+        txn = journal.Transaction.begin("printer-sim", fx.control_commit, SOURCE_HEAD,
+                                        fx.artifacts.ximage_sha, fx.artifacts.rootfs_sha)
+        inst, result, err = run_install_keep(fx, txn=txn)
+        desc = journal.Transaction.open("printer-sim").describe()
+        check("status after an INACTIVE_SLOT install: path and slots recorded, never dangerous",
+              err is None and "TRANSACTION_LAST_OBSERVED_INSTALL_PATH=INACTIVE_SLOT" in desc
+              and "TRANSACTION_LAST_OBSERVED_INSTALL_TARGET_SLOT=2" in desc
+              and "TRANSACTION_LAST_OBSERVED_SLOT_1_HOLDS=nebulaos" in desc
+              and "TRANSACTION_LAST_OBSERVED_SLOT_RUNNING=2" in desc
+              and "TRANSACTION_POWER_CYCLE_DANGEROUS=NO" in desc, desc[-600:])
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def case_both_slots_reboot_and_rtos():
+    """reboot: only into a slot that holds NebulaOS; rtos-logo: slot 2 only."""
+    import argparse
+    import contextlib
+    import io
+    import time as _time
+    import nebulaos_agent as agent
+    import nebulaos_rtos as rtos
+
+    saved = (agent.FW_ROOT, agent.ssh_session_factory, _time.sleep)
+    fx, root = scenario("bs-reboot")
+    try:
+        os.environ[journal.ENV_STATE_HOME] = os.path.join(root, "jstate")
+        set_profile(fx, INSTALL_MODE="dev")
+        agent.FW_ROOT = fx.control_work
+        agent.ssh_session_factory = lambda profile: sim.make_session_factory(fx.printer, profile)
+        _time.sleep = lambda _s: None
+
+        def reboot(confirm=agent.REBOOT_CONFIRM_WORD):
+            ns = argparse.Namespace(device="printer-sim", control_commit=fx.control_commit,
+                                    op="reboot", confirm=confirm)
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                try:
+                    rc = agent.op_reboot(ns)
+                except (agent.AgentRefusal, profiles.ProfileError, control.ControlError) as exc:
+                    print("REFUSED: %s" % exc)
+                    rc = 2
+            return rc, buf.getvalue()
+
+        p = fx.printer
+        layout(fx, running=1, slot1="nebulaos", slot2="creality")
+        b = p.boot_id
+        rc, out = reboot()
+        check("reboot: NebulaOS running from slot 1 with the marker on slot 1 is allowed",
+              rc == 0 and p.boot_id != b and p.running_slot == 1 and "REBOOT_INTO_SLOT=1" in out
+              and "REBOOT_SWITCHES_SLOT=NO" in out, out[-300:])
+
+        layout(fx, running=1, slot1="nebulaos", slot2="creality", marker_slot=2)
+        b = p.boot_id
+        rc, out = reboot()
+        check("reboot: the marker on a Creality slot 2 is refused, nothing rebooted",
+              rc == 2 and p.boot_id == b and "holds creality" in out, out[-300:])
+
+        layout(fx, running=2, slot1="creality", slot2="nebulaos", marker_slot=1)
+        b = p.boot_id
+        rc, out = reboot()
+        check("reboot: the marker on a Creality slot 1 (classic armed) is refused",
+              rc == 2 and p.boot_id == b and "holds creality" in out, out[-300:])
+
+        layout(fx, running=1, slot1="nebulaos", slot2="junk", marker_slot=2)
+        b = p.boot_id
+        rc, out = reboot()
+        check("reboot: the marker on an unidentifiable slot is refused",
+              rc == 2 and p.boot_id == b, out[-300:])
+
+        layout(fx, running=1, slot1="nebulaos", slot2="nebulaos", marker_slot=2)
+        rc, out = reboot()
+        check("reboot: the marker on the OTHER NebulaOS slot boots it and says so",
+              rc == 0 and p.running_slot == 2 and "REBOOT_SWITCHES_SLOT=YES" in out, out[-300:])
+
+        layout(fx, running=2, slot1="creality", slot2="nebulaos")
+        rc, out = reboot()
+        check("reboot: the original case (slot 2, marker kernel2) still works",
+              rc == 0 and p.running_slot == 2 and "REBOOT_INTO_SLOT=2" in out, out[-300:])
+
+        # inspect's slot report and the install path it predicts.
+        import nebulaos_verify as verifylib
+        layout(fx, running=1, slot1="nebulaos", slot2="creality")
+        session = sim.SimSession(p, device.OS_NEBULAOS, p.addresses[device.OS_NEBULAOS],
+                                 p.host_keys[device.OS_NEBULAOS], p.passwords[device.OS_NEBULAOS])
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            agent._say_slot_state(session, fx.profile)
+        out = buf.getvalue()
+        check("inspect: reports both slots and the refused install path with the key to set",
+              "SLOT_RUNNING=1" in out and "SLOT_2_HOLDS=creality" in out
+              and "INSTALL_WOULD_TAKE=REFUSED" in out and "INSTALL_OTHER_SLOT=expendable" in out,
+              out[-400:])
+
+        # verify: a build running from slot 1 is verified against slot 1.
+        p.partitions["kernel"], p.partitions["rootfs"] = XIMAGE, ROOTFS
+        a = fx.artifacts
+        res = verifylib.part1_verify(session, a.ximage_sha, a.ximage_size, a.rootfs_sha,
+                                     a.rootfs_size, SOURCE_HEAD, profile=fx.profile)
+        check("verify: NebulaOS running from slot 1 verifies against kernel/rootfs and marker kernel",
+              res.ok(), verifylib.render_part1(res, SOURCE_HEAD)[-500:])
+        p.partitions["kernel"] = OLD_NEB_K
+        res = verifylib.part1_verify(session, a.ximage_sha, a.ximage_size, a.rootfs_sha,
+                                     a.rootfs_size, SOURCE_HEAD, profile=fx.profile)
+        check("verify: other bytes in the running slot 1 fail verification",
+              not res.ok() and any("kernel holds" in c.name for c in res.failures()))
+
+        # rtos-logo: refused with the out-of-scope reason when NebulaOS runs from slot 1.
+        layout(fx, running=1, slot1="nebulaos", slot2="nebulaos")
+        session = sim.SimSession(p, device.OS_NEBULAOS, p.addresses[device.OS_NEBULAOS],
+                                 p.host_keys[device.OS_NEBULAOS], p.passwords[device.OS_NEBULAOS])
+        said = []
+        try:
+            rtos.RtosOperation("printer-sim", session, said.append, fx.control_commit)._guards()
+            bad("rtos-logo refuses NebulaOS running from slot 1", "guards passed")
+        except rtos.RtosError as exc:
+            check("rtos-logo refuses NebulaOS running from slot 1 (its RTOS would be p3)",
+                  "slot 1" in str(exc) and "p3" in str(exc) and "out of scope" in str(exc), str(exc))
+    finally:
+        agent.FW_ROOT, agent.ssh_session_factory, _time.sleep = saved
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def case_both_slots_profile_key():
+    """INSTALL_OTHER_SLOT is human-owned, strict, and preserve by default."""
+    fx, root = scenario("bs-profile")
+    try:
+        check("INSTALL_OTHER_SLOT absent means preserve",
+              fx.profile.effective_other_slot_policy()[0] == "preserve")
+        set_profile(fx, INSTALL_OTHER_SLOT="yes-please")
+        try:
+            fx.profile.other_slot_policy()
+            bad("an invalid INSTALL_OTHER_SLOT is refused", "accepted")
+        except profiles.ProfileError as exc:
+            ok("an invalid INSTALL_OTHER_SLOT is refused", str(exc)[:100])
+        layout(fx, running=1, slot1="nebulaos", slot2="nebulaos")
+        before = dict(fx.printer.partitions)
+        inst, result, err = run_install_keep(fx)
+        check("an invalid INSTALL_OTHER_SLOT refuses the install before writing",
+              err is not None and fx.printer.partitions == before, str(err)[:200])
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------
 
 SCENARIOS = [
     ("capability vs policy", case_capability_vs_policy),
@@ -2024,6 +2706,17 @@ SCENARIOS = [
     ("helper provenance on every path", case_helper_provenance_on_every_path),
     ("journal vs reality", case_journal_reality_conflict),
     ("journal key mismatch", case_journal_key_mismatch),
+    ("both slots: classification and policies", case_slot_classification),
+    ("both slots: slot probe in a real shell", case_slot_facts_script_in_a_real_shell),
+    ("both slots: B=NebulaOS A=Creality (default)", case_both_slots_b_nebulaos_a_creality_default),
+    ("both slots: B=NebulaOS A=Creality (expendable)", case_both_slots_b_nebulaos_a_creality_expendable),
+    ("both slots: A=NebulaOS B=NebulaOS", case_both_slots_a_and_b_nebulaos),
+    ("both slots: A=NebulaOS B=Creality", case_both_slots_a_nebulaos_b_creality),
+    ("both slots: unknown other slot", case_both_slots_unknown_other_slot),
+    ("both slots: never the running slot", case_both_slots_never_write_running_slot),
+    ("both slots: marker and failures", case_both_slots_marker_and_failures),
+    ("both slots: reboot and rtos-logo", case_both_slots_reboot_and_rtos),
+    ("both slots: the profile key", case_both_slots_profile_key),
 ]
 
 

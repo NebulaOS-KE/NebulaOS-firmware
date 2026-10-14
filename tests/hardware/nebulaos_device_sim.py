@@ -84,6 +84,14 @@ class SimulatedPrinter:
         }
 
         self.running_os = device.OS_NEBULAOS
+        # Which slot is running. None keeps the original fixed model (NebulaOS
+        # in slot 2, stock in slot 1) for scenarios that only set running_os;
+        # boot() and the both-slots scenarios set it explicitly.
+        self.running_slot = None
+        # What a slot holds is DERIVED from its bytes (slot_holds), so a write
+        # changes it - except for a running slot whose bytes a scenario never
+        # filled in, which holds whatever is running.
+        self.slot_facts_fail = False             # the slot probe cannot mount anything
         self.boot_id = "boot-0001"
         self._boot_counter = 1
         self.staged = {}                         # name -> bytes
@@ -163,20 +171,24 @@ class SimulatedPrinter:
             self.log.append("reboot requested but the device did not reboot")
             return
         state, _ = marker.parse(self.partitions["ota"])
-        if state == marker.KERNEL:
-            self.running_os = device.OS_STOCK
-            if self.stock_updater_acts_on_boot:
-                self.stock_mcu_update_log = "mcu firmware update ok\n"
-                self.log.append("stock MCU updater acted on boot")
-        elif state == marker.KERNEL2:
-            self.running_os = device.OS_NEBULAOS
-            if self.mcu_guard_restores_on_boot:
-                self.mcu_guard_restores += 1
-                self.log.append("NebulaOS MCU guard performed an automatic restore")
-            # Booting NebulaOS means slot 2 must actually contain something.
-            if not self.partitions["kernel2"] or not self.partitions["rootfs2"]:
+        if state in marker.SLOT_OF:
+            slot = marker.SLOT_OF[state]
+            self.running_slot = slot
+            holds = self.slot_holds(slot, ignore_running=True)
+            if holds == "creality":
+                self.running_os = device.OS_STOCK
+                if self.stock_updater_acts_on_boot:
+                    self.stock_mcu_update_log = "mcu firmware update ok\n"
+                    self.log.append("stock MCU updater acted on boot")
+            elif holds == "nebulaos":
+                self.running_os = device.OS_NEBULAOS
+                if self.mcu_guard_restores_on_boot:
+                    self.mcu_guard_restores += 1
+                    self.log.append("NebulaOS MCU guard performed an automatic restore")
+            else:
+                # Booting a slot means it must actually contain a system.
                 self.running_os = device.OS_UNKNOWN
-                self.log.append("slot 2 is empty - the device failed to boot NebulaOS")
+                self.log.append("slot %d is %s - the device failed to boot it" % (slot, holds))
         else:
             # An indeterminate marker: the bootloader's behaviour is genuinely
             # unpredictable. Model it as staying where it was, which is the
@@ -192,6 +204,29 @@ class SimulatedPrinter:
             base = self.addresses[self.running_os].rsplit(".", 1)[0]
             self.addresses[self.running_os] = "%s.%d" % (base, 100 + self._boot_counter)
             self.log.append("DHCP moved to %s" % self.addresses[self.running_os])
+
+    # -- slots -------------------------------------------------------------
+    SLOT_PARTS = {1: ("kernel", "rootfs"), 2: ("kernel2", "rootfs2")}
+
+    def current_slot(self):
+        if self.running_slot is not None:
+            return self.running_slot
+        return {device.OS_NEBULAOS: 2, device.OS_STOCK: 1}.get(self.running_os)
+
+    def slot_holds(self, slot, ignore_running=False):
+        """nebulaos | creality | empty | unknown, from the slot's bytes - the
+        simulator's stand-in for the rootfs markers the real probe reads."""
+        if not ignore_running and slot == self.current_slot() \
+                and self.running_os in (device.OS_NEBULAOS, device.OS_STOCK):
+            return "nebulaos" if self.running_os == device.OS_NEBULAOS else "creality"
+        k, r = (self.partitions.get(n, b"") for n in self.SLOT_PARTS[slot])
+        if not k or not r:
+            return "empty"
+        if r.startswith(b"NEBULAOS-ROOTFS"):
+            return "nebulaos"
+        if r.startswith(b"\xbe\xef"):
+            return "creality"
+        return "unknown"
 
     def reachable(self, which_os):
         if which_os == device.OS_STOCK and self.stock_unavailable:
@@ -245,8 +280,9 @@ class SimSession(device.DeviceSession):
 
     def active_root(self):
         self._t()
-        return {device.OS_NEBULAOS: "/dev/mmcblk0p8",
-                device.OS_STOCK: "/dev/mmcblk0p7"}.get(self.printer.running_os, "unknown")
+        if self.printer.running_os == device.OS_UNKNOWN:
+            return "unknown"
+        return {1: "/dev/mmcblk0p7", 2: "/dev/mmcblk0p8"}.get(self.printer.current_slot(), "unknown")
 
     def boot_id(self):
         self._t()
@@ -377,6 +413,38 @@ class SimSession(device.DeviceSession):
             "free_kib": str(self.printer.free_bytes // 1024),
         }
 
+    def slot_facts(self):
+        """Facts in exactly the shape slot_facts_script prints, derived from
+        what each slot holds."""
+        self._t()
+        p = self.printer
+        running = p.current_slot()
+        names = {"nebulaos": "Linux-6.6.18-rt23", "creality": "Linux-4.4.94"}
+        facts = {"slot_root": self.active_root()}
+        for n in (1, 2):
+            holds = p.slot_holds(n)
+            pre = "slot%d_" % n
+            if holds == "empty":
+                facts.update({pre + "kernel_magic": "", pre + "kernel_name": "",
+                              pre + "rootfs_magic": "00000000", pre + "inspect": "skipped",
+                              pre + "nebulaos_markers": "0", pre + "creality_markers": "0",
+                              pre + "firmware_head": ""})
+                continue
+            inspect = "running" if n == running else "mounted"
+            if p.slot_facts_fail and n != running:
+                inspect = "failed"
+            ok = inspect != "failed"
+            facts.update({
+                pre + "kernel_magic": "27051956",
+                pre + "kernel_name": names.get(holds, "Linux-9.9-mystery"),
+                pre + "rootfs_magic": "68737173",
+                pre + "inspect": inspect,
+                pre + "nebulaos_markers": "1" if ok and holds == "nebulaos" else "0",
+                pre + "creality_markers": "1" if ok and holds == "creality" else "0",
+                pre + "firmware_head": ("f" * 40) if ok and holds == "nebulaos" else "",
+            })
+        return facts
+
     # -- payload -----------------------------------------------------------
     def free_space(self, path):
         self._t()
@@ -416,16 +484,24 @@ class SimSession(device.DeviceSession):
         if self.printer.flash_helper_fails:
             return False, "flash-spare-slot.sh: preflight refused (simulated)"
 
-        # The real helper refuses to write the slot it is booted from. Model it,
-        # because an installer that tries is a bug worth catching here.
+        # The real session refuses anything but one slot's kernel+rootfs pair
+        # and passes that slot as --target-slot; the helper then refuses the
+        # slot it is booted from (by /proc/cmdline). Model both, because an
+        # installer that tries is a bug worth catching here.
+        slot = device.plans_slot(plans)
         live = self.active_root()
+        if live == {1: "/dev/mmcblk0p7", 2: "/dev/mmcblk0p8"}[slot]:
+            return False, ("flash-spare-slot.sh: target slot %d is the currently active slot - "
+                           "refusing to overwrite the running system" % slot)
         for plan in plans:
             if targets.resolve(plan.target.name).device == live:
                 return False, ("flash-spare-slot.sh: refusing to write %s, which is the live root"
                                % plan.target.name)
+        self.printer.slot_writes = getattr(self.printer, "slot_writes", []) + [slot]
 
-        source = {"kernel2": self.printer.staged.get("xImage"),
-                  "rootfs2": self.printer.staged.get("rootfs.squashfs")}
+        kernel_name, rootfs_name = self.printer.SLOT_PARTS[slot]
+        source = {kernel_name: self.printer.staged.get("xImage"),
+                  rootfs_name: self.printer.staged.get("rootfs.squashfs")}
         written = 0
         for plan in plans:
             data = source.get(plan.target.name)

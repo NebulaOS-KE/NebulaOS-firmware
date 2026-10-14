@@ -10,9 +10,14 @@ THE PUBLIC INTERFACE IS SEMANTIC
               update-supervisor state, Moonraker endpoints
     restart   repair: restart ONE named service with the update supervisor's
               semantics (see nebulaos_device.restart_script)
-    install   the developer install, NebulaOS -> Stock -> flash -> NebulaOS
+    install   the developer install. NebulaOS may occupy either or both A/B
+              slots (2026-10-14); the path follows the device's slot state
+              (nebulaos_slots): INACTIVE_SLOT writes the slot NebulaOS is not
+              running from and boots it, PRESERVE_STOCK goes NebulaOS -> Stock
+              -> flash slot 2 -> NebulaOS when Creality in slot 1 is preserved
     reboot    software reboot of an idle NebulaOS back into NebulaOS, for
-              boot timing; refused unless the marker already selects NebulaOS
+              boot timing; refused unless the marker selects a slot that
+              holds NebulaOS
     rtos-logo         write the NebulaOS boot logo RTOS image to rtos2 (p4)
                       only, after a verified host backup (nebulaos_rtos)
     rtos-logo-restore write such a backup back to rtos2, named by sha256
@@ -58,6 +63,7 @@ import nebulaos_journal as journal      # noqa: E402
 import nebulaos_marker as marker        # noqa: E402
 import nebulaos_profile as profiles     # noqa: E402
 import nebulaos_rtos as rtos            # noqa: E402
+import nebulaos_slots as slots          # noqa: E402
 import nebulaos_target as targets       # noqa: E402
 import nebulaos_verify as verifylib     # noqa: E402
 
@@ -281,7 +287,9 @@ def op_inspect(args):
         args.device, None, None, None, args.control_commit, destructive=False)
     say(targets.capability_report())
     say()
-    say(targets.DEV_PRESERVE_STOCK.report(prefix="DEV_INSTALL_POLICY"))
+    for policy in targets.DEV_INSTALL_POLICIES:
+        say(policy.report(prefix="DEV_INSTALL_POLICY_CANDIDATE"))
+    say("# install picks one of these from the slot state below (nebulaos_slots)")
     say()
 
     factory = ssh_session_factory(profile)
@@ -309,6 +317,7 @@ def op_inspect(args):
                 say("DEVICE_ACTIVE_ROOT=%s" % session.active_root())
                 state, reason = marker.parse(session.read_marker_block())
                 say(marker.describe(state, reason))
+                _say_slot_state(session, profile)
                 say(session.idle_state().describe())
                 for key, value in sorted(session.service_health().items()):
                     say("SERVICE_%s=%s" % (key.upper(), value))
@@ -317,6 +326,26 @@ def op_inspect(args):
                 session.close()
     say("INSPECT=NO_DEVICE_REACHABLE")
     return 3
+
+
+def _say_slot_state(session, profile=None):
+    """Report the A/B slot state and, for a NebulaOS printer, the install path
+    it would take. Read-only; a probe failure is reported, never fatal."""
+    try:
+        state = slots.read_slot_state(session)
+    except Exception as exc:                      # noqa: BLE001 - informational
+        say("SLOT_STATE=UNREADABLE (%s)" % str(exc)[:160])
+        return None
+    say(state.describe())
+    if profile is not None and state.running_os == device.OS_NEBULAOS:
+        try:
+            other_policy, note = profile.effective_other_slot_policy()
+            plan = slots.plan_install(state, other_policy)
+            say("INSTALL_WOULD_TAKE=%s (slot %d -> slot %d; %s)"
+                % (plan.path, plan.running_slot, plan.target_slot, note))
+        except (slots.SlotError, profiles.ProfileError) as exc:
+            say("INSTALL_WOULD_TAKE=REFUSED (%s)" % str(exc)[:300])
+    return state
 
 
 def _say_power_cycle_warning(txn):
@@ -363,6 +392,7 @@ def op_verify(args):
             tried.append("%s: %s" % (address, str(exc)[:120]))
             continue
         try:
+            _say_slot_state(session)
             result = verifylib.part1_verify(
                 session, artifacts.ximage_sha, artifacts.ximage_size,
                 artifacts.rootfs_sha, artifacts.rootfs_size, args.source_head,
@@ -497,10 +527,11 @@ REBOOT_BACK_TIMEOUT = 300
 def op_reboot(args):
     """A software reboot of a running NebulaOS printer back into NebulaOS, for
     boot-time measurement. No partition or marker write: it refuses unless the
-    OTA marker already selects the NebulaOS slot, so the printer cannot come
-    back as stock (and a software reboot never power-cycles the MCU). Needs a
-    proven idle printer and no open install transaction. Success is a CHANGED
-    boot id on a rediscovered, identity-matched NebulaOS."""
+    OTA marker selects a slot that holds NebulaOS (slot 1 or 2 - NebulaOS may
+    occupy both since 2026-10-14), so the printer cannot come back as Creality
+    (and a software reboot never power-cycles the MCU). Needs a proven idle
+    printer and no open install transaction. Success is a CHANGED boot id on a
+    rediscovered, identity-matched NebulaOS running from the selected slot."""
     import time
     if args.confirm != REBOOT_CONFIRM_WORD:
         raise AgentRefusal("reboot not confirmed (expected %s)" % REBOOT_CONFIRM_WORD)
@@ -515,10 +546,22 @@ def op_reboot(args):
         try:
             if session.which_os() != device.OS_NEBULAOS:
                 raise AgentRefusal("the printer is not running NebulaOS")
-            state, why = marker.parse(session.read_marker_block())
-            if state != marker.KERNEL2:
-                raise AgentRefusal("the OTA marker does not select NebulaOS (%s: %s); a reboot "
-                                   "could land in stock" % (state, why))
+            slot_state = slots.read_slot_state(session)
+            say(slot_state.describe())
+            target_slot = slot_state.marker_slot
+            if target_slot is None:
+                raise AgentRefusal("the OTA marker selects no known slot (%s: %s); the next boot "
+                                   "target cannot be predicted"
+                                   % (slot_state.marker_state, slot_state.marker_reason))
+            if slot_state.holds[target_slot] != slots.HOLDS_NEBULAOS:
+                raise AgentRefusal(
+                    "the OTA marker selects slot %d, which holds %s (%s); a reboot would not come "
+                    "back as NebulaOS. reboot only ever boots a slot that holds NebulaOS."
+                    % (target_slot, slot_state.holds[target_slot],
+                       slot_state.evidence[target_slot]))
+            say("REBOOT_INTO_SLOT=%d" % target_slot)
+            say("REBOOT_SWITCHES_SLOT=%s" % ("NO" if target_slot == slot_state.running_slot
+                                             else "YES (the marker selects the other NebulaOS slot)"))
             idle = session.idle_state()
             say(idle.describe())
             if not idle.is_idle():
@@ -546,15 +589,25 @@ def op_reboot(args):
             try:
                 boot_now = session.boot_id()
                 if boot_now and boot_now != boot_before and session.which_os() == device.OS_NEBULAOS:
-                    _, out, _ = session._run("cut -d' ' -f1 /proc/uptime")
-                    say("REBOOT_OBSERVED=YES os=nebulaos boot_id=%s->%s"
-                        % (boot_before[:8], boot_now[:8]))
+                    root_now = session.active_root()
+                    if slots.slot_of_root(root_now) != target_slot:
+                        raise AgentRefusal(
+                            "the printer rebooted into NebulaOS but from %s, not slot %d. Nothing "
+                            "was written; check it with `inspect`." % (root_now, target_slot))
+                    try:
+                        out = session._run("cut -d' ' -f1 /proc/uptime")[1]
+                    except Exception:             # noqa: BLE001 - timing detail only
+                        out = "unknown"
+                    say("REBOOT_OBSERVED=YES os=nebulaos slot=%d boot_id=%s->%s"
+                        % (target_slot, boot_before[:8], boot_now[:8]))
                     say("BOOT_ID_AFTER=%s" % boot_now)
                     say("REDISCOVERED_AFTER_S=%.0f" % (time.time() - issued))
                     say("DEVICE_UPTIME_AT_REDISCOVERY_S=%s" % out.strip())
                     say("RUN_NEBULAOS_HARDWARE=REBOOT_COMPLETE")
                     return 0
                 last = "boot id unchanged - not rebooted yet"
+            except AgentRefusal:
+                raise
             except Exception as exc:              # noqa: BLE001 - keep waiting
                 last = str(exc)[:160]
             finally:

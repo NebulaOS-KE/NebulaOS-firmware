@@ -1,4 +1,7 @@
-"""Two proofs: that Stock is a usable way out, and that an install really landed.
+"""The proofs: that Stock is a usable way out (PRESERVE_STOCK), that the running
+NebulaOS slot is the way back (INACTIVE_SLOT, since NebulaOS may occupy both
+slots - nebulaos_slots), and that an install really landed in the slot it was
+meant for.
 
 THE STOCK WAY-OUT PROOF
 
@@ -32,6 +35,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import nebulaos_device as device  # noqa: E402
 import nebulaos_marker as marker  # noqa: E402
+import nebulaos_slots as slots    # noqa: E402
 
 
 class Check:
@@ -155,6 +159,44 @@ def stock_wayout_proof(session, profile, payload_bytes_needed):
     return result
 
 
+# ---------------------------------------------------------------------------
+# Way-back proof for the INACTIVE_SLOT path
+# ---------------------------------------------------------------------------
+
+def inactive_slot_wayback_proof(session, state, plan, payload_bytes_needed):
+    """The INACTIVE_SLOT path never boots Creality: the way back is the
+    NebulaOS slot that is running now, which this path never writes. So the
+    proof is about THAT slot and about the target being the other one.
+
+    `state` is a SlotState read in this session; `plan` the InstallPlan made
+    from it. Read-only; the live root is re-read here, not taken from `state`.
+    """
+    result = ProofResult("way back proof")
+    r, t = plan.running_slot, plan.target_slot
+    root = session.active_root()
+    result.add("the running slot is still slot %d (root=%s)" % (r, slots.SLOTS[r].root),
+               root == slots.SLOTS[r].root, "root=%s, re-read from /proc/cmdline" % root)
+    result.add("the running system is NebulaOS", session.which_os() == device.OS_NEBULAOS)
+    result.add("slot %d, the way back, holds NebulaOS" % r,
+               state.holds.get(r) == slots.HOLDS_NEBULAOS, state.evidence.get(r, ""))
+    result.add("the target is the OTHER slot", t == slots.other(r) and t != r,
+               "target slot %s, running slot %s" % (t, r))
+    names = sorted(plan.policy.allowed - {"ota"})
+    result.add("the install policy cannot select the running slot",
+               not (set(names) & {slots.SLOTS[r].kernel, slots.SLOTS[r].rootfs}),
+               "%s may write %s" % (plan.policy.name, ", ".join(names)))
+    state_now, why = marker.parse(session.read_marker_block())
+    result.add("the marker selects the running slot %d until the new slot is verified" % r,
+               marker.SLOT_OF.get(state_now) == r, "%s (%s)" % (state_now, why))
+    try:
+        free = int(session.free_space("/usr/data"))
+    except (TypeError, ValueError):
+        free = 0
+    result.add("the staging area has room for the payload",
+               free >= payload_bytes_needed, "%d bytes free, %d needed" % (free, payload_bytes_needed))
+    return result
+
+
 def idle_proof(session):
     """The printer must be doing nothing before a slot switch."""
     result = ProofResult("idle proof")
@@ -194,8 +236,15 @@ def observe_mcu_restore(session):
 
 def part1_verify(session, expected_ximage_sha, expected_ximage_size,
                  expected_rootfs_sha, expected_rootfs_size,
-                 expected_source_head, profile=None, expected_boot_id_changed_from=None):
-    """Prove the exact build is installed and running. Read-only."""
+                 expected_source_head, profile=None, expected_boot_id_changed_from=None,
+                 expected_slot=None):
+    """Prove the exact build is installed and running. Read-only.
+
+    `expected_slot` is the slot the build must be running from (1 or 2). An
+    install states it; a standalone `verify` passes None and the slot is the
+    one the device is running from, whichever that is - since 2026-10-14
+    NebulaOS may run from either slot.
+    """
     result = ProofResult("part1 install verification")
 
     # --- the right printer ------------------------------------------------
@@ -206,8 +255,13 @@ def part1_verify(session, expected_ximage_sha, expected_ximage_size,
 
     # --- running the right slot -------------------------------------------
     root = session.active_root()
-    result.add("root is the NebulaOS slot", root == "/dev/mmcblk0p8",
-               "root=%s (expected /dev/mmcblk0p8)" % root)
+    running_slot = slots.slot_of_root(root)
+    slot_n = expected_slot or running_slot
+    slot = slots.SLOTS.get(slot_n)
+    result.add("root is the NebulaOS slot",
+               slot is not None and root == slot.root,
+               "root=%s (expected %s, slot %s)" % (root, slot.root if slot else "slot 1 or 2",
+                                                   slot_n or "unknown"))
 
     running_os = session.which_os()
     result.add("the running OS is NebulaOS", running_os == device.OS_NEBULAOS,
@@ -224,27 +278,34 @@ def part1_verify(session, expected_ximage_sha, expected_ximage_size,
         block = session.read_marker_block()
         state, why = marker.parse(block)
         result.add("the OTA marker selects the NebulaOS slot",
-                   state == marker.KERNEL2, "%s (%s)" % (state, why))
+                   slot is not None and state == slot.marker,
+                   "%s (%s; expected %s)" % (state, why, slot.marker if slot else "a known slot"))
     except Exception as exc:
         result.add("the OTA marker selects the NebulaOS slot", False, str(exc)[:160])
 
     # --- THE BYTES --------------------------------------------------------
     # This is what makes it verification rather than a health check.
+    kname = slot.kernel if slot else "the running slot's kernel"
+    rname = slot.rootfs if slot else "the running slot's rootfs"
     try:
-        got = session.region_sha256("kernel2", expected_ximage_size)
-        result.add("kernel2 holds exactly the expected xImage",
+        if slot is None:
+            raise device.DeviceError("the running slot is unknown (root=%s)" % root)
+        got = session.region_sha256(slot.kernel, expected_ximage_size)
+        result.add("%s holds exactly the expected xImage" % kname,
                    got == expected_ximage_sha,
                    "device %s vs expected %s" % (got[:16], expected_ximage_sha[:16]))
     except Exception as exc:
-        result.add("kernel2 holds exactly the expected xImage", False, str(exc)[:160])
+        result.add("%s holds exactly the expected xImage" % kname, False, str(exc)[:160])
 
     try:
-        got = session.region_sha256("rootfs2", expected_rootfs_size)
-        result.add("rootfs2 holds exactly the expected rootfs.squashfs",
+        if slot is None:
+            raise device.DeviceError("the running slot is unknown (root=%s)" % root)
+        got = session.region_sha256(slot.rootfs, expected_rootfs_size)
+        result.add("%s holds exactly the expected rootfs.squashfs" % rname,
                    got == expected_rootfs_sha,
                    "device %s vs expected %s" % (got[:16], expected_rootfs_sha[:16]))
     except Exception as exc:
-        result.add("rootfs2 holds exactly the expected rootfs.squashfs", False, str(exc)[:160])
+        result.add("%s holds exactly the expected rootfs.squashfs" % rname, False, str(exc)[:160])
 
     # --- health -----------------------------------------------------------
     health = session.service_health()

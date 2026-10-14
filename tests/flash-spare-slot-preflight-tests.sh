@@ -195,6 +195,48 @@ sed -i 's/^rootfs_squashfs_sha256=.*/rootfs_squashfs_sha256=00000000000000000000
 run_case "a manifest sha256 mismatch is refused" \
 	"$F" "console=ttyS4 root=$F/dev/mmcblk0p7 rootwait" "REFUSE" "$BADMANI"
 
+# --- Both-slots model (2026-10-14): --target-slot 1. NebulaOS running
+# from slot 2 (root=p8) may write slot 1; slot 1 is refused while it is
+# the live root, exactly as slot 2 is refused while root=p8. ---
+run_case "target slot 1 is allowed while slot 2 (root=p8) is live" \
+	"$F" "console=ttyS4 root=$F/dev/mmcblk0p8 rootwait" "ALLOW" "$IMG" "TARGET_SLOT=1"
+run_case "target slot 1 is refused while it is the live slot (root=p7)" \
+	"$F" "console=ttyS4 root=$F/dev/mmcblk0p7 rootwait" "REFUSE" "$IMG" "TARGET_SLOT=1"
+run_case "a target slot other than 1 or 2 is refused" \
+	"$F" "console=ttyS4 root=$F/dev/mmcblk0p7 rootwait" "REFUSE" "$IMG" "TARGET_SLOT=3"
+run_case "target slot 1 whose kernel label points into slot 2 is refused" \
+	"$F" "console=ttyS4 root=$F/dev/mmcblk0p8 rootwait" "REFUSE" "$IMG" \
+	"TARGET_SLOT=1; SLOT1_KERNEL=\"$F/dev/mmcblk0p6\""
+
+echo "console=ttyS4 root=$F/dev/mmcblk0p8 rootwait" > "$F/cmdline"
+out=$(FLASH_SPARE_SLOT_TEST_MODE=1 DEV_PREFIX="$F" CMDLINE_PATH="$F/cmdline" \
+	sh "$FLASH_SCRIPT" --check-only --target-slot 1 "$IMG/xImage" "$IMG/rootfs.squashfs" "$IMG/manifest.txt" 2>&1)
+rc=$?
+if [ "$rc" -eq 0 ] && echo "$out" | grep -q "target slot:   1" && echo "$out" | grep -q "active slot:   2"; then
+	pass "CLI --check-only --target-slot 1 from slot 2 targets slot 1"
+else
+	fail "CLI --check-only --target-slot 1 did not target slot 1 (exit=$rc)"
+	echo "$out" | sed 's/^/    /'
+fi
+out=$(FLASH_SPARE_SLOT_TEST_MODE=1 DEV_PREFIX="$F" CMDLINE_PATH="$F/cmdline" \
+	sh "$FLASH_SCRIPT" --check-only "$IMG/xImage" "$IMG/rootfs.squashfs" "$IMG/manifest.txt" 2>&1)
+rc=$?
+if [ "$rc" -ne 0 ] && ! echo "$out" | grep -q "SAFE TO FLASH"; then
+	pass "CLI without --target-slot still means slot 2 (refused while slot 2 is live)"
+else
+	fail "CLI without --target-slot did not default to slot 2 (exit=$rc)"
+	echo "$out" | sed 's/^/    /'
+fi
+out=$(FLASH_SPARE_SLOT_TEST_MODE=1 DEV_PREFIX="$F" CMDLINE_PATH="$F/cmdline" \
+	sh "$FLASH_SCRIPT" --check-only --target-slot 3 "$IMG/xImage" "$IMG/rootfs.squashfs" "$IMG/manifest.txt" 2>&1)
+rc=$?
+if [ "$rc" -ne 0 ] && echo "$out" | grep -q "takes 1 or 2"; then
+	pass "CLI --target-slot 3 is refused"
+else
+	fail "CLI --target-slot 3 was not refused (exit=$rc)"
+	echo "$out" | sed 's/^/    /'
+fi
+
 # --- Test 12: check-only mode proves no write occurs - run the REAL CLI
 # entry point (main(), not just run_preflight directly) with --check-only
 # against the ALLOW scenario, and confirm (a) it exits 0, (b) it reports
