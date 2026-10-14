@@ -1085,6 +1085,30 @@ def case_already_on_stock():
         shutil.rmtree(root, ignore_errors=True)
 
 
+def case_on_stock_with_a_stale_payload():
+    """REGRESSION (ke-dev 2026-10-15): the device was on stock after USB
+    recovery, holding the PREVIOUS install's payload. The install must stage
+    this build's payload and write it - not refuse on the stale bytes, and
+    never write them."""
+    fx, root = scenario("onstockstale")
+    try:
+        fx.printer.running_os = device.OS_STOCK
+        fx.printer.partitions["ota"] = marker.canonical(marker.KERNEL)
+        fx.printer.staged["xImage"] = b"previous build's xImage"
+        fx.printer.staged["rootfs.squashfs"] = b"previous build's rootfs"
+        fx.printer.staged["build-manifest.txt"] = b"old"
+        result, err = run_install(fx)
+        check("an install that starts on stock with a stale payload completes",
+              err is None and result is not None and result.ok,
+              str(err)[:220] if err else "")
+        check("REGRESSION: slot 2 received THIS build's xImage, not the stale one",
+              hashlib.sha256(fx.printer.partitions["kernel2"]).hexdigest() == fx.artifacts.ximage_sha)
+        check("REGRESSION: the staged payload is this build's",
+              hashlib.sha256(fx.printer.staged["xImage"]).hexdigest() == fx.artifacts.ximage_sha)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def case_armed_window_is_exception_safe():
     """REGRESSION: every exit from the ARMED window must disarm.
 
@@ -2675,6 +2699,7 @@ SCENARIOS = [
     ("attestation v2 required", case_attestation_required),
     ("happy path", case_happy_path),
     ("already on stock", case_already_on_stock),
+    ("on stock with a stale payload", case_on_stock_with_a_stale_payload),
     ("wrong printer", case_wrong_printer),
     ("host key mismatch", case_host_key_mismatch),
     ("ip change (un-enrolled)", case_ip_change),

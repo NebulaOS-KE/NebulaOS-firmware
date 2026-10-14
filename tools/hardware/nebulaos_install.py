@@ -590,6 +590,14 @@ class Installer:
                 self._say("")
                 self._say("--- device is already running stock: entering the stock window ---")
                 self._advance(journal.STOCK_RUNNING, "device was already on stock")
+                # Stage THIS build's payload here too (2026-10-15): this path
+                # assumed it only resumes an interrupted install whose payload
+                # is already on the device. ke-dev was simply on stock (USB
+                # recovery after a failed NebulaOS boot); the re-hash then met
+                # the previous install's xImage and refused - correctly, but
+                # it could never install from here. Staging the same bytes
+                # again on a resume is harmless; the re-hash still guards them.
+                self._stage(session)
                 updater_acted = self._install_from_stock(session)
             else:
                 raise InstallError(
