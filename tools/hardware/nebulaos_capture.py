@@ -178,13 +178,29 @@ _NEBULAOS_POSTMORTEM = (
     "echo \"--- $f\"; grep -v -i -e psk -e passw \"$f\" | head -c 4000; echo; done"
 )
 
+# What `e2fsck -p` would meet on the data partition, without changing it:
+# `e2fsck -n` opens the device read-only and answers "no" to every question.
+# Run while the partition is mounted (it always is on a running system), so
+# a few items can be artefacts of live writes; real damage still shows.
+_DATAFS_CHECK_READONLY = (
+    "D=/dev/mmcblk0p10; "
+    "(dumpe2fs -h $D || tune2fs -l $D) 2>&1 | grep -i -e 'state' -e 'mount count' -e 'last checked' | head -n 6; "
+    "E=$(command -v e2fsck || command -v fsck.ext4 || command -v fsck.ext2); "
+    "[ -n \"$E\" ] || { echo NO_E2FSCK; exit 0; }; echo \"checker=$E\"; "
+    "S=$(date +%s); ( timeout 240 $E -n -f $D; echo \"e2fsck_rc=$?\" ) 2>&1 | tail -n 120; "
+    "echo \"seconds=$(( $(date +%s) - S ))\"; "
+    "echo; echo '== what the preen pass alone would do (still -n) =='; "
+    "( timeout 240 $E -n $D; echo \"e2fsck_rc=$?\" ) 2>&1 | tail -n 20"
+)
+
 # Profiles that may also run on Creality's system (the other slot): read-only
 # and meaningful from there.
-STOCK_CAPTURE_PROFILES = ("nebulaos-postmortem",)
+STOCK_CAPTURE_PROFILES = ("nebulaos-postmortem", "datafs-check-readonly")
 
 # name -> (body, needs_diag, probe or None, timeout seconds)
 CAPTURE_PROFILES = {
     "nebulaos-postmortem": (_NEBULAOS_POSTMORTEM, False, None, 120),
+    "datafs-check-readonly": (_DATAFS_CHECK_READONLY, False, None, 600),
     # RTOS logo (G7): what is on rtos/rtos2 before anything writes rtos2.
     "rtos-hashes": (_rtos_hashes(), False, None, 120),
     # --- TOOL-01 base list ---------------------------------------------------
