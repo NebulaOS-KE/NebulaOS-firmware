@@ -4,10 +4,36 @@ This is the raw partition layout and boot-selection mechanism the KE actually us
 you're comfortable with SSH, root, and thinking about block devices — this isn't a consumer install
 guide, it's the reference for anyone actually working on this stuff.
 
+## Two models: fixed slots, and NebulaOS in either or both
+
+**Original model (still the most common state).** Slot 1 holds Creality's stock system and slot 2
+holds NebulaOS. A NebulaOS update overwrites slot 2. Writing slot 2 while running from it is
+impossible, so the developer install boots Creality from slot 1 to do it. That is the Hardware
+Agent's `PRESERVE_STOCK` path.
+
+**Since 2026-10-14 (human decision): NebulaOS may occupy either or both slots.** An update writes
+whichever slot is **not** running and then points the marker at it. After one such update a printer
+can run NebulaOS from slot 1 with an older NebulaOS still in slot 2, or the reverse. If its owner
+installed a Creality image, it can also hold Creality in either slot. In this model the way back
+is the slot you are leaving, which must contain a bootable system (NebulaOS or Creality).
+
+Both models use the same partitions, the same marker and the same bootloader. The only change is
+what each slot is allowed to hold, so nothing may assume "slot 1 is stock". Tools decide from the
+device:
+
+- the running slot comes from `root=` in `/proc/cmdline` (p7 is slot 1, p8 is slot 2);
+- the next slot comes from the marker bytes in p1;
+- what a slot holds comes from that slot itself. The Hardware Agent mounts the other rootfs
+  read-only on the printer and looks for NebulaOS's `/etc/ota_marker.sh` + `/opt/nebulaos` or
+  Creality's `/etc/ota_bin`. It cross-checks against the kernel partition's uImage name (Linux 6.x
+  is NebulaOS, 4.4 is Creality's KE firmware). Anything it cannot identify is `unknown`, and that
+  is never assumed bootable or expendable. See `docs/HARDWARE_AGENT.md`, "NebulaOS in either or
+  both slots".
+
 ## The layout
 
 ```
-Slot 1 (stock)              Slot 2 (custom / NebulaOS)
+Slot 1 (factory: stock)     Slot 2 (factory: custom / NebulaOS)
   mmcblk0p5  kernel            mmcblk0p6  kernel2
   mmcblk0p7  rootfs             mmcblk0p8  rootfs2
   (8 MiB / 500 MB)              (8 MiB / 500 MB - real, fixed capacities)
@@ -20,12 +46,17 @@ Slot 1 (stock)              Slot 2 (custom / NebulaOS)
                  shared, not duplicated per slot - see below
 ```
 
-These are two fixed physical slots, not a rotating pair. Slot 1 is Creality's stock kernel and
-rootfs. Slot 2 is NebulaOS's permanent home — every time you update NebulaOS, you're overwriting
-slot 2 again, not alternating between two custom copies.
+These are two fixed physical slot pairs. In the original model slot 1 is Creality's stock kernel
+and rootfs, and slot 2 is NebulaOS's permanent home: every update overwrites slot 2 again. In the
+both-slots model an update alternates between the two pairs, always writing the one that is not
+running.
+
+SPL loads a slot's RTOS together with its kernel and rootfs: rtos (p3) for slot 1, rtos2 (p4) for
+slot 2. NebulaOS running from slot 1 therefore runs with p3, Creality's RTOS image, and the
+NebulaOS boot logo (written to rtos2 only) does not show.
 
 The important part: **we never overwrite the slot we're currently booted from.** That's not just a
-convention, it's enforced in code (more on that below).
+convention, it's enforced in code (more on that below), in both models.
 
 ### `/overlay` and `/usr/data` are shared, not duplicated
 
@@ -37,15 +68,18 @@ lives where and what survives a switch.
 
 ## What a normal flash actually touches
 
-`scripts/flash-spare-slot.sh` writes exactly two devices: `/dev/mmcblk0p6` (kernel2) and
-`/dev/mmcblk0p8` (rootfs2). It only ever targets slot 2, and it will flatly refuse to run if the
-slot it's about to write turns out to be the one you're currently booted from. That check happens
-in the script itself, not just in a warning somewhere — see `run_preflight()` if you want to read
-it.
+`scripts/flash-spare-slot.sh` writes exactly two devices, one slot's kernel and rootfs. By default
+that is `/dev/mmcblk0p6` (kernel2) and `/dev/mmcblk0p8` (rootfs2). `--target-slot 1` writes
+`/dev/mmcblk0p5`/`p7` instead. The Hardware Agent passes it only when NebulaOS runs from slot 2
+and slot 1 holds NebulaOS or its owner released it (`INSTALL_OTHER_SLOT=expendable`). Whatever
+the target, the script flatly refuses to run if the slot it's about to write is the one you're
+currently booted from. It resolves that from `/proc/cmdline` twice, the second time immediately
+before writing. That check happens in the script itself, not just in a warning somewhere — see
+`run_preflight()` if you want to read it.
 
 It never touches:
 
-- `mmcblk0p5`/`p7` (stock's kernel/rootfs) — there's no code path that writes there
+- the slot it is running from - there's no code path that writes the live slot
 - `mmcblk0p1` (the OTA marker) — that's a separate, deliberate step, covered below
 - `mmcblk0p9`/`p10` (the persistent data partitions) — not this script's job
 - U-Boot, the partition table, or any factory-calibration data — nothing in this repo touches those
@@ -64,12 +98,15 @@ abstract.
 `/dev/mmcblk0p1` is a plain 1 MB partition. Its whole job is holding one of two strings:
 
 ```
-ota:kernel      (boot slot 1 / stock next)
-ota:kernel2     (boot slot 2 / custom next)
+ota:kernel      (boot slot 1 next - stock in the original model)
+ota:kernel2     (boot slot 2 next - NebulaOS in the original model)
 ```
 
 Two different tools write it, depending which OS you're currently on — and that's intentional, not
 an inconsistency:
+
+The marker names a **slot**, not an operating system. In the both-slots model `ota:kernel` can
+select a NebulaOS in slot 1.
 
 | From | Tool | Semantics |
 |---|---|---|
