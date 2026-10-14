@@ -41,6 +41,28 @@ sitting on stock with a freshly written NebulaOS slot; the single most valuable
 next byte is the one that points the bootloader back at it. Everything else can
 happen after.
 
+NEBULAOS IN EITHER OR BOTH SLOTS (2026-10-14)
+
+Since the human decision of 2026-10-14 NebulaOS may occupy slot 1 too, so the
+install first reads the whole slot state (nebulaos_slots) and picks one of two
+paths from it:
+
+    PRESERVE_STOCK  NebulaOS runs from slot 2 and Creality is in slot 1, which
+                    the owner has not released: everything above, unchanged.
+    INACTIVE_SLOT   NebulaOS runs from slot N and the other slot holds NebulaOS,
+                    or the owner set INSTALL_OTHER_SLOT=expendable: the other
+                    slot is written directly from the running NebulaOS (the
+                    flash helper re-resolves the live root right before it
+                    writes and refuses it), verified, the marker is pointed at
+                    it, and the printer reboots into it. Creality is never
+                    booted, so there is no stock window, no MCU exposure and no
+                    POWER_CYCLE_DANGEROUS state; until the marker moves, a power
+                    cycle simply boots the running slot again.
+
+Anything else - an unknown running slot, an unidentifiable other slot without
+the owner's permission, Creality in slot 2 while NebulaOS runs from slot 1 -
+is refused before anything is written, naming the profile key a human can set.
+
 REALITY WINS
 
 The journal says what a previous process intended. Every decision here is made
@@ -59,6 +81,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import nebulaos_device as device      # noqa: E402
 import nebulaos_journal as journal    # noqa: E402
 import nebulaos_marker as marker      # noqa: E402
+import nebulaos_slots as slots        # noqa: E402
 import nebulaos_target as targets     # noqa: E402
 import nebulaos_verify as verify      # noqa: E402
 
@@ -140,7 +163,17 @@ class Installer:
         self.control = control_set
         self.artifacts = artifacts
         self.session_factory = session_factory
+        # The policy is decided from the device's slot state once connected
+        # (nebulaos_slots.plan_install). PRESERVE_STOCK until then: it is what
+        # the "already running stock" path writes.
         self.policy = policy or targets.DEV_PRESERVE_STOCK
+        self._policy_forced = policy is not None
+        self.plan = None
+        self.slot_state = None
+        # The marker of the slot NebulaOS runs from: what a disarm restores.
+        self._home_marker = marker.KERNEL2
+        # The slot the new build must be running from at the end.
+        self._expected_slot = 2
         self.txn = txn
         self.sleep = sleep
         self.now = now
@@ -236,14 +269,15 @@ class Installer:
     def _disarm(self, session, reason):
         """NebulaOS is running and the marker says stock. Put it back.
 
-        Returns True only when the marker has been physically re-read as
-        kernel2. Anything less is reported as a dangerous state rather than
-        quietly tolerated.
+        Returns True only when the marker has been physically re-read as the
+        running NebulaOS slot's marker (kernel2 on the PRESERVE_STOCK path).
+        Anything less is reported as a dangerous state rather than quietly
+        tolerated.
         """
         self._say("DISARMING=YES reason=%s" % reason)
         self._advance(journal.CLOSE_BACKWARD, "disarming: %s" % reason)
         try:
-            ok, why = self._set_marker_verified(session, marker.KERNEL2)
+            ok, why = self._set_marker_verified(session, self._home_marker)
         except Exception as exc:
             self._say("DISARM_FAILED=YES detail=%s" % str(exc)[:200])
             return False
@@ -514,9 +548,6 @@ class Installer:
         """Install, from wherever the device currently is."""
         self._say(self.artifacts.describe())
         self._say(self.control.describe())
-        self._say(self.policy.report(prefix="DEV_INSTALL_POLICY"
-                                     if self.policy is targets.DEV_PRESERVE_STOCK
-                                     else "POLICY"))
         self._say("")
 
         session, address = self._connect_either()
@@ -525,8 +556,10 @@ class Installer:
 
         try:
             if running == device.OS_NEBULAOS:
-                state, _ = self._read_marker(session)
-                if marker.is_armed_for_stock(state):
+                state = self._read_slots(session)
+                if state == "OTHER_NEBULAOS_SLOT_SELECTED":
+                    state, _ = self._read_marker(session)
+                if marker.is_armed_for_stock(state) and self._home_marker == marker.KERNEL2:
                     # A resumed or crashed transaction. Disarm FIRST.
                     self._say("")
                     self._say("--- found NebulaOS running with the marker on stock: ARMED_STOCK ---")
@@ -539,14 +572,21 @@ class Installer:
                     self._say("DISARMED=YES - restarting the install from a safe state")
                     state, _ = self._read_marker(session)
 
-                if state != marker.KERNEL2:
+                if state != self._home_marker:
                     raise InstallError(
-                        "the marker is %s while NebulaOS runs. Refusing to proceed from an "
-                        "indeterminate marker - the next boot target cannot be predicted." % state,
+                        "the marker is %s while NebulaOS runs from slot %s. Refusing to proceed "
+                        "from an indeterminate marker - the next boot target cannot be predicted."
+                        % (state, self.slot_state.running_slot if self.slot_state else "?"),
                         state=journal.FAILED_NEEDS_ATTENTION)
 
-                updater_acted = self._install_from_nebulaos(session)
+                self._choose_path()
+                if self.plan.path == slots.PATH_INACTIVE_SLOT:
+                    updater_acted = self._install_inactive_slot(session)
+                else:
+                    updater_acted = self._install_from_nebulaos(session)
             elif running == device.OS_STOCK:
+                self._check_slot2_from_stock(session)
+                self._say(self.policy.report(prefix="DEV_INSTALL_POLICY"))
                 self._say("")
                 self._say("--- device is already running stock: entering the stock window ---")
                 self._advance(journal.STOCK_RUNNING, "device was already on stock")
@@ -562,6 +602,266 @@ class Installer:
                 pass
 
         return self._close_forward(updater_acted)
+
+    # -- the slot state and the path ---------------------------------------
+    def _record(self, fields, note=""):
+        """Advisory journal record for `status`. Never fatal: the device is the
+        authority, and a journal that cannot be written must not stop a safe
+        state transition."""
+        if not self.txn:
+            return
+        try:
+            self.txn.record(fields, note)
+        except Exception as exc:                   # noqa: BLE001 - advisory only
+            self._say("JOURNAL_RECORD_FAILED=YES detail=%s" % str(exc)[:120])
+
+    def _read_slots(self, session):
+        """Read and report the slot state; settle which marker means "home".
+
+        -> the marker state as it should be read by run(). When the marker
+        selects the OTHER slot and that slot is NebulaOS (or anything but
+        Creality), it is pointed back at the running slot here, read back,
+        before any decision: an install must never start with the marker on
+        the slot it is about to overwrite. Marker-on-Creality keeps the original
+        ARMED_STOCK handling in run().
+        """
+        state = slots.read_slot_state(session)
+        self.slot_state = state
+        self._say("")
+        self._say("--- slot state ---")
+        self._say(state.describe())
+        self._record(state.journal_fields(), "slot state on connect")
+        r = state.running_slot
+        if r is None:
+            raise InstallError(
+                "cannot tell which slot NebulaOS runs from: root=%s. Refusing to plan a slot "
+                "switch from an unexpected root." % state.active_root, state=self.result.state)
+        self._home_marker = slots.SLOTS[r].marker
+        self._expected_slot = slots.other(r)
+        self._say("OTA_MARKER=%s (%s)" % (state.marker_state, state.marker_reason))
+        o = state.marker_slot
+        if o is None or o == r:
+            return state.marker_state
+        if state.holds[o] == slots.HOLDS_CREALITY:
+            if r != 2:
+                # NebulaOS in slot 1, the marker on Creality in slot 2. The
+                # original ARMED_STOCK path is written for slot 2 only; disarm
+                # here with the same rules.
+                self._say("--- found NebulaOS (slot 1) running with the marker on Creality "
+                          "(slot 2): ARMED_STOCK ---")
+                self._advance(journal.ARMED_STOCK, "discovered on connect")
+                if not self._disarm(session, "resumed state found the device armed"):
+                    raise InstallError(
+                        "found the device armed for Creality and could not disarm it. Do not "
+                        "power cycle. Resolve the marker by hand before anything else.",
+                        state=journal.FAILED_NEEDS_ATTENTION)
+                return "OTHER_NEBULAOS_SLOT_SELECTED"
+            return state.marker_state
+        self._say("MARKER_SELECTS_OTHER_SLOT=%d holds=%s - pointing it back at the running slot %d "
+                  "before anything is written" % (o, state.holds[o], r))
+        ok, why = self._set_marker_verified(session, self._home_marker)
+        if not ok:
+            raise InstallError(
+                "the marker selects slot %d (%s) and could not be pointed back at the running slot "
+                "%d (%s). Refusing to write anything." % (o, state.holds[o], r, why),
+                state=journal.FAILED_NEEDS_ATTENTION)
+        if self.txn:
+            # Physically re-read as the running NebulaOS slot: the same fact a
+            # disarm records, so an older stock-window danger record is cleared.
+            try:
+                self.txn.mark_disarmed("marker pointed back at the running slot %d" % r)
+            except Exception as exc:               # noqa: BLE001 - advisory only
+                self._say("JOURNAL_DISARM_RECORD_FAILED=YES detail=%s" % str(exc)[:120])
+        return "OTHER_NEBULAOS_SLOT_SELECTED"
+
+    def _check_slot2_from_stock(self, session):
+        """The "already running stock" path writes slot 2, NebulaOS's original
+        home, as it always has: empty, unknown (an interrupted install) and
+        NebulaOS content there are expected. A second Creality system in slot 2
+        is not overwritten without the owner's INSTALL_OTHER_SLOT=expendable.
+        The probe is informational otherwise: if it cannot be read, the stock
+        window's own checks (root, hashes, the helper's preflight) still apply."""
+        try:
+            state = slots.read_slot_state(session)
+        except Exception as exc:                   # noqa: BLE001 - reported, not fatal
+            self._say("SLOT_STATE=UNREADABLE (%s)" % str(exc)[:160])
+            return
+        self.slot_state = state
+        self._say("")
+        self._say("--- slot state ---")
+        self._say(state.describe())
+        self._record(state.journal_fields(), "slot state on connect (stock)")
+        if state.running_slot == 1 and state.holds[2] == slots.HOLDS_CREALITY:
+            try:
+                other_policy, note = self.profile.effective_other_slot_policy()
+            except Exception as exc:
+                raise InstallError(str(exc), state=journal.STOCK_RUNNING)
+            if other_policy != slots.OTHER_SLOT_EXPENDABLE:
+                raise InstallError(
+                    "Creality is running from slot 1 and slot 2 holds Creality too (%s). This "
+                    "install would overwrite it; the human who owns this printer sets %s=%s to "
+                    "allow that (%s)." % (state.evidence[2], slots.OTHER_SLOT_KEY,
+                                          slots.OTHER_SLOT_EXPENDABLE, note),
+                    state=journal.STOCK_RUNNING)
+
+    def _choose_path(self):
+        try:
+            other_policy, note = self.profile.effective_other_slot_policy()
+        except Exception as exc:                   # ProfileError: a bad value refuses
+            raise InstallError(str(exc), state=journal.SAFE_NEBULAOS)
+        self._say("")
+        self._say("--- install path ---")
+        self._say("DEV_INSTALL_OTHER_SLOT_POLICY=%s (%s)" % (other_policy, note))
+        try:
+            plan = slots.plan_install(self.slot_state, other_policy)
+        except slots.SlotError as exc:
+            self._say("DEV_INSTALL_PATH=REFUSED")
+            raise InstallError(str(exc), state=journal.SAFE_NEBULAOS)
+        if self._policy_forced and plan.policy is not self.policy:
+            raise InstallError(
+                "this installer was constructed for policy %s but the device's slot state calls "
+                "for %s" % (self.policy.name, plan.policy.name), state=journal.SAFE_NEBULAOS)
+        self.plan = plan
+        self.policy = plan.policy
+        self._expected_slot = plan.target_slot
+        self._say(plan.describe())
+        self._say(self.policy.report(prefix="DEV_INSTALL_POLICY"))
+        self._record({"INSTALL_PATH": plan.path, "INSTALL_SOURCE_SLOT": plan.running_slot,
+                      "INSTALL_TARGET_SLOT": plan.target_slot,
+                      "INSTALL_TARGET_HELD": plan.overwrites}, "install path %s" % plan.path)
+        return plan
+
+    def _install_inactive_slot(self, session):
+        """INACTIVE_SLOT: write the slot NebulaOS is not running from, from NebulaOS.
+
+        No Creality boot, no stock window. The running slot is the way back and
+        is never selected by the policy; the marker stays on it until the new
+        slot's bytes are verified, then moves to the new slot and is read back,
+        then a software reboot.
+        """
+        plan = self.plan
+        r, t = plan.running_slot, plan.target_slot
+        target = slots.SLOTS[t]
+        self._say("")
+        self._say("--- preconditions (INACTIVE_SLOT: slot %d writes slot %d) ---" % (r, t))
+        self._say("MCU_CONSEQUENCE=none - Creality is not booted on this path, so its MCU updater "
+                  "never runs")
+        self._say("POWER_CYCLE_DANGEROUS=NO (the marker selects the running slot %d until slot %d "
+                  "is written and verified)" % (r, t))
+
+        idle = verify.idle_proof(session)
+        self._say(idle.render())
+        state_now = session.idle_state()
+        unreadable_only = (set(state_now.heater_targets) == {"unreadable"}
+                           and not state_now.printing and not state_now.paused)
+        if not idle.ok() and unreadable_only and self.profile.install_mode() == "dev":
+            self._say("IDLE_PROOF_OVERRIDE=DEV (Moonraker unreachable; no print or hot "
+                      "heater observed)")
+        elif not idle.ok():
+            raise InstallError(
+                "the printer is not idle: %s. Writing a slot and rebooting during a job loses "
+                "the job." % state_now.why_not_idle(), state=journal.SAFE_NEBULAOS)
+
+        wayback = verify.inactive_slot_wayback_proof(
+            session, self.slot_state, plan, self.artifacts.total_bytes())
+        self._say(wayback.render())
+        if not wayback.ok():
+            raise InstallError(
+                "the way-back proof failed: %s. Nothing was written."
+                % "; ".join(c.name for c in wayback.failures()), state=journal.SAFE_NEBULAOS)
+
+        self._stage(session)
+        self._advance(journal.PRECHECKED, "identity, idle, way-back and payload all proven")
+
+        owner = "%s:%d" % (self.device_id, os.getpid())
+        got_lock, holder = session.acquire_flash_lock(owner)
+        if not got_lock and self._stale_own_lock(holder):
+            self._say("FLASH_LOCK_RECLAIMED=%s (holder process no longer running)" % holder)
+            session.release_flash_lock(holder)
+            got_lock, holder = session.acquire_flash_lock(owner)
+        if not got_lock:
+            raise InstallError(
+                "the device-side flash lock is held by %s. Two installers writing one printer is "
+                "exactly what this prevents." % holder, state=journal.SAFE_NEBULAOS)
+
+        try:
+            # Right before the write: the live root, from /proc/cmdline, again.
+            # The flash helper does the same on the device, twice.
+            root = session.active_root()
+            self._say("ACTIVE_ROOT_RECHECK=%s" % root)
+            if root != slots.SLOTS[r].root or root == target.root:
+                raise InstallError(
+                    "the live root is now %s, not slot %d's %s. Refusing to write slot %d."
+                    % (root, r, slots.SLOTS[r].root, t), state=journal.SAFE_NEBULAOS)
+            idle_now = session.idle_state()
+            if idle_now.printing or idle_now.paused or not (
+                    idle_now.is_idle() or set(idle_now.heater_targets) == {"unreadable"}
+                    and self.profile.install_mode() == "dev"):
+                raise InstallError("the printer became busy before the write (%s)"
+                                   % idle_now.why_not_idle(), state=journal.SAFE_NEBULAOS)
+
+            plans = [
+                self.policy.select(target.kernel).plan_write(
+                    self.artifacts.ximage_size, self.artifacts.ximage_sha),
+                self.policy.select(target.rootfs).plan_write(
+                    self.artifacts.rootfs_size, self.artifacts.rootfs_sha),
+            ]
+            for p in plans:
+                self._say(p.describe())
+
+            self._advance(journal.SLOT_FLASHING, "writing slot %d from NebulaOS slot %d" % (t, r))
+            ok, report = session.apply_write_plans(plans, "build-manifest.txt")
+            self._say(report.strip()[-2000:] if report else "")
+            if not ok:
+                raise InstallError(
+                    "the flash helper reported failure. The marker still selects the running slot "
+                    "%d; slot %d must be treated as damaged and is not selected." % (r, t),
+                    state=journal.SAFE_NEBULAOS)
+            for name, want, size in ((target.kernel, self.artifacts.ximage_sha,
+                                      self.artifacts.ximage_size),
+                                     (target.rootfs, self.artifacts.rootfs_sha,
+                                      self.artifacts.rootfs_size)):
+                got = session.region_sha256(name, size)
+                self._say("FLASH_VERIFY=%s sha256=%s expected=%s" % (name, got, want))
+                if got != want:
+                    raise InstallError(
+                        "%s verifies as %s, expected %s. The marker still selects the running "
+                        "slot %d; refusing to select a damaged slot." % (name, got[:16], want[:16], r),
+                        state=journal.SAFE_NEBULAOS)
+        finally:
+            session.release_flash_lock(owner)
+
+        self._advance(journal.SLOT_FLASH_VERIFIED, "slot %d written and verified" % t)
+
+        try:
+            ok, why = self._set_marker_verified(session, target.marker)
+        except Exception as exc:
+            ok, why = False, "the marker write raised: %s" % str(exc)[:160]
+        if not ok:
+            # Point it home again; a marker that is neither is the one state
+            # where the next boot cannot be predicted.
+            try:
+                home_ok, home_why = self._set_marker_verified(session, self._home_marker)
+            except Exception as exc:
+                home_ok, home_why = False, str(exc)[:160]
+            if home_ok:
+                raise InstallError(
+                    "slot %d is written and verified but the marker could not be set to it (%s). "
+                    "The marker was put back on the running slot %d and read back; nothing was "
+                    "rebooted." % (t, why, r), state=journal.SAFE_NEBULAOS)
+            raise InstallError(
+                "slot %d is written and verified but the marker could not be set to it (%s), and "
+                "putting it back on slot %d did not verify either (%s). The next boot target is "
+                "not known: do not reboot; read the marker with `diagnose`."
+                % (t, why, r, home_why), state=journal.FAILED_NEEDS_ATTENTION)
+        self._advance(journal.ARMED_NEBULAOS, "marker set to slot %d (%s) and read back"
+                      % (t, target.marker))
+
+        boot_before = session.boot_id()
+        session.reboot()
+        self._advance(journal.REBOOTING_TO_NEBULAOS, "software reboot into slot %d" % t)
+        self._pending_reboot = (device.OS_NEBULAOS, boot_before)
+        return False
 
     def _connect_either(self):
         """Find the printer without yet knowing which OS it is running."""
@@ -712,15 +1012,34 @@ class Installer:
 
     def _close_forward(self, updater_acted):
         which, boot_before = getattr(self, "_pending_reboot", (device.OS_NEBULAOS, ""))
-        session, address = self._wait_for_reboot(which, boot_before)
+        try:
+            session, address = self._wait_for_reboot(which, boot_before)
+        except InstallError as exc:
+            if self.plan is None or self.plan.path != slots.PATH_INACTIVE_SLOT:
+                raise
+            raise InstallError(
+                "%s. The marker selects the new slot %d; the previous NebulaOS in slot %d was not "
+                "touched. If slot %d does not boot, pointing the marker back at slot %d (%s) "
+                "returns to the previous NebulaOS - Creality is not involved."
+                % (exc, self.plan.target_slot, self.plan.running_slot, self.plan.target_slot,
+                   self.plan.running_slot, slots.SLOTS[self.plan.running_slot].marker),
+                state=exc.state)
         self._advance(journal.NEBULAOS_RUNNING, "rediscovered as NebulaOS")
         try:
+            try:
+                after = slots.read_slot_state(session)
+                self._say("")
+                self._say("--- slot state after the install ---")
+                self._say(after.describe())
+                self._record(after.journal_fields(), "slot state after the install")
+            except Exception as exc:               # noqa: BLE001 - reported; PART1 decides
+                self._say("SLOT_STATE_AFTER=UNREADABLE (%s)" % str(exc)[:160])
             result = verify.part1_verify(
                 session,
                 self.artifacts.ximage_sha, self.artifacts.ximage_size,
                 self.artifacts.rootfs_sha, self.artifacts.rootfs_size,
                 self.artifacts.source_head, profile=self.profile,
-                expected_boot_id_changed_from=boot_before)
+                expected_boot_id_changed_from=boot_before, expected_slot=self._expected_slot)
             mcu_restore = verify.observe_mcu_restore(session)
             self._say("")
             self._say(verify.render_part1(result, self.artifacts.source_head,

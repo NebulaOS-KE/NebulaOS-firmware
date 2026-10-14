@@ -17,8 +17,17 @@ CAPABLE targets: full-device recovery, single-slot repair and both-sides
 reinstall are all expressible here.
 
 The developer `install` operation answers the second question narrowly. Its
-policy is PRESERVE_STOCK: it selects kernel2, rootfs2 and the marker, and
-nothing else. That is a property of that one operation, not a limit of the
+policy is one of:
+
+  PRESERVE_STOCK          kernel2, rootfs2 and the marker - NebulaOS in slot 2,
+                          Creality kept in slot 1 as the way through
+  INACTIVE_SLOT_1 / _2    the kernel and rootfs of the ONE slot NebulaOS is not
+                          running from, and the marker (since 2026-10-14, when
+                          NebulaOS may occupy both slots; nebulaos_slots decides
+                          which applies from the device's state and the
+                          human-owned profile)
+
+and nothing else. That is a property of that one operation, not a limit of the
 backend, and the two must never be conflated - which is why they are separate
 objects here rather than one hardcoded allowlist.
 
@@ -54,8 +63,11 @@ import nebulaos_layout as layout  # noqa: E402
 
 
 # --- roles -----------------------------------------------------------------
-ROLE_STOCK = "stock"          # Creality's slot 1
-ROLE_NEBULAOS = "nebulaos"    # our slot 2
+# A role names a partition's FACTORY assignment, not what it holds today: since
+# 2026-10-14 NebulaOS may occupy slot 1 too (nebulaos_slots reports what each
+# slot actually holds).
+ROLE_STOCK = "stock"          # slot 1, Creality's from the factory
+ROLE_NEBULAOS = "nebulaos"    # slot 2, NebulaOS's original home
 ROLE_BOOT = "boot"            # SPL/U-Boot
 ROLE_MARKER = "marker"        # the OTA slot selector
 ROLE_IDENTITY = "identity"    # per-unit factory data
@@ -316,8 +328,38 @@ RTOS2_ONLY = Policy(
 )
 
 
-POLICIES = {p.name: p for p in (DEV_PRESERVE_STOCK, RECOVERY_STOCK_SIDE, RECOVERY_BOTH_SIDES,
-                                RTOS2_ONLY)}
+# The developer install when NebulaOS may occupy both slots: write the slot
+# NebulaOS is NOT running from, directly from the running NebulaOS, and the
+# marker. One policy per slot, so a policy can never select both slots, and the
+# one chosen is decided from the device's /proc/cmdline (nebulaos_slots), never
+# from a caller's argument. The flash helper re-checks the live root itself.
+DEV_INACTIVE_SLOT_1 = Policy(
+    "INACTIVE_SLOT_1",
+    allowed={"kernel", "rootfs", "ota"},
+    description=("developer install while NebulaOS runs from slot 2: write slot 1 (kernel, "
+                 "rootfs) and the marker; the running slot 2 is the way back"),
+)
+
+DEV_INACTIVE_SLOT_2 = Policy(
+    "INACTIVE_SLOT_2",
+    allowed={"kernel2", "rootfs2", "ota"},
+    description=("developer install while NebulaOS runs from slot 1: write slot 2 (kernel2, "
+                 "rootfs2) and the marker; the running slot 1 is the way back"),
+)
+
+DEV_INSTALL_POLICIES = (DEV_PRESERVE_STOCK, DEV_INACTIVE_SLOT_1, DEV_INACTIVE_SLOT_2)
+
+
+def inactive_slot_policy(target_slot):
+    """The INACTIVE_SLOT policy that writes `target_slot` (1 or 2)."""
+    try:
+        return {1: DEV_INACTIVE_SLOT_1, 2: DEV_INACTIVE_SLOT_2}[target_slot]
+    except KeyError:
+        raise TargetError("there is no slot %r" % (target_slot,))
+
+
+POLICIES = {p.name: p for p in (DEV_PRESERVE_STOCK, DEV_INACTIVE_SLOT_1, DEV_INACTIVE_SLOT_2,
+                                RECOVERY_STOCK_SIDE, RECOVERY_BOTH_SIDES, RTOS2_ONLY)}
 
 
 def policy(name):

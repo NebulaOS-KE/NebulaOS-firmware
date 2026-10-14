@@ -66,14 +66,20 @@ FLASH_VERIFIED = "FLASH_VERIFIED"
 ARMED_NEBULAOS = "ARMED_NEBULAOS"
 REBOOTING_TO_NEBULAOS = "REBOOTING_TO_NEBULAOS"
 NEBULAOS_RUNNING = "NEBULAOS_RUNNING"
+# The INACTIVE_SLOT path (nebulaos_slots): NebulaOS keeps running while the
+# other slot is written. Separate from FLASHING/FLASH_VERIFIED on purpose: those
+# are stock-window states (Creality running, a power cycle dangerous), these
+# are not - the marker still selects the running NebulaOS slot throughout.
+SLOT_FLASHING = "SLOT_FLASHING"
+SLOT_FLASH_VERIFIED = "SLOT_FLASH_VERIFIED"
 CLOSE_BACKWARD = "CLOSE_BACKWARD"
 FAILED_NEEDS_ATTENTION = "FAILED_NEEDS_ATTENTION"
 DONE = "DONE"
 
 ALL_STATES = (
     SAFE_NEBULAOS, PRECHECKED, ARMED_STOCK, REBOOTING_TO_STOCK, STOCK_RUNNING,
-    FLASHING, FLASH_VERIFIED, ARMED_NEBULAOS, REBOOTING_TO_NEBULAOS,
-    NEBULAOS_RUNNING, CLOSE_BACKWARD, FAILED_NEEDS_ATTENTION, DONE,
+    FLASHING, FLASH_VERIFIED, SLOT_FLASHING, SLOT_FLASH_VERIFIED, ARMED_NEBULAOS,
+    REBOOTING_TO_NEBULAOS, NEBULAOS_RUNNING, CLOSE_BACKWARD, FAILED_NEEDS_ATTENTION, DONE,
 )
 
 # States in which the printer is armed to boot Creality's slot. A power cycle
@@ -253,6 +259,16 @@ class Transaction:
     def note(self, text):
         self._record("note: %s" % text)
 
+    def record(self, fields, note=""):
+        """Remember observed facts (the install path, the slot state) for
+        `status`, which never contacts the device. Advisory like the rest:
+        reported as LAST OBSERVED, never used to skip a check."""
+        for key, value in fields.items():
+            if key in self.KEY_FIELDS or key in ("STATE", "JOURNAL_VERSION", DANGER_FIELD):
+                raise JournalError("record() cannot set %s" % key)
+            self.fields[key] = str(value)
+        self._record("observed: %s" % (note or ", ".join("%s=%s" % kv for kv in sorted(fields.items()))))
+
     def _record(self, entry):
         stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         self.history.append("%s %s" % (stamp, entry))
@@ -299,7 +315,9 @@ class Transaction:
             "TRANSACTION_LAST_STOCK_WINDOW_STATE=%s" % (self.danger_state or "none"),
             "TRANSACTION_STARTED_AT=%s" % self.fields.get("STARTED_AT", ""),
             "TRANSACTION_UPDATED_AT=%s" % self.fields.get("UPDATED_AT", ""),
-        ])
+        ] + ["TRANSACTION_LAST_OBSERVED_%s=%s" % (key, self.fields[key])
+             for key in sorted(self.fields)
+             if key.startswith(("SLOT_", "INSTALL_"))])
 
 
 class HostLock:

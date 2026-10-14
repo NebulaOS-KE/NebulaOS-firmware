@@ -249,6 +249,32 @@ class DeviceProfile:
                                % self.fields.get("INSTALL_MODE"))
         return mode
 
+    def other_slot_policy(self):
+        """INSTALL_OTHER_SLOT from the HUMAN-OWNED profile: 'preserve' or 'expendable'.
+
+        Whether `install` may overwrite the slot NebulaOS is NOT running from
+        when that slot holds something other than NebulaOS - Creality's system,
+        or content it cannot identify. Absent means preserve. It is honoured
+        only on a DEV device (INSTALL_MODE=dev); see effective_other_slot_policy.
+        Since 2026-10-14 NebulaOS may occupy both slots (nebulaos_slots).
+        """
+        raw = self.fields.get("INSTALL_OTHER_SLOT")
+        value = (raw or "preserve").strip().lower()
+        if value not in ("preserve", "expendable"):
+            raise ProfileError("INSTALL_OTHER_SLOT=%r in the device profile; expected preserve or "
+                               "expendable" % raw)
+        return value
+
+    def effective_other_slot_policy(self):
+        """-> (policy, note): the other-slot policy that applies to an install now."""
+        value = self.other_slot_policy()
+        if value == "expendable" and self.install_mode() != "dev":
+            return "preserve", ("INSTALL_OTHER_SLOT=expendable is ignored on a RELEASE device; "
+                                "the other slot is preserved")
+        if "INSTALL_OTHER_SLOT" not in self.fields:
+            return value, "INSTALL_OTHER_SLOT is not set in the device profile (default preserve)"
+        return value, "INSTALL_OTHER_SLOT=%s in the device profile" % value
+
     def describe(self):
         lines = [
             "DEVICE_ID=%s" % self.device_id,
@@ -265,6 +291,7 @@ class DeviceProfile:
                          % (which.upper(), ",".join(self.address_history(which)) or "none"))
         lkg = self.last_known_good()
         lines.append("DEVICE_LAST_KNOWN_GOOD_SOURCE_HEAD=%s" % (lkg["source_head"] or "none"))
+        lines.append("DEVICE_INSTALL_OTHER_SLOT=%s" % (self.fields.get("INSTALL_OTHER_SLOT") or "unset (preserve)"))
         return "\n".join(lines)
 
 

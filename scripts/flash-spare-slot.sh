@@ -72,6 +72,16 @@
 #                                    at the bottom, for tests that only
 #                                    want to source the file and call an
 #                                    individual function directly.
+#
+# 2026-10-14 (human decision: NebulaOS may occupy BOTH A/B slots): the
+# target slot is selectable with --target-slot 1|2. The default is still
+# slot 2, so every existing invocation means exactly what it meant before.
+# Nothing else about the safety case changes: whichever slot is named,
+# run_preflight() resolves the live slot from /proc/cmdline (twice, the
+# second time immediately before the write) and refuses the slot the
+# system is running from. The Hardware Agent passes --target-slot 1 only
+# when NebulaOS runs from slot 2 and the human-owned device profile allows
+# the other slot to be overwritten (docs/HARDWARE_AGENT.md).
 
 # --- Overridable for offline testing - real use never sets these ---
 CMDLINE_PATH="${CMDLINE_PATH:-/proc/cmdline}"
@@ -106,6 +116,10 @@ SLOT2_ROOTFS_LABEL="$DEV_PREFIX/dev/disk/by-partlabel/rootfs2"
 # recomputed from /proc/partitions at runtime, so a corrupted or
 # unexpected partition table can't silently change what this script
 # considers "safe".
+# Which slot to write. 2 unless --target-slot says otherwise; never read
+# from the environment, so an inherited variable cannot retarget a write.
+TARGET_SLOT=2
+
 KERNEL_PART_BYTES=8388608
 ROOTFS_PART_BYTES=524288000
 
@@ -241,8 +255,8 @@ run_preflight() {
 	[ -f "$rootfs_img" ] || die "$rootfs_img does not exist"
 
 	echo "=== Preflight: slot mapping ==="
-	verify_slot_labels "slot1(stock)"  "$SLOT1_KERNEL" "$SLOT1_ROOTFS" "$SLOT1_KERNEL_LABEL" "$SLOT1_ROOTFS_LABEL"
-	verify_slot_labels "slot2(custom)" "$SLOT2_KERNEL" "$SLOT2_ROOTFS" "$SLOT2_KERNEL_LABEL" "$SLOT2_ROOTFS_LABEL"
+	verify_slot_labels "slot1"  "$SLOT1_KERNEL" "$SLOT1_ROOTFS" "$SLOT1_KERNEL_LABEL" "$SLOT1_ROOTFS_LABEL"
+	verify_slot_labels "slot2" "$SLOT2_KERNEL" "$SLOT2_ROOTFS" "$SLOT2_KERNEL_LABEL" "$SLOT2_ROOTFS_LABEL"
 	# A slot table where both slots somehow resolve to the same real
 	# device is a corrupted/ambiguous mapping in its own right, distinct
 	# from any single symlink mismatch caught above.
@@ -250,8 +264,8 @@ run_preflight() {
 		die "slot1 and slot2 rootfs partitions resolve to the same device - refusing (ambiguous/corrupted slot mapping)"
 	[ "$(canon "$SLOT1_KERNEL")" != "$(canon "$SLOT2_KERNEL")" ] || \
 		die "slot1 and slot2 kernel partitions resolve to the same device - refusing (ambiguous/corrupted slot mapping)"
-	echo "  slot1 (stock):  kernel=$SLOT1_KERNEL rootfs=$SLOT1_ROOTFS marker=$SLOT1_MARKER - verified"
-	echo "  slot2 (custom): kernel=$SLOT2_KERNEL rootfs=$SLOT2_ROOTFS marker=$SLOT2_MARKER - verified"
+	echo "  slot1: kernel=$SLOT1_KERNEL rootfs=$SLOT1_ROOTFS marker=$SLOT1_MARKER - verified"
+	echo "  slot2: kernel=$SLOT2_KERNEL rootfs=$SLOT2_ROOTFS marker=$SLOT2_MARKER - verified"
 
 	echo "=== Preflight: active slot ==="
 	active_rootfs=$(resolve_active_rootfs)
@@ -261,18 +275,23 @@ run_preflight() {
 	echo "  active slot: $active_slot"
 
 	echo "=== Preflight: target slot ==="
-	# This script's target is fixed at slot 2 (custom's permanent home,
-	# not user-selectable) - verify the two hardcoded target devices
-	# actually form one genuine, matching slot pair rather than assuming
-	# it just because the constants have always agreed before.
-	target_kernel_canon=$(canon "$SLOT2_KERNEL")
-	target_rootfs_canon=$(canon "$SLOT2_ROOTFS")
+	# The target is slot 2 unless --target-slot 1 was given - verify the
+	# two target devices actually form one genuine, matching slot pair
+	# rather than assuming it just because the constants have always
+	# agreed before.
+	case "$TARGET_SLOT" in
+		1) target_kernel_canon=$(canon "$SLOT1_KERNEL"); target_rootfs_canon=$(canon "$SLOT1_ROOTFS") ;;
+		2) target_kernel_canon=$(canon "$SLOT2_KERNEL"); target_rootfs_canon=$(canon "$SLOT2_ROOTFS") ;;
+		*) die "target slot '$TARGET_SLOT' is not 1 or 2 - refusing" ;;
+	esac
 	target_kernel_slot=$(identify_slot_by_kernel "$target_kernel_canon") || \
 		die "target kernel device ($target_kernel_canon) does not match any known slot's kernel partition - refusing"
 	target_rootfs_slot=$(identify_slot_by_rootfs "$target_rootfs_canon") || \
 		die "target rootfs device ($target_rootfs_canon) does not match any known slot's rootfs partition - refusing"
 	[ "$target_kernel_slot" = "$target_rootfs_slot" ] || \
 		die "target kernel belongs to slot $target_kernel_slot but target rootfs belongs to slot $target_rootfs_slot - refusing (mixed/invalid slot pair)"
+	[ "$target_kernel_slot" = "$TARGET_SLOT" ] || \
+		die "the requested target slot is $TARGET_SLOT but its devices belong to slot $target_kernel_slot - refusing"
 	target_slot="$target_kernel_slot"
 	echo "  target kernel: $target_kernel_canon (slot $target_kernel_slot)"
 	echo "  target rootfs: $target_rootfs_canon (slot $target_rootfs_slot)"
@@ -281,11 +300,11 @@ run_preflight() {
 	echo "=== Preflight: live-target collision ==="
 	if [ "$active_slot" = 1 ]; then active_kernel_for_slot=$(canon "$SLOT1_KERNEL"); else active_kernel_for_slot=$(canon "$SLOT2_KERNEL"); fi
 	[ "$target_rootfs_canon" != "$active_rootfs" ] || \
-		die "target rootfs ($target_rootfs_canon) is the currently active/live root device - refusing to overwrite the running system. Cycle back to stock first (write_ota_marker \"ota:kernel\" + reboot), confirm this slot is genuinely idle, then retry."
+		die "target rootfs ($target_rootfs_canon) is the currently active/live root device - refusing to overwrite the running system. Boot the other slot first, confirm this slot is genuinely idle, then retry."
 	[ "$target_kernel_canon" != "$active_kernel_for_slot" ] || \
-		die "target kernel ($target_kernel_canon) belongs to the currently active slot's kernel partition - refusing to overwrite the running system. Cycle back to stock first (write_ota_marker \"ota:kernel\" + reboot), confirm this slot is genuinely idle, then retry."
+		die "target kernel ($target_kernel_canon) belongs to the currently active slot's kernel partition - refusing to overwrite the running system. Boot the other slot first, confirm this slot is genuinely idle, then retry."
 	[ "$target_slot" != "$active_slot" ] || \
-		die "target slot ($target_slot) is the currently active slot - refusing to overwrite the running system. Cycle back to stock first (write_ota_marker \"ota:kernel\" + reboot), confirm this slot is genuinely idle, then retry."
+		die "target slot ($target_slot) is the currently active slot - refusing to overwrite the running system. Boot the other slot first, confirm this slot is genuinely idle, then retry."
 	echo "  target slot $target_slot is INACTIVE (active slot is $active_slot) - safe to target"
 
 	echo "=== Preflight: image sizes ==="
@@ -370,11 +389,19 @@ write_and_verify() {
 
 main() {
 	check_only=false
-	case "$1" in
-		--check-only) check_only=true; shift ;;
-		--*) die "unknown option: $1 (usage: $0 [--check-only] <xImage> <rootfs.squashfs> [build-manifest.txt])" ;;
-	esac
-	[ "$#" -le 3 ] || die "unexpected extra arguments: $* (usage: $0 [--check-only] <xImage> <rootfs.squashfs> [build-manifest.txt])"
+	while :; do
+		case "${1:-}" in
+			--check-only) check_only=true; shift ;;
+			--target-slot)
+				case "${2:-}" in
+					1|2) TARGET_SLOT="$2"; shift 2 ;;
+					*) die "--target-slot takes 1 or 2, got '${2:-}'" ;;
+				esac ;;
+			--*) die "unknown option: $1 (usage: $0 [--check-only] [--target-slot 1|2] <xImage> <rootfs.squashfs> [build-manifest.txt])" ;;
+			*) break ;;
+		esac
+	done
+	[ "$#" -le 3 ] || die "unexpected extra arguments: $* (usage: $0 [--check-only] [--target-slot 1|2] <xImage> <rootfs.squashfs> [build-manifest.txt])"
 	kernel_img="$1"; rootfs_img="$2"; manifest="$3"
 
 	run_preflight "$kernel_img" "$rootfs_img" "$manifest"

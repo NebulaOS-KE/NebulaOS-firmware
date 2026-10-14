@@ -37,6 +37,7 @@ HOST=(
   tools/hardware/nebulaos_marker.py
   tools/hardware/nebulaos_profile.py
   tools/hardware/nebulaos_rtos.py
+  tools/hardware/nebulaos_slots.py
   tools/hardware/nebulaos_target.py
   tools/hardware/nebulaos_verify.py
   tools/hwcap/adxl_overflows.py

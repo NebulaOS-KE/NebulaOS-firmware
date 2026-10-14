@@ -16,8 +16,10 @@ The RTOS runs before Linux. A broken rtos2 is a NebulaOS boot that stops in
 SPL, recoverable only over USB mask-ROM (docs/DEVELOPER_RECOVERY.md, "RTOS
 logo: restoring rtos2"). So:
 
-  * the printer must be running NebulaOS from p8 with the marker on
-    ota:kernel2, idle with every heater target at zero, with no install
+  * the printer must be running NebulaOS from p8 (slot 2) with the marker on
+    ota:kernel2 - NebulaOS running from slot 1 (possible since 2026-10-14)
+    boots rtos (p3), which is out of scope, so it is refused with that
+    reason; idle with every heater target at zero, with no install
     transaction open and both the host and the device lock held;
   * the stock bytes the logo is patched into are the printer's OWN rtos2, and
     only if its first 432824 bytes are the pinned stock image; anything else
@@ -54,7 +56,8 @@ LOGO_CONFIRM_WORD = "RTOS_LOGO_CONFIRM=RTOS2"
 RESTORE_CONFIRM_WORD = "RTOS_RESTORE_CONFIRM=RTOS2"
 STAGED_LOGO = "zero2.bin"
 STAGED_RESTORE = "rtos2-restore.bin"
-NEBULAOS_ROOT = "/dev/mmcblk0p8"
+NEBULAOS_ROOT = "/dev/mmcblk0p8"     # slot 2: the only slot rtos-logo serves
+SLOT1_ROOT = "/dev/mmcblk0p7"
 
 
 class RtosError(Exception):
@@ -143,6 +146,14 @@ class RtosOperation:
             raise RtosError("the printer is not running NebulaOS")
         root = s.active_root()
         self.say("ACTIVE_ROOT=%s" % root)
+        if root == SLOT1_ROOT:
+            # NebulaOS may run from slot 1 since 2026-10-14. SPL then loads
+            # rtos (p3), not rtos2: a logo written to rtos2 would not show, and
+            # p3 is out of this operation's scope by design.
+            raise RtosError(
+                "NebulaOS runs from slot 1 (root=%s), whose RTOS is rtos (p3). rtos-logo writes "
+                "only rtos2 (p4), the RTOS of slot 2, and only while NebulaOS runs from slot 2; "
+                "writing p3 is out of scope. Nothing was written." % root)
         if root != NEBULAOS_ROOT:
             raise RtosError("NebulaOS should run from %s but root=%s" % (NEBULAOS_ROOT, root))
         state, why = marker.parse(s.read_marker_block())
