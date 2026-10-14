@@ -254,5 +254,28 @@ grep -v ' /usr/data ext4' "$W/mounts" > "$W/m2"; mv "$W/m2" "$W/mounts"; : > "$W
 r=$(shut)
 [ "$r" = NOT_MOUNTED ] && [ ! -s "$W/calls" ] && pass || fail "not-mounted case: $r $(cat "$W/calls")"
 
+# --- 2026-10-15: a failed mount is retried once and reported ------------------
+cat > "$B/flaky-mount" <<'EOF'
+#!/bin/sh
+echo "mount $*" >> "$CALLS"
+n=$(cat "$COUNT" 2>/dev/null || echo 0); n=$((n + 1)); echo $n > "$COUNT"
+[ "$n" -le "${FAILS:-0}" ] && { echo "mount: Device or resource busy" >&2; exit 1; }
+exit 0
+EOF
+chmod +x "$B/flaky-mount"
+mount_try() { # FAILS -> prints rc, mount calls, kmsg lines
+	: > "$W/calls"; : > "$W/kmsg"; rm -f "$W/count"
+	(FAILS=$1 COUNT="$W/count" CALLS="$W/calls" NDF_DEV=/dev/x NDF_MNT="$W/mnt" NDF_MOUNT="$B/flaky-mount" \
+	 NDF_MOUNT_OPTS=rw NDF_MOUNT_RETRY_DELAY=0 NDF_KMSG="$W/kmsg" NDF_STATE="$W/state"; \
+	 export FAILS COUNT CALLS; . "$LIB"; ndf_mount >/dev/null; echo "rc=$?")
+}
+r=$(mount_try 0)
+[ "$r" = rc=0 ] && [ "$(grep -c '^mount' "$W/calls")" = 1 ] && grep -q 'mounted /dev/x' "$W/kmsg" && pass || fail "first-time mount: $r"
+r=$(mount_try 1)
+[ "$r" = rc=0 ] && [ "$(grep -c '^mount' "$W/calls")" = 2 ] && grep -q 'second attempt' "$W/kmsg" && grep -q 'Device or resource busy' "$W/kmsg" && pass || fail "retried mount: $r"
+: > "$W/state"
+r=$(mount_try 2)
+[ "$r" = rc=1 ] && [ "$(grep -c '^mount' "$W/calls")" = 2 ] && grep -q 'MOUNT FAILED' "$W/kmsg" && grep -q DATAFS_MOUNT_FAILED=1 "$W/state" && pass || fail "failed mount not reported: $r"
+
 echo "datafs-policy-tests: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]

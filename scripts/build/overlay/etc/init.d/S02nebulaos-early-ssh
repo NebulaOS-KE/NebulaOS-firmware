@@ -1,0 +1,30 @@
+#!/bin/sh
+#
+# S02nebulaos-early-ssh - start SSH right after the network (2026-10-15).
+#
+# On 2026-10-14 ke-dev stopped booting somewhere between Wi-Fi (S01wifi) and
+# SSH (S50dropbear): it answered ping, refused SSH, and the screen stayed on
+# the logo. Everything that would have explained it was in /run and was lost
+# with the power cycle, and getting back needed USB recovery. With SSH up
+# this early, a later step that hangs still leaves the printer reachable, and
+# the Hardware Agent can read the boot log (/run/nebulaos-boot-scripts.log)
+# and the data partition's state.
+#
+# Same keys and same daemon as the normal start: S46nebulaos-dropbear-keys
+# prepares the host keys and /etc/default/dropbear, S50dropbear starts it.
+# Both run again at their usual place; S50dropbear then finds dropbear
+# running (start-stop-daemon refuses a second instance) and changes nothing.
+
+KEYS_INIT="${NEBULAOS_EARLY_SSH_KEYS_INIT:-/etc/init.d/S46nebulaos-dropbear-keys}"
+SSHD_INIT="${NEBULAOS_EARLY_SSH_INIT:-/etc/init.d/S50dropbear}"
+
+case "$1" in
+	start)
+		[ -x "$KEYS_INIT" ] && "$KEYS_INIT" start
+		[ -x "$SSHD_INIT" ] && "$SSHD_INIT" start
+		echo "nebulaos-early-ssh: started" > /dev/kmsg 2>/dev/null
+		;;
+	*)
+		;;
+esac
+exit 0

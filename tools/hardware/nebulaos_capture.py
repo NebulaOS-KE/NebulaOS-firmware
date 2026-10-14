@@ -193,6 +193,22 @@ _DATAFS_CHECK_READONLY = (
     "( $E -n $D </dev/null; echo \"e2fsck_rc=$?\" ) 2>&1 | tail -n 20"
 )
 
+# How this boot went, from the RAM-only records (2026-10-15): the per-script
+# timing rcS writes, the data partition's boot decision, mounts and the
+# kernel log lines of the boot steps. Read-only. Meant for a NebulaOS that is
+# reachable over SSH (started early) but did not finish booting.
+_BOOT_STATE = (
+    "echo \"uptime=$(cut -d' ' -f1 /proc/uptime)\"; "
+    "for f in /run/nebulaos-boot-scripts.log /run/nebulaos/data-fs.state /run/nebulaos/data-fs.e2fsck.log "
+    "/var/run/nebulaos-boot-timing.log; do echo; echo \"== $f ==\"; cat \"$f\" 2>&1 | tail -n 200; done; "
+    "echo; echo '== last script started, not ended =='; "
+    "awk '/EV=start/{s=$3} /EV=end/{s=\"\"} END{print (s==\"\" ? \"none\" : s)}' /run/nebulaos-boot-scripts.log 2>&1; "
+    "echo; echo '== mounts =='; grep -e mmcblk -e ' /usr/data' -e ' /opt' /proc/mounts; "
+    "echo; echo '== kernel log (boot steps, storage) =='; "
+    "dmesg 2>&1 | grep -i -e nebulaos -e ext4 -e mmcblk0p10 -e 'blocked for more than' -e oom | tail -n 80; "
+    "echo; echo '== processes =='; ps w 2>&1 | grep -v ' \\[' | head -n 80"
+)
+
 # Profiles that may also run on Creality's system (the other slot): read-only
 # and meaningful from there.
 STOCK_CAPTURE_PROFILES = ("nebulaos-postmortem", "datafs-check-readonly")
@@ -201,6 +217,7 @@ STOCK_CAPTURE_PROFILES = ("nebulaos-postmortem", "datafs-check-readonly")
 CAPTURE_PROFILES = {
     "nebulaos-postmortem": (_NEBULAOS_POSTMORTEM, False, None, 120),
     "datafs-check-readonly": (_DATAFS_CHECK_READONLY, False, None, 600),
+    "boot-state": (_BOOT_STATE, False, None, 60),
     # RTOS logo (G7): what is on rtos/rtos2 before anything writes rtos2.
     "rtos-hashes": (_rtos_hashes(), False, None, 120),
     # --- TOOL-01 base list ---------------------------------------------------

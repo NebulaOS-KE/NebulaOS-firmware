@@ -45,8 +45,13 @@ NDF_FUSER="${NDF_FUSER:-fuser}"
 NDF_SWAPOFF="${NDF_SWAPOFF:-swapoff}"
 NDF_KILL="${NDF_KILL:-kill}"
 
+# The boot check runs before syslogd (S01syslogd) starts, so `logger` alone
+# reached nothing at boot: every line also goes to the kernel log, which
+# klogd/syslogd pick up later and `dmesg` always shows (2026-10-15).
+NDF_KMSG="${NDF_KMSG:-/dev/kmsg}"
 ndf_log() {
 	echo "nebulaos-datafs: $*"
+	[ -n "$NDF_KMSG" ] && { echo "nebulaos-datafs: $*" >> "$NDF_KMSG"; } 2>/dev/null
 	command -v logger >/dev/null 2>&1 && logger -t nebulaos-datafs -- "$*" 2>/dev/null
 	return 0
 }
@@ -128,8 +133,24 @@ ndf_precheck() {
 }
 
 # The mount itself, with the decided options.
+# A failed mount is retried once after a short pause and always reported:
+# on 2026-10-14 ke-dev booted without its data partition mounted read-write
+# and nothing said why (2026-10-15).
+NDF_MOUNT_RETRY_DELAY="${NDF_MOUNT_RETRY_DELAY:-2}"
 ndf_mount() {
-	"$NDF_MOUNT" -t ext4 -o "$NDF_MOUNT_OPTS" "$NDF_DEV" "$NDF_MNT"
+	_err=$("$NDF_MOUNT" -t ext4 -o "$NDF_MOUNT_OPTS" "$NDF_DEV" "$NDF_MNT" 2>&1) && {
+		ndf_log "mounted $NDF_DEV on $NDF_MNT ($NDF_MOUNT_OPTS)"
+		return 0
+	}
+	ndf_log "mount of $NDF_DEV on $NDF_MNT ($NDF_MOUNT_OPTS) failed: ${_err:-no message} - retrying in ${NDF_MOUNT_RETRY_DELAY}s"
+	sleep "$NDF_MOUNT_RETRY_DELAY"
+	_err=$("$NDF_MOUNT" -t ext4 -o "$NDF_MOUNT_OPTS" "$NDF_DEV" "$NDF_MNT" 2>&1) && {
+		ndf_log "mounted $NDF_DEV on $NDF_MNT ($NDF_MOUNT_OPTS) on the second attempt"
+		return 0
+	}
+	ndf_log "MOUNT FAILED: $NDF_DEV on $NDF_MNT ($NDF_MOUNT_OPTS): ${_err:-no message} - NebulaOS runs without its data this boot"
+	echo "DATAFS_MOUNT_FAILED=1" >> "$NDF_STATE" 2>/dev/null
+	return 1
 }
 
 # After a writable mount: the persistent record of this boot's decision.

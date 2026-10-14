@@ -25,8 +25,8 @@
 
 NEBULAOS_ROOT="${NEBULAOS_ROOT:-/usr/data/nebulaos}"
 PERSISTENT_KEY_DIR="$NEBULAOS_ROOT/system/dropbear"
-FALLBACK_KEY_DIR="/var/run/nebulaos-dropbear-fallback"
-DROPBEAR_ENV_FILE="/var/run/dropbear.conf"
+FALLBACK_KEY_DIR="${NEBULAOS_DROPBEAR_FALLBACK_DIR:-/var/run/nebulaos-dropbear-fallback}"
+DROPBEAR_ENV_FILE="${NEBULAOS_DROPBEAR_ENV_FILE:-/var/run/dropbear.conf}"
 
 log() {
 	echo "S46nebulaos-dropbear-keys: $1"
@@ -60,10 +60,46 @@ ensure_key() {
 	dropbearkey -t "$type" -f "$path" >/dev/null 2>&1
 }
 
+# 2026-10-15 (ke-dev did not boot, the data partition never mounted
+# read-write): the device's own keys are what the Hardware Agent pins
+# (strict, no TOFU), so a boot with broken storage must still present them.
+# Keys that are readable but not writable (data partition mounted read-only)
+# are used in place. With no data partition mounted at all, they are copied
+# from a short read-only mount into the boot-local directory.
+DATA_DEV="${NEBULAOS_DATA_DEV:-/dev/mmcblk0p10}"
+KEYS_RO_MNT="${NEBULAOS_KEYS_RO_MNT:-/run/nebulaos/keys-ro}"
+MOUNT_CMD="${NEBULAOS_MOUNT:-mount}"
+UMOUNT_CMD="${NEBULAOS_UMOUNT:-umount}"
+
+persistent_keys_readable() {
+	[ -s "$PERSISTENT_KEY_DIR/dropbear_rsa_host_key" ] || [ -s "$PERSISTENT_KEY_DIR/dropbear_ed25519_host_key" ]
+}
+
+copy_keys_from_data_partition() {
+	mkdir -p "$KEYS_RO_MNT" "$FALLBACK_KEY_DIR" 2>/dev/null || return 1
+	chmod 700 "$FALLBACK_KEY_DIR" 2>/dev/null
+	"$MOUNT_CMD" -t ext4 -o ro "$DATA_DEV" "$KEYS_RO_MNT" 2>/dev/null || return 1
+	_src="$KEYS_RO_MNT/nebulaos/system/dropbear"
+	_ok=1
+	for _k in dropbear_rsa_host_key dropbear_ed25519_host_key; do
+		[ -s "$_src/$_k" ] && cp "$_src/$_k" "$FALLBACK_KEY_DIR/$_k" 2>/dev/null && chmod 600 "$FALLBACK_KEY_DIR/$_k" && _ok=0
+	done
+	"$UMOUNT_CMD" "$KEYS_RO_MNT" 2>/dev/null
+	return $_ok
+}
+
 start() {
 	if persistent_storage_writable; then
 		key_dir="$PERSISTENT_KEY_DIR"
 		log "using persistent host keys at $key_dir"
+	elif persistent_keys_readable; then
+		key_dir="$PERSISTENT_KEY_DIR"
+		log "persistent storage is read-only - using the device's host keys in place at $key_dir"
+		write_env "$key_dir"
+		return 0
+	elif copy_keys_from_data_partition; then
+		key_dir="$FALLBACK_KEY_DIR"
+		log "data partition not mounted - copied the device's host keys from a read-only mount of $DATA_DEV"
 	else
 		key_dir="$FALLBACK_KEY_DIR"
 		log "persistent storage unavailable - falling back to boot-local host keys at $key_dir (new keys will be generated this boot)"
@@ -83,8 +119,16 @@ start() {
 		return 0
 	fi
 
+	write_env "$key_dir"
+}
+
+write_env() {
+	_args=
+	for _k in dropbear_rsa_host_key dropbear_ed25519_host_key; do
+		[ -s "$1/$_k" ] && _args="$_args -r $1/$_k"
+	done
 	cat > "$DROPBEAR_ENV_FILE" <<EOF
-DROPBEAR_ARGS="-r $key_dir/dropbear_rsa_host_key -r $key_dir/dropbear_ed25519_host_key"
+DROPBEAR_ARGS="${_args# }"
 EOF
 }
 
