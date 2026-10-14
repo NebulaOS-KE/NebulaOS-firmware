@@ -457,7 +457,10 @@ def op_capture(args):
         args.device, None, None, None, args.control_commit, destructive=False)
     if args.profile not in device.captures.CAPTURE_PROFILES:
         raise AgentRefusal("unknown capture profile %r (exercise profiles are not captures)" % args.profile)
-    session, which, address = _connect_matching(profile, (device.OS_NEBULAOS,))
+    systems = (device.OS_NEBULAOS,)
+    if args.profile in device.captures.STOCK_CAPTURE_PROFILES:
+        systems = (device.OS_NEBULAOS, device.OS_STOCK)
+    session, which, address = _connect_matching(profile, systems)
     try:
         say("CAPTURE_TARGET=%s@%s" % (which, address))
         say("DEVICE_IDENTITY_MATCHES_PROFILE=YES")

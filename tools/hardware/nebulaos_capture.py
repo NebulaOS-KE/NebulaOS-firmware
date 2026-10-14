@@ -150,8 +150,32 @@ def _rtos_hashes():
            rtos_logo.STOCK_ZERO_SHA256, rtos_logo.NEBULAOS_ZERO_SHA256))
 
 
+# NebulaOS did not finish booting (2026-10-14: ping only, no SSH, screen on
+# the logo): read what it left on the shared data partition, from whichever
+# system is up - usually Creality's in the other slot. Read-only: lists and
+# tails files under /usr/data/nebulaos; never prints Wi-Fi secrets.
+_NEBULAOS_POSTMORTEM = (
+    "R=/usr/data/nebulaos; "
+    "echo \"marker=$(head -c 512 /dev/mmcblk0p1 | tr -d '\\000' | tr '\\n' ' ' | head -c 64)\"; "
+    "echo; echo '== newest files under /usr/data/nebulaos (48 h) =='; "
+    "find $R -xdev -type f -mmin -2880 2>/dev/null | grep -v -e '/envs/' -e '/\\.git/' "
+    "| head -n 400 | xargs -r ls -le 2>/dev/null | tail -n 150; "
+    "echo; echo '== /usr/data/nebulaos and system/ =='; ls -lae $R $R/system 2>&1 | head -n 80; "
+    "for f in $R/system/diagnostics/*.log $R/system/*.log $R/system/*.json $R/printer_data/logs/*.log "
+    "$R/*.log /usr/data/.nebulaos-clean-reset.log; do [ -f \"$f\" ] || continue; "
+    "echo; echo \"== $f (last 120 lines) ==\"; tail -n 120 \"$f\" | grep -v -i -e psk -e passw; done; "
+    "echo; echo '== network config (secrets filtered) =='; "
+    "find $R -maxdepth 4 -name '*.json' -path '*network*' 2>/dev/null | while read f; do "
+    "echo \"--- $f\"; grep -v -i -e psk -e passw \"$f\" | head -c 4000; echo; done"
+)
+
+# Profiles that may also run on Creality's system (the other slot): read-only
+# and meaningful from there.
+STOCK_CAPTURE_PROFILES = ("nebulaos-postmortem",)
+
 # name -> (body, needs_diag, probe or None, timeout seconds)
 CAPTURE_PROFILES = {
+    "nebulaos-postmortem": (_NEBULAOS_POSTMORTEM, False, None, 120),
     # RTOS logo (G7): what is on rtos/rtos2 before anything writes rtos2.
     "rtos-hashes": (_rtos_hashes(), False, None, 120),
     # --- TOOL-01 base list ---------------------------------------------------
