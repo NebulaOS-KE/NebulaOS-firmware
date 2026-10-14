@@ -1285,6 +1285,11 @@ class McuVersionTests(unittest.TestCase):
         self.assertIn("unknown", note(unknown, "v0.13.0-742-g01a9c2f92"))
         self.assertIsNone(note(dict(old, valid=False), "v0.13.0-742-g01a9c2f92"))
         self.assertIsNone(note(dict(old, native=True), "v0.13.0-742-g01a9c2f92"))
+        # G35: Creality's own MCU firmware is accepted, with a plain warning.
+        stock = dict(ok, klipper_version="38d96adc-dirty-20231016_135251-longer-virtual-machine")
+        self.assertIn("Creality's own firmware", note(stock, "v0.13.0-742-g01a9c2f92"))
+        other = dict(ok, klipper_version="12345678-20240101_000000-longer-virtual-machine")
+        self.assertIn("Creality's own firmware", note(other, "v0.13.0-742-g01a9c2f92"))
 
 
 FAKE_7ZA = r"""#!/usr/bin/env python3

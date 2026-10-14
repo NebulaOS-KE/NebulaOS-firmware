@@ -119,6 +119,21 @@ def _inspect(path, size):
     return entry
 
 
+def _creality_build(version):
+    """Creality's MCU firmware: the exact identity the guard knows, or the
+    build-host signature Creality's builds carry in their data dictionary."""
+    if not version:
+        return False
+    _image_module()                     # puts MCU_LIB on sys.path
+    try:
+        import mcu_known_identities
+        if version in mcu_known_identities.KNOWN_STOCK_VERSIONS:
+            return True
+    except ImportError:
+        pass
+    return "longer-virtual-machine" in version
+
+
 def _version_note(entry, builtin_version):
     """G32: a firmware from another Klipper release than NebulaOS's own MCU
     firmware usually lacks commands the host Klipper needs, and Klipper then
@@ -128,6 +143,11 @@ def _version_note(entry, builtin_version):
     mine, theirs = img.release_of(builtin_version), img.release_of(entry.get("klipper_version"))
     if not entry.get("valid") or entry.get("native"):
         return None
+    if _creality_build(entry.get("klipper_version")):
+        # G35 (2026-10-14): accepted - going back to Creality's firmware needs
+        # it - but said plainly.
+        return ("Creality's own firmware: NebulaOS's Klipper cannot use it. Only for going "
+                "back to Creality's firmware; Reinstall NebulaOS firmware undoes it")
     if theirs is None:
         return "Klipper version unknown - Klipper may not be able to use the board"
     if mine and theirs != mine:
