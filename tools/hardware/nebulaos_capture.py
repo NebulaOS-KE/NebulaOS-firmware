@@ -206,7 +206,14 @@ _BOOT_STATE = (
     "echo; echo '== mounts =='; grep -e mmcblk -e ' /usr/data' -e ' /opt' /proc/mounts; "
     "echo; echo '== kernel log (boot steps, storage) =='; "
     "dmesg 2>&1 | grep -i -e nebulaos -e ext4 -e mmcblk0p10 -e 'blocked for more than' -e oom | tail -n 80; "
-    "echo; echo '== processes =='; ps w 2>&1 | grep -v ' \\[' | head -n 80"
+    "echo; echo '== processes =='; ps w 2>&1 | grep -v ' \\[' | head -n 80; "
+    "L=/opt/printer_data/logs; echo; echo \"== persistent logs ($L) ==\"; "
+    "ls -l $L/system.log* $L/boot-timing.log 2>&1; "
+    "echo \"system.log lines: wpa_supplicant=$(grep -c wpa_supplicant $L/system.log 2>/dev/null) "
+    "udhcpc=$(grep -c udhcpc $L/system.log 2>/dev/null) nebulaos-osconfig=$(grep -c nebulaos-osconfig $L/system.log 2>/dev/null) "
+    "nebulaos-datafs=$(grep -c nebulaos-datafs $L/system.log 2>/dev/null)\"; "
+    "echo '--- system.log (last 25, secrets filtered)'; tail -n 25 $L/system.log 2>&1 | grep -v -i -e psk -e passw; "
+    "echo '--- boot-timing.log (last 15)'; tail -n 15 $L/boot-timing.log 2>&1"
 )
 
 # Profiles that may also run on Creality's system (the other slot): read-only
