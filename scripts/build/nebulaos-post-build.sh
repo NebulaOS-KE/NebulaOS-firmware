@@ -86,3 +86,20 @@ cmp -s "$GUPPY_DEFAULT_SRC" "$GUPPY_DEFAULT_DST" || {
 	exit 1
 }
 echo "== post-build: GuppyScreen default config kept at /usr/share/nebulaos/guppyscreen =="
+
+# G49 (2026-10-15): pip starts its build-isolation helper by its .py path
+# (pip/__pip-runner__.py). Buildroot installs Python modules as .pyc only, so
+# the image had __pip-runner__.pyc alone and every source build on the
+# printer failed ("can't open file .../__pip-runner__.py") - an app update
+# whose dependencies need one could never install. Ship that one file.
+PIP_BUILD_SRC=$(ls -d "${BUILD_DIR:-$(dirname "$TARGET_DIR")/build}"/python-pip-*/src/pip 2>/dev/null | head -1)
+[ -n "$PIP_BUILD_SRC" ] && [ -f "$PIP_BUILD_SRC/__pip-runner__.py" ] || {
+	echo "FATAL: post-build: pip's __pip-runner__.py not found in the Buildroot build tree" >&2
+	exit 1
+}
+for PIP_DIR in "$TARGET_DIR"/usr/lib/python3*/site-packages/pip; do
+	[ -d "$PIP_DIR" ] || continue
+	cp "$PIP_BUILD_SRC/__pip-runner__.py" "$PIP_DIR/__pip-runner__.py"
+	chmod 644 "$PIP_DIR/__pip-runner__.py"
+	echo "== post-build: pip __pip-runner__.py shipped in ${PIP_DIR#$TARGET_DIR} =="
+done

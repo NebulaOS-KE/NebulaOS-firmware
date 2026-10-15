@@ -222,7 +222,7 @@ _BOOT_STATE = (
 _VERSIONS = (
     "M=http://127.0.0.1:7125; "
     "for e in machine/nebulaos/info machine/nebulaos/mcu/status machine/nebulaos/mcu/files "
-    "'printer/objects/query?mcu' server/info; do echo; echo \"== $e ==\"; "
+    "'printer/objects/query?mcu' server/info machine/update/status; do echo; echo \"== $e ==\"; "
     "curl -s --max-time 10 \"$M/$e\" 2>&1 | head -c 6000; echo; done; "
     "echo; echo '== /etc/nebulaos-build (image) =='; cat /etc/nebulaos-build 2>&1 | head -n 40; "
     "echo; echo '== kernel =='; uname -r"
