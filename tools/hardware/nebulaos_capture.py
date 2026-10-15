@@ -228,6 +228,19 @@ _VERSIONS = (
     "echo; echo '== kernel =='; uname -r"
 )
 
+# App updates (Moonraker's update manager + NebulaOS's update supervisor),
+# read-only: the supervisor's per-component states and locks, and the
+# update-related part of Moonraker's log (2026-10-15, P15).
+_UPDATE_LOG = (
+    "U=/usr/data/nebulaos/updates; echo '== supervisor locks'; ls -l $U/locks 2>&1; "
+    "for f in $U/*/state.json; do echo \"--- $f\"; cat \"$f\"; done; "
+    "echo; echo '== moonraker.log (update lines, last 1500 lines scanned)'; "
+    "tail -n 1500 /opt/printer_data/logs/moonraker.log | grep -v -e get_file_list -e 'Updating File List' "
+    "-e 'JSON-RPC Request Error - Requested Method: server.database' | "
+    "grep -i -e update -e 'git ' -e git_deploy -e pip -e klipper -e error -e fail -e Traceback -e Exception -e rollback "
+    "| tail -n 200 | cut -c1-400"
+)
+
 # Profiles that may also run on Creality's system (the other slot): read-only
 # and meaningful from there.
 STOCK_CAPTURE_PROFILES = ("nebulaos-postmortem", "datafs-check-readonly")
@@ -238,6 +251,7 @@ CAPTURE_PROFILES = {
     "datafs-check-readonly": (_DATAFS_CHECK_READONLY, False, None, 600),
     "boot-state": (_BOOT_STATE, False, None, 60),
     "versions": (_VERSIONS, False, None, 90),
+    "update-log": (_UPDATE_LOG, False, None, 60),
     # RTOS logo (G7): what is on rtos/rtos2 before anything writes rtos2.
     "rtos-hashes": (_rtos_hashes(), False, None, 120),
     # --- TOOL-01 base list ---------------------------------------------------
