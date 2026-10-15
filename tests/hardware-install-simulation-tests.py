@@ -805,13 +805,18 @@ def case_stock_wayout_reads_stock():
                                             if mount_ok else "exit 32\n"))
             with open(os.path.join(bin_dir, "umount"), "w") as fh:
                 fh.write("#!/bin/sh\nrm -rf \"$1\"/* \"$1\"/.[!.]* 2>/dev/null; exit 0\n")
-            for n in ("mount", "umount"):
+            # The probe's mount point lives in /tmp on the printer; here it is
+            # made inside this fixture (G17: a sandboxed host cannot write /tmp).
+            with open(os.path.join(bin_dir, "mktemp"), "w") as fh:
+                fh.write("#!/bin/sh\nexec %s -d %s/.nebulaos-stockro.XXXXXX\n"
+                         % (shutil.which("mktemp"), root))
+            for n in ("mount", "umount", "mktemp"):
                 os.chmod(os.path.join(bin_dir, n), 0o755)
-            before = set(os.listdir("/tmp"))
+            before = set(os.listdir(root))
             out = subprocess.run(
                 ["sh", "-c", _wayout_cmd()], capture_output=True, text=True,
                 env=dict(os.environ, PATH=bin_dir + ":" + os.environ.get("PATH", ""))).stdout
-            leaked = [n for n in set(os.listdir("/tmp")) - before if n.startswith(".nebulaos-stockro")]
+            leaked = [n for n in set(os.listdir(root)) - before if n.startswith(".nebulaos-stockro")]
             return dict(l.split("=", 1) for l in out.splitlines() if "=" in l), leaked
         good, leaked = facts(tree(True))
         check("way-out: stock rootfs mounted read-only and inspected", good.get("stock_mount") == "mounted")
