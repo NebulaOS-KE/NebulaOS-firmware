@@ -78,7 +78,8 @@ if [ -f "$OTA_MARKER" ]; then
     fi
 
     # G39 functional: the real helper against fake marker/kernel partitions
-    G=$(mktemp -d "${TMPDIR:-/tmp}/g39.XXXXXX")
+    G=$(mktemp -d "${TMPDIR:-/tmp}/g39.XXXXXX") || exit 1
+    [ -n "$G" ] && [ -d "$G" ] || exit 1
     sed "s#/dev/mmcblk0p1#$G/p1#g; s#/opt/nebulaos/tools/plr_tombstone.py#$G/tomb.py#g; s#-x /usr/bin/python3#-x /bin/sh#g; s#/usr/bin/python3 #sh #g" \
         "$OTA_MARKER" > "$G/lib.sh"
     echo "echo fired >> $G/fired" > "$G/tomb.py"
