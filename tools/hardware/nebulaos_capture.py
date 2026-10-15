@@ -224,6 +224,12 @@ _VERSIONS = (
     "for e in machine/nebulaos/info machine/nebulaos/mcu/status machine/nebulaos/mcu/files "
     "'printer/objects/query?mcu' server/info machine/update/status; do echo; echo \"== $e ==\"; "
     "curl -s --max-time 10 \"$M/$e\" 2>&1 | head -c 6000; echo; done; "
+    # G56: one line per updater - the raw status is cut off after 6000 bytes
+    "echo; echo '== update entries =='; curl -s --max-time 10 \"$M/machine/update/status\" 2>&1 "
+    "| python3 -c 'import json,sys; d=json.load(sys.stdin)[\"result\"][\"version_info\"]; "
+    "[print(k, *[\"%s=%s\" % (f, v.get(f)) for f in (\"version\", \"remote_version\", \"is_valid\", "
+    "\"corrupt\", \"channel\", \"warnings\", \"anomalies\")]) for k, v in sorted(d.items()) "
+    "if isinstance(v, dict)]' 2>&1; "
     "echo; echo '== /etc/nebulaos-build (image) =='; cat /etc/nebulaos-build 2>&1 | head -n 40; "
     "echo; echo '== kernel =='; uname -r"
 )
