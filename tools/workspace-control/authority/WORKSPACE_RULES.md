@@ -198,6 +198,7 @@ tools/run-nebulaos-hardware.sh --device <id> --control <40-hex C> <operation>
 | `reboot REBOOT_CONFIRM=NEBULAOS` | software reboot of an idle NebulaOS back into NebulaOS (boot timing); refused unless the marker already selects NebulaOS; writes nothing |
 | `rtos-logo RTOS_LOGO_CONFIRM=RTOS2` | writes the pinned NebulaOS RTOS image (boot logo) to rtos2 (p4) only, after a verified host backup; idle + marker on NebulaOS; read-back; never rtos (p3) |
 | `rtos-logo-restore <backup-sha256> RTOS_RESTORE_CONFIRM=RTOS2` | writes such a backup back to rtos2 |
+| `purge-dev-leftovers PURGE_CONFIRM=DEV-LEFTOVERS` | removes the agent's fixed, human-approved list of development leftovers from an idle NebulaOS printer's data partition; each path re-checked on the printer; never slot A's files (2026-10-15) |
 | `install <X> <ximage-sha256> <rootfs-sha256>` | flash |
 
 The main agent and `nebulaos-hardware` may run every operation. These stay strict in every

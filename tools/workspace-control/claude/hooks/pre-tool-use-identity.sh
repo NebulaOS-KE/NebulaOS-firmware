@@ -400,6 +400,7 @@ if sandbox_off:
         #   --device <id> --control <40-hex C> reboot REBOOT_CONFIRM=NEBULAOS
         #   --device <id> --control <40-hex C> rtos-logo RTOS_LOGO_CONFIRM=RTOS2
         #   --device <id> --control <40-hex C> rtos-logo-restore <64-hex> RTOS_RESTORE_CONFIRM=RTOS2
+        #   --device <id> --control <40-hex C> purge-dev-leftovers PURGE_CONFIRM=DEV-LEFTOVERS
         #   --device <id> --control <40-hex C> verify  <40-hex X> <64-hex> <64-hex>
         #   --device <id> --control <40-hex C> install <40-hex X> <64-hex> <64-hex>
         #
@@ -448,6 +449,8 @@ if sandbox_off:
                    and a[2]=="EXERCISE_CONFIRM="+a[1]) or \
                   (len(a)==2 and a[0]=="reboot" and a[1]=="REBOOT_CONFIRM=NEBULAOS") or \
                   (len(a)==2 and a[0]=="rtos-logo" and a[1]=="RTOS_LOGO_CONFIRM=RTOS2") or \
+                  (len(a)==2 and a[0]=="purge-dev-leftovers"
+                   and a[1]=="PURGE_CONFIRM=DEV-LEFTOVERS") or \
                   (len(a)==3 and a[0]=="rtos-logo-restore" and is_sha256(a[1])
                    and a[2]=="RTOS_RESTORE_CONFIRM=RTOS2") or \
                   (len(a)==4 and a[0] in HW_KEYED
@@ -463,6 +466,7 @@ if sandbox_off:
                 "  --device <id> --control <40-hex C> reboot REBOOT_CONFIRM=NEBULAOS\n"
                 "  --device <id> --control <40-hex C> rtos-logo RTOS_LOGO_CONFIRM=RTOS2\n"
                 "  --device <id> --control <40-hex C> rtos-logo-restore <64-hex> RTOS_RESTORE_CONFIRM=RTOS2\n"
+                "  --device <id> --control <40-hex C> purge-dev-leftovers PURGE_CONFIRM=DEV-LEFTOVERS\n"
                 "  --device <id> --control <40-hex C> verify  <40-hex X> <64-hex> <64-hex>\n"
                 "  --device <id> --control <40-hex C> install <40-hex X> <64-hex> <64-hex>\n\n"
                 "Refused - verify and install state their target release and BOTH artifact\n"
