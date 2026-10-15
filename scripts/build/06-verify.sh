@@ -1632,6 +1632,9 @@ check /usr/lib/nebulaos/python/nebulaos_osconfig/wifi.py
 check /usr/libexec/nebulaos/nebulaos-clean-reset
 check /usr/libexec/nebulaos/nebulaos-slot-swap
 check /usr/lib/nebulaos/python/nebulaos_osconfig/image.py
+check /usr/lib/nebulaos/python/nebulaos_osconfig/poweronlogo.py
+check /usr/lib/nebulaos/python/rtos_logo.py
+check /usr/lib/nebulaos/python/assets/nebulaos-rtos-logo.jpg
 check /etc/init.d/S99nebulaos-image-trial
 check /etc/init.d/S02nebulaos-early-ssh
 check /usr/bin/7za

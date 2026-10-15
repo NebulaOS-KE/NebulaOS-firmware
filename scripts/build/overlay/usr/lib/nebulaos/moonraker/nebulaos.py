@@ -68,6 +68,8 @@ class NebulaOS:
             ("/machine/nebulaos/boot_display/image", RequestType.POST, self._bd_image),
             ("/machine/nebulaos/boot_display/reset_image", RequestType.POST,
              self._bd_reset_image),
+            ("/machine/nebulaos/boot_display/restore_original_logo", RequestType.POST,
+             self._bd_restore_original_logo),
             ("/machine/nebulaos/display/status", RequestType.GET, self._disp_status),
             ("/machine/nebulaos/display/brightness", RequestType.POST,
              self._disp_brightness),
@@ -168,12 +170,20 @@ class NebulaOS:
         mode = web_request.get_str("mode")
         return await self._write("boot-display", "set-mode", "--mode", mode)
 
+    # G58: these also write the power-on logo into the RTOS partition, so
+    # they are refused while printing like the other partition writes.
     async def _bd_image(self, web_request: WebRequest) -> Dict[str, Any]:
         filename = web_request.get_str("filename")
+        await self._refuse_while_printing()
         return await self._write("boot-display", "set-image", "--file", filename)
 
     async def _bd_reset_image(self, web_request: WebRequest) -> Dict[str, Any]:
+        await self._refuse_while_printing()
         return await self._write("boot-display", "reset-image")
+
+    async def _bd_restore_original_logo(self, web_request: WebRequest) -> Dict[str, Any]:
+        await self._refuse_while_printing()
+        return await self._write("boot-display", "restore-original-logo")
 
     async def _disp_status(self, web_request: WebRequest) -> Dict[str, Any]:
         return await self._read("display", "status")

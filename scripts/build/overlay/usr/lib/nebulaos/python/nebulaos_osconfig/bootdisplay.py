@@ -21,11 +21,12 @@ from . import common
 from .common import invalid, OsConfigError
 
 SCHEMA = 1
-MODES = ("logo", "blank")
+MODES = ("logo",)
 # "console" (a text boot log on the LCD) was removed (D10, 2026-10-11): the
 # framebuffer console deadlocked GuppyScreen's start on the RT kernel. A saved
-# "console" is read as "logo"; it can no longer be selected.
-RETIRED_MODES = {"console": "logo"}
+# "console" is read as "logo"; it can no longer be selected. "blank" was
+# retired by G58 (2026-10-15): there is always a boot logo.
+RETIRED_MODES = {"console": "logo", "blank": "logo"}
 RENDERER_VERSION = "1"
 MAX_FILE_BYTES = 4 * 1024 * 1024
 MAX_DIMENSION = 2048
@@ -317,10 +318,23 @@ def _render_now():
 
 # -- public verbs ---------------------------------------------------------------
 
+def _power_on(action, *args):
+    """G58: the same choice for the RTOS power-on logo. Its outcome is
+    reported beside the boot screen's, never instead of it."""
+    from . import poweronlogo
+    try:
+        return action(*args) if action else poweronlogo.status()
+    except OsConfigError as exc:
+        return {"result": "FAILED", "error": exc.code, "message": str(exc)}
+    except Exception as exc:   # an unexpected failure must not undo the splash change
+        return {"result": "FAILED", "error": "INTERNAL", "message": str(exc)[:200]}
+
+
 def status():
     cfg, error = load_config()
     meta = _read_meta()
     return {"config": cfg, "config_error": error, "modes": list(MODES),
+            "power_on": _power_on(None),
             "custom_image_present": custom_path() is not None,
             "cache": {"present": os.path.isfile(RAW), "kind": meta.get("KIND"),
                       "geometry": [meta.get("XRES"), meta.get("YRES"), meta.get("BPP")]
@@ -364,11 +378,13 @@ def set_image(filename):
     if os.path.exists(other):
         os.unlink(other)
     cfg, _ = load_config()
-    cfg = dict(cfg, image="custom")
+    cfg = dict(cfg, mode="logo", image="custom")
     _persist(cfg)
     rendered = _render_now()
+    from . import poweronlogo
     return {"result": "APPLIED", "config": cfg, "image": {"format": fmt,
-            "width": width, "height": height}, "render": rendered}
+            "width": width, "height": height}, "render": rendered,
+            "power_on": _power_on(poweronlogo.set_custom, src)}
 
 
 def reset_image():
@@ -377,7 +393,16 @@ def reset_image():
         if os.path.exists(path):
             os.unlink(path)
     cfg, _ = load_config()
-    cfg = dict(cfg, image="builtin")
+    cfg = dict(cfg, mode="logo", image="builtin")
     _persist(cfg)
     rendered = _render_now()
-    return {"result": "APPLIED", "config": cfg, "render": rendered}
+    from . import poweronlogo
+    return {"result": "APPLIED", "config": cfg, "render": rendered,
+            "power_on": _power_on(poweronlogo.set_nebulaos)}
+
+
+def restore_original_logo():
+    """G58: the original power-on logo back into the running slot's RTOS. The
+    Linux boot screen is not changed."""
+    from . import poweronlogo
+    return poweronlogo.restore_original()

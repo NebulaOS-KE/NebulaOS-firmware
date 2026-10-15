@@ -387,12 +387,19 @@ class BootDisplayTests(unittest.TestCase):
         return path
 
     def test_modes(self):
-        self.assertEqual(self.b.set_mode("blank")["config"]["mode"], "blank")
-        self.assertIn('MODE="blank"', open(self.b.ENV).read())
+        self.assertEqual(self.b.set_mode("logo")["config"]["mode"], "logo")
+        self.assertIn('MODE="logo"', open(self.b.ENV).read())
         with self.assertRaises(self.e.common.OsConfigError):
             self.b.set_mode("splash; reboot")
-        self.assertEqual(self.b.load_config()[0]["mode"], "blank")
-        self.assertEqual(self.b.status()["modes"], ["logo", "blank"])
+        self.assertEqual(self.b.status()["modes"], ["logo"])
+
+    def test_blank_retired(self):
+        # G58 (2026-10-15): there is always a boot logo; a saved "blank" is logo.
+        with self.assertRaises(self.e.common.OsConfigError):
+            self.b.set_mode("blank")
+        self.e.common.atomic_write_json(self.b.CONFIG, {"schema": 1, "mode": "blank",
+                                                         "image": "builtin"})
+        self.assertEqual(self.b.load_config(), ({"schema": 1, "mode": "logo", "image": "builtin"}, None))
 
     def test_console_retired(self):
         # D10 (2026-10-11): console can no longer be chosen; a saved one is logo.
@@ -1372,6 +1379,139 @@ else:
             os.makedirs(os.path.dirname(dst), exist_ok=True)
             shutil.copyfile(os.path.join(root, f), dst)
 """
+
+
+class PowerOnLogoTests(unittest.TestCase):
+    """G58/G40 (2026-10-15): the power-on logo in the running slot's RTOS -
+    against fake rtos/rtos2 partitions holding a synthetic image (the real
+    zero.bin is the vendor's and stays out of the repository); the two pins
+    are set to that image's values."""
+
+    def setUp(self):
+        import hashlib
+        from PIL import Image
+        self.Image = Image
+        self.e = Env()
+        self.p = importlib.import_module("nebulaos_osconfig.poweronlogo")
+        self.b = self.e.bootdisplay
+        p, t = self.p, self.e.tmp
+        self.dev, self.sys = os.path.join(t, "dev"), os.path.join(t, "sys")
+        os.makedirs(self.dev)
+        # synthetic image: random code around an "original" 480x272 JPEG
+        buf = io.BytesIO()
+        Image.new("RGB", (480, 272), (200, 30, 30)).save(buf, "JPEG", quality=60, subsampling=2)
+        orig = buf.getvalue()
+        self.assertLessEqual(len(orig), p.SIZE)
+        self.orig_slot = orig + b"\0" * (p.SIZE - len(orig))
+        body = bytearray(os.urandom(p.IMAGE_SIZE))
+        body[p.OFFSET:p.OFFSET + p.SIZE] = self.orig_slot
+        self.image = bytes(body)
+        p.FRAME_SHA256 = hashlib.sha256(body[:p.OFFSET] + b"\0" * p.SIZE + body[p.OFFSET + p.SIZE:]).hexdigest()
+        p.ORIGINAL_LOGO_SHA256 = hashlib.sha256(self.orig_slot).hexdigest()
+        for part, name in (("mmcblk0p3", "rtos"), ("mmcblk0p4", "rtos2")):
+            open(os.path.join(self.dev, part), "wb").write(self.image + b"\0" * 4096)
+            os.makedirs(os.path.join(self.sys, part))
+            open(os.path.join(self.sys, part, "uevent"), "w").write("PARTNAME=%s\n" % name)
+        p.DEV_DIR, p.SYS_BLOCK = self.dev, self.sys
+        p.BACKUP = os.path.join(t, "data", "rtos-logo", "original.jpg")
+        self.slot("B")
+
+    def tearDown(self):
+        self.e.cleanup()
+
+    def slot(self, s):
+        open(os.environ["NEBULAOS_CMDLINE"], "w").write(
+            "root=%s rootfstype=squashfs\n" % {"A": "/dev/mmcblk0p7", "B": "/dev/mmcblk0p8"}[s])
+
+    def part(self, name):
+        return open(os.path.join(self.dev, name), "rb").read()
+
+    def upload(self, name, colour=(20, 200, 90), size=(800, 600)):
+        os.makedirs(self.b.UPLOAD_DIR, exist_ok=True)
+        path = os.path.join(self.b.UPLOAD_DIR, name)
+        self.Image.new("RGB", size, colour).save(path, "PNG")
+        return name
+
+    def test_status_and_nebulaos_logo(self):
+        st = self.p.status()
+        self.assertEqual((st["slot"], st["logo"], st["writable"], st["original_available"]),
+                         ("B", "original", True, True))
+        out = self.p.set_nebulaos()
+        self.assertEqual((out["result"], out["slot"], out["logo"]), ("WRITTEN", "B", "nebulaos"))
+        after = self.part("mmcblk0p4")
+        p = self.p
+        # only the logo slot changed; the original was kept first; rtos (A) untouched
+        self.assertEqual(after[:p.OFFSET], self.image[:p.OFFSET])
+        self.assertEqual(after[p.OFFSET + p.SIZE:p.IMAGE_SIZE], self.image[p.OFFSET + p.SIZE:])
+        self.assertEqual(open(p.BACKUP, "rb").read(), self.orig_slot)
+        self.assertEqual(self.part("mmcblk0p3")[:p.IMAGE_SIZE], self.image)
+        self.assertEqual(self.p.set_nebulaos()["result"], "UNCHANGED")
+
+    def test_custom_then_restore(self):
+        out = self.b.set_image(self.upload("mine.png"))
+        self.assertEqual(out["config"]["image"], "custom")                  # Linux boot screen
+        self.assertEqual((out["power_on"]["result"], out["power_on"]["logo"]), ("WRITTEN", "custom"))
+        slot = self.part("mmcblk0p4")[self.p.OFFSET:self.p.OFFSET + self.p.SIZE]
+        info = self.p.rtos_logo.parse_jpeg(slot)
+        self.assertEqual((info.width, info.height, info.baseline()), (480, 272, True))
+        self.assertEqual(self.p.restore_original()["logo"], "original")
+        self.assertEqual(self.part("mmcblk0p4")[:self.p.IMAGE_SIZE], self.image)
+        # reset-image: builtin splash and the NebulaOS power-on logo
+        out = self.b.reset_image()
+        self.assertEqual((out["config"]["image"], out["power_on"]["logo"]), ("builtin", "nebulaos"))
+
+    def test_slot_a_running_writes_rtos(self):
+        # G40: from slot A the rtos partition (p3) gets the logo, rtos2 stays
+        self.slot("A")
+        self.assertEqual(self.p.set_nebulaos()["slot"], "A")
+        self.assertEqual(self.p.classify(self.part("mmcblk0p3")[:self.p.IMAGE_SIZE]), "nebulaos")
+        self.assertEqual(self.part("mmcblk0p4")[:self.p.IMAGE_SIZE], self.image)
+
+    def test_unknown_rtos_is_never_written(self):
+        bad = bytearray(self.image)
+        bad[100] ^= 0xFF
+        open(os.path.join(self.dev, "mmcblk0p4"), "wb").write(bytes(bad))
+        self.assertEqual((self.p.status()["logo"], self.p.status()["writable"]), ("unknown", False))
+        with self.assertRaises(self.e.common.OsConfigError) as cm:
+            self.p.set_nebulaos()
+        self.assertEqual(cm.exception.code, "RTOS_UNKNOWN")
+        self.assertEqual(self.part("mmcblk0p4"), bytes(bad))
+        # the boot screen change still applies; the power-on part reports the refusal
+        out = self.b.set_image(self.upload("x.png"))
+        self.assertEqual((out["result"], out["power_on"]["error"]), ("APPLIED", "RTOS_UNKNOWN"))
+
+    def test_restore_from_the_other_slot(self):
+        # no backup on this printer, but slot A's RTOS still has the original
+        nebula = bytearray(self.image)
+        nebula[self.p.OFFSET:self.p.OFFSET + self.p.SIZE] = self.p._nebulaos_slot()
+        open(os.path.join(self.dev, "mmcblk0p4"), "wb").write(bytes(nebula))
+        self.assertTrue(self.p.status()["original_available"])
+        self.assertEqual(self.p.restore_original()["logo"], "original")
+        open(os.path.join(self.dev, "mmcblk0p3"), "wb").write(bytes(nebula))
+        open(os.path.join(self.dev, "mmcblk0p4"), "wb").write(bytes(nebula))
+        with self.assertRaises(self.e.common.OsConfigError) as cm:
+            self.p.restore_original()
+        self.assertEqual(cm.exception.code, "NO_ORIGINAL")
+
+    def test_detailed_image_is_compressed_to_fit(self):
+        os.makedirs(self.b.UPLOAD_DIR, exist_ok=True)
+        path = os.path.join(self.b.UPLOAD_DIR, "noise.png")
+        self.Image.frombytes("RGB", (480, 272), os.urandom(480 * 272 * 3)).save(path, "PNG")
+        try:
+            data, quality = self.p.convert(path)
+            self.assertEqual(len(data), self.p.SIZE)
+            self.assertLess(quality, 90)
+        except self.e.common.OsConfigError as exc:
+            self.assertEqual(exc.code, "IMAGE_TOO_DETAILED")
+
+    def test_shipped_copies_match_the_packager(self):
+        here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        lib = os.path.join(here, "scripts", "build", "overlay", "usr", "lib", "nebulaos", "python")
+        for a, b in (("rtos_logo.py", "rtos_logo.py"),
+                     (os.path.join("assets", "nebulaos-rtos-logo.jpg"),
+                      os.path.join("assets", "nebulaos-rtos-logo.jpg"))):
+            self.assertEqual(open(os.path.join(lib, a), "rb").read(),
+                             open(os.path.join(here, "scripts", "package", b), "rb").read(), a)
 
 
 class ImageTests(unittest.TestCase):

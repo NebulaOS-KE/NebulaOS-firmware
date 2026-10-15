@@ -14,7 +14,8 @@
 #   nebulaos-osconfig network set-hostname --hostname NAME
 #   nebulaos-osconfig network set-ipv4 --json '{"mode":"static",...}'
 #   nebulaos-osconfig boot-display status|reset-image
-#   nebulaos-osconfig boot-display set-mode --mode logo|blank
+#   nebulaos-osconfig boot-display set-mode --mode logo
+#   nebulaos-osconfig boot-display restore-original-logo
 #   nebulaos-osconfig boot-display set-image --file NAME_IN_UPLOAD_ROOT
 #   nebulaos-osconfig boot-display render [--if-stale]
 #   nebulaos-osconfig display status|sleep|wake
@@ -134,6 +135,9 @@ def _dispatch(argv):
             if verb == "reset-image":
                 _opts(rest, {})
                 return bootdisplay.reset_image()
+            if verb == "restore-original-logo":
+                _opts(rest, {})
+                return bootdisplay.restore_original_logo()
             if verb == "render":
                 return bootdisplay.render(
                     if_stale=bool(_opts(rest, {"if-stale": False}).get("if-stale")))
