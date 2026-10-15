@@ -340,6 +340,33 @@ clone_pinned pellcorp-creality "$PELLCORP_CREALITY_REPO" "$PELLCORP_CREALITY_PIN
 # end to end against the real remote, not assumed; see the mission report.
 clone_pinned klipper "$KLIPPER_REPO" "$KLIPPER_PIN" "" "$KLIPPER_BRANCH"
 
+# G56 (2026-10-15): depth 1 has no tag, so `git describe` fails and Moonraker
+# shows Klipper as "v0.0.0-1-g<sha>-inferred". Deepen to the newest release
+# tag (v*) that is an ancestor of the pin: measured at v0.13.0 + 741 commits,
+# under 10 MB packed - not the 217 MB full history. Best effort: versions are
+# cosmetic, so a failure warns and the build goes on with depth 1.
+deepen_to_release_tag() {
+	name="$1"; ref="$2"
+	if git -C "$name" describe --tags --abbrev=0 HEAD >/dev/null 2>&1; then
+		echo "== $name: $(git -C "$name" describe --tags --long HEAD) (release tag present) =="
+		return 0
+	fi
+	for tag in $(git -C "$name" ls-remote --tags origin 'v*' 2>/dev/null | grep -v '\^{}$' \
+			| sed 's#.*refs/tags/##' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -rV | head -n 3); do
+		git -C "$name" fetch -q --shallow-exclude="$tag" origin "$ref" 2>/dev/null || continue
+		git -C "$name" fetch -q --deepen=1 origin "$ref" 2>/dev/null || continue
+		git -C "$name" fetch -q --no-tags origin "refs/tags/$tag:refs/tags/$tag" 2>/dev/null || continue
+		if git -C "$name" merge-base --is-ancestor "$tag" HEAD 2>/dev/null; then
+			echo "== $name: $(git -C "$name" describe --tags --long HEAD) (history deepened to $tag) =="
+			return 0
+		fi
+		git -C "$name" tag -d "$tag" >/dev/null 2>&1
+	done
+	echo "WARN: $name - no release tag reachable; Moonraker will show an inferred version" >&2
+	return 0
+}
+deepen_to_release_tag klipper "$KLIPPER_PIN"
+
 # The NebulaOS Klipper extension set - the third image-owned source
 # component. Everything this project actually owns for the Klipper host:
 # PRTouch and its companions, z_compensate, tmcstatus, nebulaos_version,

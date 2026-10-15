@@ -201,11 +201,20 @@ make_seed_archive() {
 		# arises exactly when the count is zero, and a failing `[` makes the
 		# branch false, which is the correct action for a zero count. Relying
 		# on an error path to land on the right branch is not a check.
-		stale_count=$(grep -cv "^$head_sha$" "$tmp/.git/shallow" 2>/dev/null || true)
-		case "$stale_count" in ''|*[!0-9]*) stale_count=0 ;; esac
-		if [ "$stale_count" -gt 0 ]; then
-			echo "$head_sha" > "$tmp/.git/shallow"
-		fi
+		#
+		# G56 (2026-10-15): keep boundary entries that are ancestors of HEAD.
+		# A seed deepened back to its last release tag (Klipper: so that
+		# `git describe` - and Moonraker's version - works) has exactly one
+		# such boundary, below the tag; cutting it to HEAD threw that history
+		# away again. Only entries off HEAD's history are stale.
+		_keep=""
+		for _s in $(cat "$tmp/.git/shallow"); do
+			if [ "$_s" = "$head_sha" ] || git -C "$tmp" merge-base --is-ancestor "$_s" HEAD 2>/dev/null; then
+				_keep="$_keep $_s"
+			fi
+		done
+		[ -n "$_keep" ] || _keep=$head_sha
+		printf '%s\n' $_keep > "$tmp/.git/shallow"
 	fi
 
 	# Drop the reflogs BEFORE repacking, and unconditionally.
@@ -273,6 +282,13 @@ make_seed_archive() {
 		_bn=$(basename "$_p" .pack)
 		[ "$_bn" != "pack-$_pack_hash" ] && rm -f "$_p" "${_p%.pack}.idx" "${_p%.pack}.rev"
 	done
+	# Indexes over the packs just deleted. git >= 2.4x writes a
+	# multi-pack-index (and commit-graph) during a fetch's automatic
+	# maintenance; left in place it names the removed packs and every object
+	# lookup fails ("failed to load pack entry"). Found with G56's deepened
+	# Klipper clone (three fetches). git rebuilds them on demand.
+	rm -f "$tmp"/.git/objects/pack/multi-pack-index*
+	rm -rf "$tmp/.git/objects/info/commit-graph" "$tmp/.git/objects/info/commit-graphs"
 	# Loose objects are now redundant with the pack and are written by
 	# whatever ran before this point; drop them so the object store is exactly
 	# one pack. `prune-packed` only removes objects that the pack already
