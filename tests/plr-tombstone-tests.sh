@@ -71,11 +71,30 @@ if [ -f "$OTA_MARKER" ]; then
         fail "write_ota_marker() does not reference plr_tombstone.py"
     fi
 
-    if grep -B1 'plr_tombstone.py' "$OTA_MARKER" | grep -q '\[ "\$1" = "ota:kernel" \]'; then
-        pass "plr_tombstone.py is only invoked when switching to stock (\$1 = ota:kernel), not ota:kernel2"
+    if grep -B1 'plr_tombstone.py' "$OTA_MARKER" | grep -q '! ota_slot_holds_nebulaos "\$1"'; then
+        pass "plr_tombstone.py is only invoked when the selected slot does not hold NebulaOS (G39)"
     else
-        fail "plr_tombstone.py invocation is not correctly gated on \$1 = ota:kernel"
+        fail "plr_tombstone.py invocation is not gated on the selected slot's system"
     fi
+
+    # G39 functional: the real helper against fake marker/kernel partitions
+    G=$(mktemp -d "${TMPDIR:-/tmp}/g39.XXXXXX")
+    sed "s#/dev/mmcblk0p1#$G/p1#g; s#/opt/nebulaos/tools/plr_tombstone.py#$G/tomb.py#g; s#-x /usr/bin/python3#-x /bin/sh#g; s#/usr/bin/python3 #sh #g" \
+        "$OTA_MARKER" > "$G/lib.sh"
+    echo "echo fired >> $G/fired" > "$G/tomb.py"
+    kernel() { head -c 32 /dev/zero > "$1"; printf '%s' "$2" >> "$1"; head -c 64 /dev/zero >> "$1"; }
+    g39() { rm -f "$G/fired"; head -c 512 /dev/zero > "$G/p1"
+        (OTA_KERNEL_A_DEV="$G/kA" OTA_KERNEL_B_DEV="$G/kB"; export OTA_KERNEL_A_DEV OTA_KERNEL_B_DEV
+         . "$G/lib.sh"; write_ota_marker "$1"); [ -e "$G/fired" ]; }
+    kernel "$G/kA" "Linux-4.4.94"; kernel "$G/kB" "Linux-6.6.157-rt79"
+    g39 ota:kernel && pass "G39: switch to slot A holding the other system tombstones" || fail "G39: no tombstone towards the other system"
+    g39 ota:kernel2 && fail "G39: switch to NebulaOS slot B tombstoned" || pass "G39: switch to NebulaOS slot B keeps the journal"
+    kernel "$G/kA" "Linux-6.6.157-rt79"
+    g39 ota:kernel && fail "G39: switch to NebulaOS slot A tombstoned" || pass "G39: switch to NebulaOS slot A keeps the journal"
+    [ "$(head -c 12 "$G/p1" | od -An -c | tr -d ' ')" = 'ota:kernel\n\n' ] && pass "G39: marker still written" || fail "G39: marker bytes wrong"
+    rm -f "$G/kA"
+    g39 ota:kernel && pass "G39: unreadable kernel counts as not NebulaOS (tombstone)" || fail "G39: unreadable kernel skipped the tombstone"
+    rm -rf "$G"
 
     if grep -A1 'plr_tombstone.py' "$OTA_MARKER" | grep -q '||'; then
         pass "plr_tombstone.py invocation has a non-fatal (||) fallback - a tombstone failure cannot block the stock switch"
