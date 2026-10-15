@@ -1465,6 +1465,75 @@ class ImageTests(unittest.TestCase):
         self.assertEqual((c["system"], c["kernel"]), ("nebulaos", "Linux-6.6.157-rt79"))
         self.assertEqual(len(c["sha256"]), 64)
 
+    def rootfs(self, part, tree_files, mkfs=1):
+        """A fake squashfs superblock in a partition plus the tree a fake
+        mount of it shows."""
+        sb = bytearray(48)
+        sb[:4] = b"hsqs"
+        struct.pack_into("<I", sb, 8, mkfs)
+        open(os.path.join(self.dev, part), "r+b").write(bytes(sb))
+        tree = os.path.join(self.dev, part + ".tree")
+        shutil.rmtree(tree, ignore_errors=True)
+        for rel, text in tree_files.items():
+            os.makedirs(os.path.dirname(os.path.join(tree, rel)), exist_ok=True)
+            open(os.path.join(tree, rel), "w").write(text)
+        return tree
+
+    def fake_mount(self):
+        log = os.path.join(self.e.tmp, "mount.calls")
+        write_exe(os.path.join(self.e.bin, "mount"),
+                  'echo "mount $*" >> "%s"; for a; do :; done; cp -a "$5.tree/." "$6/"\n' % log)
+        write_exe(os.path.join(self.e.bin, "umount"),
+                  'echo "umount $*" >> "%s"; rm -rf "$1"/*\n' % log)
+        self.i.MOUNT, self.i.UMOUNT = os.path.join(self.e.bin, "mount"), os.path.join(self.e.bin, "umount")
+        return log
+
+    def test_slot_identity(self):
+        # G46/G48: running slot from its own root, the other by a read-only mount
+        log = self.fake_mount()
+        own = self.rootfs("mmcblk0p8", {})
+        self.i.ROOT_DIR = os.path.join(self.e.tmp, "root")
+        os.makedirs(os.path.join(self.i.ROOT_DIR, "opt", "nebulaos-seeds"))
+        open(os.path.join(self.i.ROOT_DIR, "opt", "nebulaos-seeds", "seed-manifest.json"), "w").write(
+            json.dumps({"firmware_head": "14a9280" + "0" * 33, "build_date": "2026-10-15T08:00:00Z"}))
+        self.rootfs("mmcblk0p7", {"etc/ota_info": "board=F005\nota_version=1.1.0.12\n"})
+        s = self.i.slots_info()
+        self.assertEqual((s["B"]["build"], s["B"]["date"]), ("14a9280", "2026-10-15"))
+        self.assertNotIn("version", s["A"])                       # status never mounts
+        self.assertFalse(os.path.exists(log))
+        s = self.i.list_files()["slots"]
+        self.assertEqual(s["A"]["version"], "1.1.0.12")
+        self.assertEqual(open(log).read().count("mount -t squashfs -o ro"), 1)
+        self.i.list_files()                                       # cached
+        self.assertEqual(open(log).read().count("mount -t squashfs -o ro"), 1)
+        self.assertEqual(self.i.slots_info()["A"]["version"], "1.1.0.12")
+        # a new image in slot A (new superblock): read again - but not while an install runs
+        self.rootfs("mmcblk0p7", {"opt/nebulaos-seeds/seed-manifest.json":
+                                  json.dumps({"firmware_head": "abcdef1234", "build_date": "2026-10-16"})}, mkfs=2)
+        os.makedirs(self.i.JOB_DIR, exist_ok=True)
+        json.dump({"state": "running"}, open(self.i.JOB_STATE, "w"))
+        self.assertEqual(self.i.list_files()["slots"]["A"].get("build"), None)
+        os.unlink(self.i.JOB_STATE)
+        self.assertEqual(self.i.list_files()["slots"]["A"]["build"], "abcdef1")
+        self.assertIn("umount", open(log).read())
+
+    def test_file_identity(self):
+        # G48: the list shows each .img's version and NebulaOS build record
+        archive, _, _ = self.package()
+        inner = os.path.join(open(archive).read(), "Ender-3_V3_KE_F005_ota_img_V9.9", "ota_v9.9")
+        open(os.path.join(inner, "nebulaos-build.json"), "w").write(
+            json.dumps({"firmware_head": "14a9280" + "1" * 33, "build_date": "2026-10-15T09:00:00Z"}))
+        f = self.i.list_files()["files"][0]
+        self.assertEqual((f["version"], f["build"], f["date"]), ("9.9", "14a9280", "2026-10-15"))
+        c = self.i.check("upload/nebula.img")
+        self.assertEqual((c["build"], c["date"]), ("14a9280", "2026-10-15"))
+        self.package("other.img")
+        g = [x for x in self.i.list_files()["files"] if x["name"] == "other.img"][0]
+        self.assertEqual((g["version"], g.get("build")), ("9.9", None))
+        open(os.path.join(self.upload, "junk.img"), "w").write("not an archive")
+        j = [x for x in self.i.list_files()["files"] if x["name"] == "junk.img"][0]
+        self.assertNotIn("version", j)
+
     def test_cli_entry_point(self):
         # ke-dev 2026-10-15: cli.py never imported the image module, so every
         # machine.nebulaos.image.* call failed with NameError on the printer

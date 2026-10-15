@@ -62,6 +62,14 @@ PROC_DIR = os.environ.get("NEBULAOS_PROC_DIR", "/proc")
 TRIAL_SECONDS = int(os.environ.get("NEBULAOS_IMAGE_TRIAL_SECONDS", "300"))
 TRIAL_POLL = float(os.environ.get("NEBULAOS_IMAGE_TRIAL_POLL", "5"))
 CHUNK = 1048576
+# G46/G48: what each slot and file holds, beyond the kernel name.
+ROOT_DIR = os.environ.get("NEBULAOS_ROOT_DIR", "/")
+MOUNT = os.environ.get("NEBULAOS_MOUNT", "/bin/mount")
+UMOUNT = os.environ.get("NEBULAOS_UMOUNT", "/bin/umount")
+IDENTITY_CACHE = os.path.join(common.RUN_DIR, "image-identity.json")
+SEED_MANIFEST_REL = "opt/nebulaos-seeds/seed-manifest.json"
+CREALITY_INFO_REL = "etc/ota_info"
+BUILD_RECORD = "nebulaos-build.json"      # in an .img's payload dir (build-img.py)
 MAX_IMG_BYTES = 1024 * 1024 * 1024
 
 # docs/A_B_SLOT_MODEL.md: the SPL loads kernel/rootfs of slot B when the
@@ -110,12 +118,95 @@ def _read_head(dev, size=64):
         return b""
 
 
-def slots_info():
+def root_identity(root):
+    """What a mounted rootfs says about itself: {"build", "date"} from a
+    NebulaOS build record, {"version"} from Creality's /etc/ota_info, {}."""
+    try:
+        with open(os.path.join(root, SEED_MANIFEST_REL)) as handle:
+            man = json.load(handle)
+        head = str(man.get("firmware_head") or "")
+        if re.match(r"^[0-9a-f]{7,40}$", head):
+            return {"build": head[:7], "date": str(man.get("build_date") or "")[:10]}
+    except (OSError, ValueError, AttributeError):
+        pass
+    try:
+        with open(os.path.join(root, CREALITY_INFO_REL), errors="replace") as handle:
+            for line in handle.read(4096).splitlines():
+                key, _, value = line.partition("=")
+                if key.strip() == "ota_version" and value.strip():
+                    return {"version": value.strip()[:40]}
+    except OSError:
+        pass
+    return {}
+
+
+def _rootfs_id(dev):
+    """A squashfs superblock's magic, mkfs time and size - changes with every
+    image written into the partition; "" when it holds no squashfs."""
+    head = _read_head(dev, 48)
+    if len(head) < 48 or head[:4] != SQUASHFS_MAGIC:
+        return ""
+    return head[8:12].hex() + head[40:48].hex()
+
+
+def _job_active():
+    job, _ = common.read_json(JOB_STATE)
+    return bool(job) and job.get("state") in ("running", "restarting")
+
+
+def _mounted_identity(dev):
+    """Mount the other slot's rootfs read-only for a moment and read it."""
+    point = os.path.join(common.RUN_DIR, "image-slot-ro")
+    try:
+        os.makedirs(point, exist_ok=True)
+    except OSError:
+        return None
+    rc, _, _ = common.run([MOUNT, "-t", "squashfs", "-o", "ro", os.path.join(DEV_DIR, dev), point], 30)
+    if rc != 0:
+        return None
+    try:
+        return root_identity(point)
+    finally:
+        common.run([UMOUNT, point], 30)
+
+
+def slot_identity(slot, running, may_mount):
+    """{"build","date"} | {"version"} | {} for a slot, cached on its rootfs
+    superblock. The running slot reads its own root; the other slot is
+    mounted read-only - only when may_mount and no install is writing it."""
+    dev = SLOTS[slot]["rootfs"]
+    key = _rootfs_id(dev)
+    if not key:
+        return {}
+    cache, _ = common.read_json(IDENTITY_CACHE)
+    cache = cache if isinstance(cache, dict) else {}
+    hit = cache.get(slot)
+    if isinstance(hit, dict) and hit.get("key") == key:
+        return hit.get("identity") or {}
+    if slot == running:
+        ident = root_identity(ROOT_DIR)
+    elif may_mount and not _job_active():
+        ident = _mounted_identity(dev)
+        if ident is None:
+            return {}
+    else:
+        return {}
+    cache[slot] = {"key": key, "identity": ident}
+    try:
+        os.makedirs(common.RUN_DIR, exist_ok=True)
+        common.atomic_write_json(IDENTITY_CACHE, cache)
+    except Exception:  # a cache is never required
+        pass
+    return ident
+
+
+def slots_info(may_mount=False):
     running = system.boot_slot()
     out = {"running": running}
     for slot, p in SLOTS.items():
         name, _ = uimage_name(_read_head(p["kernel"]))
         out[slot] = {"kernel": name, "system": system_kind(name)}
+        out[slot].update(slot_identity(slot, running, may_mount))
     return out
 
 
@@ -189,7 +280,10 @@ def list_files():
         for rel, st in _scan(os.path.join(USB_DIR, dev), USB_DEPTH):
             files.append({"id": "usb/%s/%s" % (dev, rel), "source": "usb", "name": rel,
                           "device": dev, "size": st.st_size, "mtime": int(st.st_mtime)})
-    return {"files": files, "usb": mounts, "upload_dir": UPLOAD_DIR, "slots": slots_info()}
+    for f in files:
+        f.update(file_identity(f["id"], f["size"], f["mtime"]))
+    return {"files": files, "usb": mounts, "upload_dir": UPLOAD_DIR,
+            "slots": slots_info(may_mount=True)}
 
 
 def resolve(file_id):
@@ -325,17 +419,67 @@ def describe(path):
             raise invalid("INVALID_IMAGE", "the %s chunk chain does not match its record" % kind)
         if len(chunks) != (rec["size"] + CHUNK - 1) // CHUNK:
             raise invalid("INVALID_IMAGE", "the %s chunk count does not match its size" % kind)
+    build = _build_record(path, members, payload_dir)
     kname, arch = uimage_name(_member_head(path, chunk_names(members, payload_dir,
                                                          upd["images"]["kernel"]["name"])[0][2]))
     return {"version": upd["version"], "images": upd["images"], "payload_dir": payload_dir,
             "members": members, "kernel_name": kname, "kernel_arch": arch,
-            "system": system_kind(kname)}
+            "system": system_kind(kname), "build": build}
+
+
+def _build_record(path, members, payload_dir):
+    """{"build", "date"} from a NebulaOS .img's build record, else {}."""
+    member = "%s/%s" % (payload_dir, BUILD_RECORD)
+    if member not in members:
+        return {}
+    rc, out, _ = _7za(["x", "-so", path, member], 120)
+    try:
+        rec = json.loads(out) if rc == 0 else {}
+        head = str(rec.get("firmware_head") or "")
+    except (ValueError, AttributeError):
+        return {}
+    if not re.match(r"^[0-9a-f]{7,40}$", head):
+        return {}
+    return {"build": head[:7], "date": str(rec.get("build_date") or "")[:10]}
+
+
+def file_identity(file_id, size, mtime):
+    """{"version"} plus {"build","date"} for a listed .img, from its
+    ota_update.in and build record - cached on id, size and mtime. {} when
+    it cannot be opened (check says why)."""
+    key = "%s|%d|%d" % (file_id, size, mtime)
+    cache, _ = common.read_json(IDENTITY_CACHE)
+    cache = cache if isinstance(cache, dict) else {}
+    files = cache.get("files") if isinstance(cache.get("files"), dict) else {}
+    if key in files:
+        return files[key]
+    ident = {}
+    try:
+        path = resolve(file_id)
+        members = list_members(path)
+        payload_dir, update_in = layout_of(members)
+        rc, out, _ = _7za(["x", "-so", path, update_in], 120)
+        if rc == 0:
+            version = parse_update_in(out)["version"]
+            if version:
+                ident["version"] = version[:40]
+        ident.update(_build_record(path, members, payload_dir))
+    except OsConfigError:
+        return {}
+    files[key] = ident
+    cache["files"] = dict(list(files.items())[-50:])
+    try:
+        os.makedirs(common.RUN_DIR, exist_ok=True)
+        common.atomic_write_json(IDENTITY_CACHE, cache)
+    except Exception:
+        pass
+    return ident
 
 
 def check(file_id):
     path = resolve(file_id)
     info = describe(path)
-    slots = slots_info()
+    slots = slots_info(may_mount=True)
     sizes = {k: _partition_bytes(SLOTS["A"][k]) for k in ("kernel", "rootfs")}
     for kind in ("kernel", "rootfs"):
         if sizes[kind] and info["images"][kind]["size"] > sizes[kind]:
@@ -346,7 +490,8 @@ def check(file_id):
             "rootfs_size": info["images"]["rootfs"]["size"],
             "has_rtos": "rtos" in info["images"], "slots": slots,
             "target": other_slot(slots["running"]),
-            "system": info["system"], "kernel": info["kernel_name"]}
+            "system": info["system"], "kernel": info["kernel_name"],
+            "build": info["build"].get("build"), "date": info["build"].get("date")}
 
 
 # -- partitions ---------------------------------------------------------------------

@@ -79,11 +79,13 @@ for xImage and rootfs.squashfs both. Anything less would let a chunking bug ship
 
 import argparse
 import hashlib
+import json
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "tools", "emmc"))
 import nebulaos_layout as layout  # noqa: E402
@@ -302,6 +304,17 @@ def build(args):
         update_in = "\n".join(records)
         with open(os.path.join(payload_dir, "ota_update.in"), "w", encoding="utf-8") as fh:
             fh.write(update_in)
+
+        # G48: which NebulaOS build this is, for the printer's System image
+        # page (image.py reads it from the package without unpacking). An
+        # extra file: Creality's updater only takes the payloads that
+        # ota_update.in lists.
+        with open(os.path.join(payload_dir, "nebulaos-build.json"), "w", encoding="utf-8") as fh:
+            json.dump({"firmware_head": source_head,
+                       "build_date": time.strftime("%Y-%m-%dT%H:%M:%SZ",
+                                                   time.gmtime(int(args.source_date_epoch))),
+                       "ota_version": version}, fh, sort_keys=True)
+            fh.write("\n")
 
         # The completion marker the updater looks for.
         open(os.path.join(payload_dir, "%s.ok" % inner), "w").close()
