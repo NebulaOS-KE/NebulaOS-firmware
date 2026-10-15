@@ -342,11 +342,41 @@ stabilized_stage2() {
 # so the screen and Mainsail show an update that is not installed. Ask it to
 # re-read the component. Best effort, in the background: the rollback itself
 # is already complete and a refresh may wait on the network.
+#
+# Retried (G51 rest): a Moonraker rollback restarts Moonraker, and a refresh
+# sent while it is down was simply lost - the screen then kept showing the
+# failed version. Up to REFRESH_TRIES attempts, REFRESH_PAUSE s apart, until
+# Moonraker accepts it.
+REFRESH_TRIES="${REFRESH_TRIES:-12}"
+REFRESH_PAUSE="${REFRESH_PAUSE:-15}"
 refresh_update_info() {
 	# $1 = update-manager name (moonraker | klipper | mainsail)
-	( wget -q -O /dev/null --timeout=60 --post-data='' \
-		"$MOONRAKER_URL/machine/update/refresh?name=$1" 2>/dev/null & ) 2>/dev/null
-	log "$1: asked Moonraker's update manager to refresh after the rollback"
+	(
+		_t=0
+		while [ "$_t" -lt "$REFRESH_TRIES" ]; do
+			_t=$((_t + 1))
+			if wget -q -O /dev/null --timeout=180 --post-data='' \
+				"$MOONRAKER_URL/machine/update/refresh?name=$1" 2>/dev/null; then
+				log "$1: Moonraker's update manager refreshed (attempt $_t)"
+				exit 0
+			fi
+			sleep "$REFRESH_PAUSE"
+		done
+		log "$1: Moonraker's update manager could not be refreshed ($REFRESH_TRIES attempts)"
+	) >/dev/null 2>&1 &
+	log "$1: asking Moonraker's update manager to refresh after the rollback"
+}
+
+# G51 rest (2026-10-15): at start-up, a component whose last outcome was a
+# rollback gets its update information refreshed - Moonraker keeps its stored
+# repo state across restarts, and the refresh sent at rollback time may have
+# been lost (power cut, Moonraker restarting).
+reconcile_update_info_on_boot() {
+	for _n in moonraker mainsail; do
+		[ "$(read_state_field "$_n" state)" = "rolled-back" ] && refresh_update_info "$_n"
+	done
+	[ "$(read_stack_field state)" = "rolled-back" ] && refresh_update_info klipper
+	return 0
 }
 
 preserve_failure_evidence() {
@@ -1165,6 +1195,7 @@ loop() {
 	cleanup_stale_staging
 	reconcile_stale_component_locks_on_boot
 	reconcile_klipper_stack_on_boot
+	reconcile_update_info_on_boot
 	while true; do
 		poll_once
 		sleep "$POLL_INTERVAL"
