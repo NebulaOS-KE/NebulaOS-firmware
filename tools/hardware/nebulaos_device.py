@@ -1073,19 +1073,27 @@ DEV_LEFTOVERS = (
 )
 
 
+# dropbear drops the connection for a command longer than MAX_CMD_LEN (9000
+# bytes) - the first version wrote one block per path (~15 KB) and failed
+# that way on ke-dev without removing anything. One loop over the list.
+PURGE_SCRIPT_MAX = 8000
+
+
 def purge_script(paths):
     """Shell text removing exactly `paths`: each must still resolve inside
     /usr/data and not be a mount point; free space before and after."""
     q = shlex.quote
-    lines = ["echo \"DF_BEFORE_KB=$(df -k /usr/data | awk 'NR==2{print $4}')\""]
-    for p in paths:
-        lines.append(
-            "p=%s; if [ ! -e \"$p\" ] && [ ! -L \"$p\" ]; then echo \"ABSENT $p\"; "
-            "else r=$(readlink -f \"$p\"); case \"$r\" in /usr/data/?*) "
-            "if grep -q \" $r \" /proc/mounts; then echo \"SKIPPED_MOUNTPOINT $p\"; "
-            "else k=$(du -sk \"$p\" 2>/dev/null | cut -f1); rm -rf -- \"$p\"; "
-            "if [ -e \"$p\" ]; then echo \"FAILED $p\"; else echo \"REMOVED ${k}KB $p\"; fi; fi ;; "
-            "*) echo \"SKIPPED_OUTSIDE $p -> $r\" ;; esac; fi" % q(p))
-    lines.append("sync; echo \"DF_AFTER_KB=$(df -k /usr/data | awk 'NR==2{print $4}')\"")
-    return "; ".join(lines)
-
+    body = (
+        "echo \"DF_BEFORE_KB=$(df -k /usr/data | awk 'NR==2{print $4}')\"; "
+        "for p in %s; do "
+        "if [ ! -e \"$p\" ] && [ ! -L \"$p\" ]; then echo \"ABSENT $p\"; continue; fi; "
+        "r=$(readlink -f \"$p\"); "
+        "case \"$r\" in /usr/data/?*) ;; *) echo \"SKIPPED_OUTSIDE $p -> $r\"; continue ;; esac; "
+        "if grep -q \" $r \" /proc/mounts; then echo \"SKIPPED_MOUNTPOINT $p\"; continue; fi; "
+        "k=$(du -sk \"$p\" 2>/dev/null | cut -f1); rm -rf -- \"$p\"; "
+        "if [ -e \"$p\" ]; then echo \"FAILED $p\"; else echo \"REMOVED ${k}KB $p\"; fi; "
+        "done; sync; echo \"DF_AFTER_KB=$(df -k /usr/data | awk 'NR==2{print $4}')\""
+        % " ".join(q(p) for p in paths))
+    if len(body) > PURGE_SCRIPT_MAX:
+        raise DeviceError("purge script is %d bytes, above the SSH command limit" % len(body))
+    return body

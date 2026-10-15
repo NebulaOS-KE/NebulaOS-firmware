@@ -55,6 +55,10 @@ class PurgeTests(unittest.TestCase):
         finally:
             shutil.rmtree(root, ignore_errors=True)
 
+    def test_script_fits_the_ssh_command_limit(self):
+        # dropbear MAX_CMD_LEN is 9000; the first version was ~15 KB and was cut off
+        self.assertLess(len(device.purge_script(device.DEV_LEFTOVERS)), 8000)
+
     def test_launcher_and_agent_agree(self):
         here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         launcher = open(os.path.join(here, "tools", "workspace-control", "scripts", "run-nebulaos-hardware.sh")).read()
