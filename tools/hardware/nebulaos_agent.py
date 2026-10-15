@@ -626,6 +626,41 @@ def op_reboot(args):
                        "was written; check it with `diagnose`." % (REBOOT_BACK_TIMEOUT, last))
 
 
+PURGE_CONFIRM_WORD = "PURGE_CONFIRM=DEV-LEFTOVERS"
+
+
+def op_purge_dev_leftovers(args):
+    """Remove the fixed list of development leftovers (nebulaos_device.
+    DEV_LEFTOVERS) from a running, idle NebulaOS printer's data partition.
+    Approved by the human 2026-10-15. Nothing is taken from the command line;
+    every path is re-checked on the printer (inside /usr/data, no mount point)."""
+    if args.confirm != PURGE_CONFIRM_WORD:
+        raise AgentRefusal("purge not confirmed (expected %s)" % PURGE_CONFIRM_WORD)
+    profile, _, _ = prove_preconditions(
+        args.device, None, None, None, args.control_commit, destructive=False)
+    with journal.HostLock(args.device):
+        txn = journal.Transaction.open(args.device)
+        if txn is not None and txn.state not in journal.TERMINAL_STATES:
+            raise AgentRefusal("an install transaction is open (state %s)" % txn.state)
+        session, which, address = _connect_matching(profile, (device.OS_NEBULAOS,))
+        try:
+            if session.which_os() != device.OS_NEBULAOS:
+                raise AgentRefusal("the printer is not running NebulaOS")
+            idle = session.idle_state()
+            say(idle.describe())
+            if not idle.is_idle():
+                raise AgentRefusal("purge needs a proven idle printer: %s" % idle.why_not_idle())
+            say("PURGE_TARGET=%s@%s" % (which, address))
+            say("PURGE_PATHS=%d" % len(device.DEV_LEFTOVERS))
+            out = session.purge_dev_leftovers()
+            say(out.rstrip())
+            failed = [l for l in out.splitlines() if l.startswith(("FAILED", "SKIPPED"))]
+            say("RUN_NEBULAOS_HARDWARE=%s" % ("PURGE_COMPLETE" if not failed else "PURGE_INCOMPLETE"))
+            return 0 if not failed else 1
+        finally:
+            session.close()
+
+
 def op_rtos_logo(args):
     """Write the pinned NebulaOS RTOS image (stock zero.bin + the NebulaOS boot
     logo) to rtos2, after a verified host backup of the whole partition. Never
@@ -881,6 +916,7 @@ def main(argv):
     sub.add_parser("restart").add_argument("service")
     sub.add_parser("reboot").add_argument("confirm", nargs="?", default=None)
     sub.add_parser("rtos-logo").add_argument("confirm", nargs="?", default=None)
+    sub.add_parser("purge-dev-leftovers").add_argument("confirm", nargs="?", default=None)
     p = sub.add_parser("rtos-logo-restore")
     p.add_argument("backup_sha")
     p.add_argument("confirm", nargs="?", default=None)
@@ -895,6 +931,7 @@ def main(argv):
                "capture": op_capture, "exercise": op_exercise,
                "restart": op_restart, "reboot": op_reboot,
                "rtos-logo": op_rtos_logo, "rtos-logo-restore": op_rtos_logo_restore,
+               "purge-dev-leftovers": op_purge_dev_leftovers,
                "verify": op_verify, "install": op_install}[args.op]
     try:
         return handler(args)

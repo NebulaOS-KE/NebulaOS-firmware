@@ -36,6 +36,7 @@
 #   run-nebulaos-hardware.sh --device <id> --control <C> reboot REBOOT_CONFIRM=NEBULAOS
 #   run-nebulaos-hardware.sh --device <id> --control <C> rtos-logo RTOS_LOGO_CONFIRM=RTOS2
 #   run-nebulaos-hardware.sh --device <id> --control <C> rtos-logo-restore <backup-sha256> RTOS_RESTORE_CONFIRM=RTOS2
+#   run-nebulaos-hardware.sh --device <id> --control <C> purge-dev-leftovers PURGE_CONFIRM=DEV-LEFTOVERS
 #   run-nebulaos-hardware.sh --device <id> --control <C> verify  <X> <ximage-sha256> <rootfs-sha256>
 #   run-nebulaos-hardware.sh --device <id> --control <C> install <X> <ximage-sha256> <rootfs-sha256>
 #
@@ -163,6 +164,11 @@ case "$OP" in
     # The NebulaOS boot logo into rtos2 (p4) only; backup first, read-back after.
     [ "$#" -eq 2 ] && [ "$2" = "RTOS_LOGO_CONFIRM=RTOS2" ] \
       || die "'rtos-logo' requires exactly the confirmation word RTOS_LOGO_CONFIRM=RTOS2" ;;
+  purge-dev-leftovers)
+    # 2026-10-15: removes the agent's FIXED list of development leftovers
+    # from an idle NebulaOS printer's data partition. Nothing else.
+    [ "$#" -eq 2 ] && [ "$2" = "PURGE_CONFIRM=DEV-LEFTOVERS" ] \
+      || die "'purge-dev-leftovers' requires exactly the confirmation word PURGE_CONFIRM=DEV-LEFTOVERS" ;;
   rtos-logo-restore)
     [ "$#" -eq 3 ] || die "'rtos-logo-restore' requires <backup-sha256> RTOS_RESTORE_CONFIRM=RTOS2"
     is_hex "$2" 64 || die "the backup sha256 must be 64 lowercase hex characters"
@@ -173,9 +179,9 @@ case "$OP" in
     is_hex "$2" 40 || die "source-head must be a full 40-character lowercase hex SHA"
     is_hex "$3" 64 || die "ximage-sha256 must be 64 lowercase hex characters"
     is_hex "$4" 64 || die "rootfs-sha256 must be 64 lowercase hex characters" ;;
-  *) die "unknown operation '${OP:-}'. The Hardware Agent has exactly eleven:
+  *) die "unknown operation '${OP:-}'. The Hardware Agent has exactly twelve:
        inspect  status  diagnose  capture  exercise  restart  reboot  rtos-logo
-       rtos-logo-restore  verify  install
+       rtos-logo-restore  purge-dev-leftovers  verify  install
        Motion, heating, extrusion, calibration and MCU flashing are Part 2 and have no
        operation here." ;;
 esac

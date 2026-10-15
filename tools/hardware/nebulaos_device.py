@@ -677,6 +677,13 @@ class SshDeviceSession(DeviceSession):
         rc, out, _ = self._run("cat /proc/sys/kernel/random/boot_id 2>/dev/null")
         return out.strip() if rc == 0 else ""
 
+    def purge_dev_leftovers(self):
+        """-> output lines of removing DEV_LEFTOVERS (fixed list)."""
+        rc, out, err = self._run(purge_script(DEV_LEFTOVERS), timeout=600)
+        if rc != 0:
+            raise DeviceError("purge failed: %s" % (err.strip() or out.strip())[-300:])
+        return out
+
     def boot_progress(self):
         rc, out, _ = self._run(
             "L=/run/nebulaos-boot-scripts.log; if [ -e $L ]; then "
@@ -1017,4 +1024,68 @@ def wait_for_boot_done(session, say, sleep, now, timeout=BOOT_DONE_TIMEOUT):
             say("BOOT_FINISHED=TIMEOUT (%s after %d s) - checking anyway" % (state, timeout))
             return "timeout"
         sleep(5)
+
+
+# 2026-10-15 (human approval, list A): development leftovers on ke-dev's data
+# partition - old build staging folders, an August clean-reset backup, old app
+# copies, dev tools and loose files. A FIXED list: nothing here is taken from
+# the command line. Never the running NebulaOS, the Hardware Agent's staging,
+# or anything of the system in slot A (creality/, printer_data/, helper-script/,
+# opt/, moonraker/, mainsail/, guppyscreen/, swap, wpa_supplicant.conf).
+DEV_LEFTOVERS = (
+    "/usr/data/prtouch-sensor-guard-flash-20260811",
+    "/usr/data/nebulaos-candidate-staging",
+    "/usr/data/phase2-axis-twist-staging",
+    "/usr/data/candidate002-flash",
+    "/usr/data/candidate002-stock-flash",
+    "/usr/data/nebulaos-hwqual",
+    "/usr/data/rc5-final-build-staging",
+    "/usr/data/online-release-artifacts",
+    "/usr/data/final-software-closure-artifacts",
+    "/usr/data/rc4-flash",
+    "/usr/data/phase2-rc3-flash-20260906",
+    "/usr/data/deploy-staging",
+    "/usr/data/phase1.9a-stage",
+    "/usr/data/pre-flash-backup-phase15",
+    "/usr/data/nebulaos/factory-clean-backups/20260821T082338Z",
+    "/usr/data/nebulaos/apps/moonraker.pre-recovery.20260909-144824",
+    "/usr/data/nebulaos/apps/mainsail.pre-recovery.20260909-144522",
+    "/usr/data/nebulaos/apps/mainsail.pre-recovery.20260909-144344",
+    "/usr/data/nebulaos/apps/mainsail.pre-recovery.20260909-144018",
+    "/usr/data/nebulaos/apps/mainsail.pre-recovery.20260909-144002",
+    "/usr/data/nebulaos/apps/nebulaos-klipper-extensions.pre-recovery.20260909-202248",
+    "/usr/data/nebulaos/apps/nebulaos-klipper-extensions.pre-recovery.20260909-145027",
+    "/usr/data/fbpattern",
+    "/usr/data/fbcapture",
+    "/usr/data/fbrefresh",
+    "/usr/data/inputdiag",
+    "/usr/data/simpleaf-config-deploy.tar",
+    "/usr/data/simpleaf-fix2.tar",
+    "/usr/data/simpleaf-fix3.tar",
+    "/usr/data/flash.log",
+    "/usr/data/flash2.log",
+    "/usr/data/wifi-125-test-diagnostics.log",
+    "/usr/data/printer.cfg.pre-save-config-test-backup",
+    "/usr/data/printer.cfg.pre-qualified-defaults-backup",
+    "/usr/data/printer.cfg.pre-140c-fix-backup-20260903_173533",
+    "/usr/data/nebulaos-tools-backup-printer.cfg",
+    "/usr/data/nebulaos/printer_data/config/ChatGPT Image Oct 15, 2026, 11_00_46 PM.png",
+)
+
+
+def purge_script(paths):
+    """Shell text removing exactly `paths`: each must still resolve inside
+    /usr/data and not be a mount point; free space before and after."""
+    q = shlex.quote
+    lines = ["echo \"DF_BEFORE_KB=$(df -k /usr/data | awk 'NR==2{print $4}')\""]
+    for p in paths:
+        lines.append(
+            "p=%s; if [ ! -e \"$p\" ] && [ ! -L \"$p\" ]; then echo \"ABSENT $p\"; "
+            "else r=$(readlink -f \"$p\"); case \"$r\" in /usr/data/?*) "
+            "if grep -q \" $r \" /proc/mounts; then echo \"SKIPPED_MOUNTPOINT $p\"; "
+            "else k=$(du -sk \"$p\" 2>/dev/null | cut -f1); rm -rf -- \"$p\"; "
+            "if [ -e \"$p\" ]; then echo \"FAILED $p\"; else echo \"REMOVED ${k}KB $p\"; fi; fi ;; "
+            "*) echo \"SKIPPED_OUTSIDE $p -> $r\" ;; esac; fi" % q(p))
+    lines.append("sync; echo \"DF_AFTER_KB=$(df -k /usr/data | awk 'NR==2{print $4}')\"")
+    return "; ".join(lines)
 
