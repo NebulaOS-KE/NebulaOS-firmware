@@ -115,9 +115,9 @@ def classify(data):
         return PACKED, None
     if window[4:5] == b"_" and window[8:9] == b"_":
         board = window[0:4].decode("ascii", "replace")
-        return None, "Creality firmware for another board (%r, this one is %r)" % (
+        return None, "firmware for another mainboard (%r, this one is %r)" % (
             board, PACK_TYPE)
-    return None, ("not firmware for this printer's mainboard (no Creality header "
+    return None, ("not firmware for this printer's mainboard (no vendor header "
                   "and no NebulaOS placeholder at 0x200)")
 
 

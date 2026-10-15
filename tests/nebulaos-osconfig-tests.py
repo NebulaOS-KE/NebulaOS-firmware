@@ -1041,8 +1041,8 @@ class McuImageTests(unittest.TestCase):
         cases = {
             b"": "empty", b"\x00" * 100: "too small",
             bytes(p) + b"\x00" * 70000: "too large",
-            bytes(bad_crc): "damaged", bytes(other_board): "another board",
-            bytes(no_header): "no Creality header", bytes(wrong_slot): "mainboard",
+            bytes(bad_crc): "damaged", bytes(other_board): "another mainboard",
+            bytes(no_header): "no vendor header", bytes(wrong_slot): "mainboard",
         }
         for data, why in cases.items():
             kind, reason = self.img.classify(data)
@@ -1103,7 +1103,7 @@ class McuFilesTests(unittest.TestCase):
                                "usb/sda1/firmware/KE.BIN"])
         junk, raw, usb = out["files"]
         self.assertFalse(junk["valid"])
-        self.assertIn("no Creality header", junk["problem"])
+        self.assertIn("no vendor header", junk["problem"])
         self.assertEqual((raw["valid"], raw["kind"], raw["native"]), (True, "raw", False))
         self.assertEqual((usb["valid"], usb["kind"], usb["native"], usb["source"]),
                          (True, "packed", True, "usb"))
@@ -1332,9 +1332,9 @@ class McuVersionTests(unittest.TestCase):
         self.assertIsNone(note(dict(old, native=True), "v0.13.0-742-g01a9c2f92"))
         # G35: Creality's own MCU firmware is accepted, with a plain warning.
         stock = dict(ok, klipper_version="38d96adc-dirty-20231016_135251-longer-virtual-machine")
-        self.assertIn("Creality's own firmware", note(stock, "v0.13.0-742-g01a9c2f92"))
+        self.assertIn("the original MCU firmware", note(stock, "v0.13.0-742-g01a9c2f92"))
         other = dict(ok, klipper_version="12345678-20240101_000000-longer-virtual-machine")
-        self.assertIn("Creality's own firmware", note(other, "v0.13.0-742-g01a9c2f92"))
+        self.assertIn("the original MCU firmware", note(other, "v0.13.0-742-g01a9c2f92"))
 
 
 FAKE_7ZA = r"""#!/usr/bin/env python3

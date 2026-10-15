@@ -146,8 +146,8 @@ def _version_note(entry, builtin_version):
     if _creality_build(entry.get("klipper_version")):
         # G35 (2026-10-14): accepted - going back to Creality's firmware needs
         # it - but said plainly.
-        return ("Creality's own firmware: NebulaOS's Klipper cannot use it. Only for going "
-                "back to Creality's firmware; Reinstall NebulaOS firmware undoes it")
+        return ("the original MCU firmware: NebulaOS's Klipper cannot use it. Only for going "
+                "back to the other system; Reinstall built-in MCU firmware undoes it")
     if theirs is None:
         return "Klipper version unknown - Klipper may not be able to use the board"
     if mine and theirs != mine:
@@ -233,7 +233,7 @@ def list_files():
     builtin = None
     if native:
         builtin = {"id": "builtin/" + os.path.basename(BUILTIN), "source": "builtin",
-                   "name": "NebulaOS firmware", "sha256": native, "native": True,
+                   "name": "Built-in MCU firmware (NebulaOS)", "sha256": native, "native": True,
                    "size": os.path.getsize(BUILTIN), "valid": True, "kind": "packed",
                    "problem": None, "klipper_version": builtin_version,
                    "version_note": None}
@@ -311,6 +311,7 @@ def flash(file_id, expected_sha):
         log = (out + err)[-3000:]
         record = {"file": file_id, "sha256": expected_sha, "image_sha256": img.sha256(image),
                   "kind": kind, "time": int(started), "seconds": int(time.time() - started),
+                  "klipper_version": img.klipper_version(image),
                   "ok": rc == 0}
         try:
             os.unlink(staged)
