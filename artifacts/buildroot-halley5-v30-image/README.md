@@ -21,22 +21,22 @@ described the current configuration. It does not.
 
 ## When these were recorded
 
-From `build-manifest.txt`:
+From `build-manifest.txt` (G18, 2026-10-15: refreshed from a DEV build; the
+previous record was from 2026-10-03, kernel 066394b, and still showed the
+Ingenic kernel boot logo that kernel d3cdc47 removed):
 
 ```
-built_at         = 2026-08-28T21:31:56Z
-git_commit_main  = 85814b604a6857669d287df72669cc7629896497
-git_commit_kernel= 295b7101d751fd888ae39e6f1746a4a940664a5f
+built_at          = 2026-10-15T17:41:05Z
+git_commit_main   = 832a10d67072faa96bde53e04fc61dbcb49fec9a
+git_commit_kernel = d3cdc473e309cf1eb0e0fd4978e1673747adc02d
 ```
 
-That build **predates the Phase 1.9A/1.9B host-MCU accelerometer and EEPROM bus
-work.** So `kernel.config` here shows `CONFIG_SPI_GPIO`, `CONFIG_EEPROM_AT24` and
-`CONFIG_I2C_CHARDEV` all unset, which is *not* what current source builds. The
-current expected state is `CONFIG_SPI_GPIO=y` and `CONFIG_EEPROM_AT24=y` with
-`CONFIG_I2C_CHARDEV` deliberately not selected — see the
-`NEBULAOS_ACCELEROMETER_EEPROM_BUS_ENABLE_VARIANT` block in
-`halley5-nebulaos-fragment.config`, `scripts/build/accelerometer-eeprom-bus-enable-variant.sh`,
-and the assertions in `scripts/build/assert-baseline-config.sh`.
+That build includes the Phase 1.9A/1.9B host-MCU accelerometer and EEPROM bus
+work: `CONFIG_SPI_GPIO=y`, `CONFIG_EEPROM_AT24=y`, `CONFIG_I2C_CHARDEV` not
+set - see the `NEBULAOS_ACCELEROMETER_EEPROM_BUS_ENABLE_VARIANT` block in
+`halley5-nebulaos-fragment.config` and `scripts/build/assert-baseline-config.sh`.
+It is still one past build's output: a later source change is not reflected
+here until the next refresh.
 
 **Do not hand-edit `kernel.config` to make it agree.** It is generated; the next
 build overwrites it. If it looks wrong, that means no build has run since the
