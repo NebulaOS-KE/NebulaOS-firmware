@@ -99,6 +99,14 @@ Here's the actual procedure, including a couple of gotchas we hit doing this for
    instructions.
 2. Optional sanity check: `lsusb`, look for `ID a108:eaef Ingenic Semiconductor Co.,Ltd Ingenic USB
    BOOT DEVICE`.
+**Install over USB (2026-10-15):** `tools/recovery/nebulaos-usb.py` writes one slot's kernel and rootfs
+from an attested build and points the marker at it - `sudo python3 tools/recovery/nebulaos-usb.py flash B
+--build /var/tmp/nebulaos-build/<sha>/run-<id>`. It touches only that slot's two partitions and the
+marker (never uboot, sn_mac, rtos or the data partitions), verifies every chunk, reads both partitions
+back whole and compares SHA-256 before switching. Needs the pinned, patched usbboot
+(`_tools/ingenic-usbboot`, manifests/dependencies.conf INGENIC_USBBOOT_*). `marker` and `set-slot A|B`
+do the marker alone. This is the backbone of the planned cross-platform flasher.
+
 **Shortcut (2026-10-14):** steps 3 and 4 are scripted, idempotent and verified in
 `tools/recovery/usb-set-boot-slot.sh` - `sudo sh tools/recovery/usb-set-boot-slot.sh A` (or `B`). It
 reads the real marker bytes, swaps only when needed, reads them back, and ends with `RESULT=OK` or

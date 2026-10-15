@@ -28,7 +28,7 @@ case "$want" in
 	B) want_marker="ota:kernel2" ;;
 	*) echo "usage: sudo sh $0 A|B   (A = slot A / Creality's original slot, B = slot B)" >&2; exit 64 ;;
 esac
-USBBOOT="${USBBOOT:-${SUDO_USER:+$(getent passwd "$SUDO_USER" | cut -d: -f6)}/ingenic-usbboot/usbboot}"
+USBBOOT="${USBBOOT:-$(cd "$(dirname "$0")/../../.." && pwd)/_tools/ingenic-usbboot/usbboot}"
 [ -x "$USBBOOT" ] || { echo "usbboot not found at '$USBBOOT' (set USBBOOT=/path/to/usbboot)"; exit 1; }
 cd "$(dirname "$USBBOOT")" || exit 1        # usbboot loads spl.bin/uboot.bin from here
 OUT=$(mktemp -d) || exit 1
@@ -42,6 +42,12 @@ load_uboot() {
 	if "$USBBOOT" --uboot > "$OUT/uboot.log" 2>&1; then
 		UBOOT_LOADED=1
 		sleep 1
+		return 0
+	fi
+	# Already running from an earlier call in this power cycle? A marker read
+	# only works with u-boot up.
+	if "$USBBOOT" -o 0x100000 -s 0x1000 --dump-partition "$OUT/probe" > /dev/null 2>&1 && [ -s "$OUT/probe" ]; then
+		UBOOT_LOADED=1
 		return 0
 	fi
 	echo "u-boot could not be loaded - is the Pad in USB recovery mode (lsusb: a108:eaef)?"
