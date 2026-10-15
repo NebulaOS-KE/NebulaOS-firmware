@@ -28,7 +28,7 @@
 import json
 import sys
 
-from . import bootdisplay, common, display, mcu, network, system, wifi
+from . import bootdisplay, common, display, image, mcu, network, system, wifi
 
 
 def _opts(args, allowed):

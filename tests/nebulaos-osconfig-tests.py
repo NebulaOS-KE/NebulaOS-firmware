@@ -1465,6 +1465,25 @@ class ImageTests(unittest.TestCase):
         self.assertEqual((c["system"], c["kernel"]), ("nebulaos", "Linux-6.6.157-rt79"))
         self.assertEqual(len(c["sha256"]), 64)
 
+    def test_cli_entry_point(self):
+        # ke-dev 2026-10-15: cli.py never imported the image module, so every
+        # machine.nebulaos.image.* call failed with NameError on the printer
+        # while the module-level tests passed. Go through the real entry point.
+        self.package()
+        out = io.StringIO()
+        old = sys.stdout
+        for argv, key in ((["image", "list"], "files"), (["image", "status"], "slots"),
+                          (["image", "check", "--file", "upload/nebula.img"], "sha256")):
+            sys.stdout = out = io.StringIO()
+            try:
+                rc = self.e.cli.main(argv)
+            finally:
+                sys.stdout = old
+            reply = json.loads(out.getvalue().splitlines()[-1])
+            self.assertEqual(rc, 0, out.getvalue())
+            self.assertTrue(reply.get("ok"), reply)
+            self.assertIn(key, reply)
+
     def test_bad_packages_refused(self):
         archive, _, _ = self.package()
         open(archive, "w").write(os.path.join(self.e.tmp, "nowhere"))

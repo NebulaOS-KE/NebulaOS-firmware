@@ -337,6 +337,18 @@ stabilized_stage2() {
 # Preserves the failed commit + relevant logs under backups/<name>/failed-*
 # per the mission's own "never silently discard evidence" requirement -
 # never overwrites a previous failed-<timestamp> directory.
+# G51 (2026-10-15): after a rollback, Moonraker's update manager still
+# reports the failed version (its stored repo state) until the next refresh,
+# so the screen and Mainsail show an update that is not installed. Ask it to
+# re-read the component. Best effort, in the background: the rollback itself
+# is already complete and a refresh may wait on the network.
+refresh_update_info() {
+	# $1 = update-manager name (moonraker | klipper | mainsail)
+	( wget -q -O /dev/null --timeout=60 --post-data='' \
+		"$MOONRAKER_URL/machine/update/refresh?name=$1" 2>/dev/null & ) 2>/dev/null
+	log "$1: asked Moonraker's update manager to refresh after the rollback"
+}
+
 preserve_failure_evidence() {
 	# $1=component $2=failed_commit $3=reason
 	name="$1"; failed_commit="$2"; reason="$3"
@@ -550,6 +562,7 @@ validate_mainsail() {
 	if "$HEALTHCHECK" stage1 "$name" "$path" && stabilized_stage2_mainsail; then
 		log "$name: restored backup re-validated healthy"
 		write_state "$name" "$known_good" "$known_good" "rolled-back" "${reason}:$new_version"
+		refresh_update_info "$name"
 		rm -f "$LOCKDIR/$name.lock"
 	else
 		preserve_failure_evidence "$name" "$known_good" "stage2_failed_after_restore"
@@ -801,6 +814,7 @@ stack_roll_back() {
 		# would see current != last_seen, mistake an already-failed-over
 		# state for a fresh update, and re-trigger validation.
 		write_stack_state "$kg_k" "$kg_e" "$kg_k" "$kg_e" "rolled-back" "$reason"
+		refresh_update_info klipper
 		rm -f "$LOCKDIR/$STACK_NAME.lock"
 	else
 		preserve_failure_evidence "$KLIPPER_APP" "$kg_k" "stage2_failed_after_pair_rollback"
@@ -977,6 +991,7 @@ validate_component() {
 		if stabilized_stage2; then
 			log "$name: reverted version re-validated healthy"
 			write_state "$name" "$known_good" "$known_good" "rolled-back" "stage1_failed:$new_commit"
+			refresh_update_info "$name"
 			rm -f "$LOCKDIR/$name.lock"
 		else
 			preserve_failure_evidence "$name" "$known_good" "stage2_failed_after_stage1_rollback"
@@ -1024,6 +1039,7 @@ validate_component() {
 	if stabilized_stage2; then
 		log "$name: reverted version re-validated healthy"
 		write_state "$name" "$known_good" "$known_good" "rolled-back" "stage2_failed:$new_commit"
+		refresh_update_info "$name"
 		rm -f "$LOCKDIR/$name.lock"
 	else
 		preserve_failure_evidence "$name" "$known_good" "stage2_failed_after_stage2_rollback"
