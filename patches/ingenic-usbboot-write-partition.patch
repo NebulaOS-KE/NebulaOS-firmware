@@ -1,5 +1,5 @@
 diff --git a/usbboot.c b/usbboot.c
-index 8e10188..48bd8a7 100644
+index 8e10188..7a30dd8 100644
 --- a/usbboot.c
 +++ b/usbboot.c
 @@ -22,6 +22,10 @@
@@ -29,7 +29,7 @@ index 8e10188..48bd8a7 100644
 +            verbose("Issue " #type fmt " (attempt %d)", param, attempt + 1); \
 +            ret = libusb_control_transfer(g_usb_dev, \
 +                LIBUSB_ENDPOINT_OUT|LIBUSB_REQUEST_TYPE_VENDOR|LIBUSB_RECIPIENT_DEVICE, \
-+                VR_##type, param >> 16, param & 0xffff, NULL, 0, 1000); \
++                VR_##type, param >> 16, param & 0xffff, NULL, 0, 10000); \
 +            if (ret == 0) \
 +                return; \
 +            if (ret != LIBUSB_ERROR_TIMEOUT) \
@@ -62,7 +62,7 @@ index 8e10188..48bd8a7 100644
 +    verbose("Issue 0x%x (attempt %d)", op, attempt + 1);
 +    ret = libusb_control_transfer(g_usb_dev,
 +				  LIBUSB_ENDPOINT_OUT|LIBUSB_REQUEST_TYPE_VENDOR|LIBUSB_RECIPIENT_DEVICE,
-+				  op, param >> 16, param & 0xffff, data, len, 1000);
++				  op, param >> 16, param & 0xffff, data, len, 10000);
 +    if (ret == len)
 +      return;
 +    if (ret != LIBUSB_ERROR_TIMEOUT)
@@ -73,7 +73,7 @@ index 8e10188..48bd8a7 100644
  }
  
  void jz_download(const char* filename)
-@@ -414,6 +440,82 @@ void mmc_write(uint32_t offset, uint32_t length, unsigned char* in) {
+@@ -414,6 +440,85 @@ void mmc_write(uint32_t offset, uint32_t length, unsigned char* in) {
    bulk_transfer_out(in, length);
  }
  
@@ -107,7 +107,10 @@ index 8e10188..48bd8a7 100644
 +
 +  printf("writing partition at offset 0x%x, size 0x%x (with per-chunk read-back verification)\n", offset, length);
 +
-+  uint32_t chunk_size = 1024 * 1024 * 2; // 2mb, same as mmc_read_partition
++  // 1 MB, not 2: each chunk is written to eMMC (~0.5 s) before the device
++  // takes the next command. With 2 MB chunks and 1 s control timeouts the
++  // next request timed out on ke-dev (2026-10-15) and left the device stuck.
++  uint32_t chunk_size = 1024 * 1024;
 +  unsigned char *write_chunk = malloc(chunk_size);
 +  unsigned char *verify_chunk = malloc(chunk_size);
 +  if (write_chunk == NULL || verify_chunk == NULL)
@@ -156,7 +159,7 @@ index 8e10188..48bd8a7 100644
  void swap_ota_partition(bool force) {
    ensure_usb();
    enable_mmc();
-@@ -536,6 +638,10 @@ Advanced options:\n\
+@@ -536,6 +641,10 @@ Advanced options:\n\
    --flush-caches     Flush device CPU caches\n\
    --renumerate       Close and re-open the USB device\n\
    --wait <time>      Wait for <time> seconds\n\
@@ -167,7 +170,7 @@ index 8e10188..48bd8a7 100644
    -v, --verbose      Be verbose\n\
  \n\
  Known CPU types and default stage1/stage2 binary settings:\n");
-@@ -574,7 +680,7 @@ int main(int argc, char* argv[])
+@@ -574,7 +683,7 @@ int main(int argc, char* argv[])
          OPT_CPUINFO,
          OPT_START1, OPT_START2, OPT_FLUSH_CACHES,
          OPT_RENUMERATE, OPT_WAIT, OPT_SWAP_OTA,
@@ -176,7 +179,7 @@ index 8e10188..48bd8a7 100644
      };
  
      static const struct option long_options[] = {
-@@ -598,7 +704,8 @@ int main(int argc, char* argv[])
+@@ -598,7 +707,8 @@ int main(int argc, char* argv[])
          {"wait", required_argument, 0, OPT_WAIT},
          {"swap-ota", no_argument, 0, OPT_SWAP_OTA},
          {"force-swap-ota", no_argument, 0, OPT_FORCE_SWAP_OTA},
@@ -186,7 +189,7 @@ index 8e10188..48bd8a7 100644
          {"help", no_argument, 0, 'h'},
          {"verbose", no_argument, 0, 'v'},
          {0, 0, 0, 0}
-@@ -712,6 +819,13 @@ int main(int argc, char* argv[])
+@@ -712,6 +822,13 @@ int main(int argc, char* argv[])
              verbose("Dump a partition to file");
  	    mmc_read_partition(partition_offset, partition_size, optarg);
              break;
