@@ -43,6 +43,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FW = os.path.dirname(os.path.dirname(HERE))
@@ -134,19 +135,45 @@ class UsbBoot:
                        "next power cycle.\n%s" % p.stdout[-800:])
         self.loaded = True
 
+    # USB transfers to the X2000E time out now and then (libusb -7 seen on
+    # ke-dev 2026-10-15 in the middle of a kernel write). Reads and writes
+    # are idempotent - same bytes, same offset - so a failed one is repeated
+    # whole, up to ATTEMPTS times; every write is still verified per chunk
+    # and the partition read back whole afterwards.
+    ATTEMPTS = int(os.environ.get("NEBULAOS_USB_ATTEMPTS", "4"))
+    PAUSE = float(os.environ.get("NEBULAOS_USB_PAUSE", "3"))
+
+    def _again(self, what, fn):
+        last = None
+        for attempt in range(1, self.ATTEMPTS + 1):
+            try:
+                return fn()
+            except Fail as exc:
+                last = exc
+                if attempt < self.ATTEMPTS:
+                    say("RETRY %s (attempt %d of %d failed: %s)"
+                        % (what, attempt, self.ATTEMPTS, str(exc).splitlines()[0][:120]))
+                    time.sleep(self.PAUSE)
+        raise last
+
     def dump(self, offset, size, path):
-        if os.path.exists(path):
-            os.unlink(path)
-        self.run(["-o", hex(offset), "-s", hex(size), "--dump-partition", path])
-        if not os.path.exists(path) or os.path.getsize(path) != size:
-            raise Fail("reading 0x%x bytes at 0x%x returned no or short data" % (size, offset))
+        def once():
+            if os.path.exists(path):
+                os.unlink(path)
+            self.run(["-o", hex(offset), "-s", hex(size), "--dump-partition", path])
+            if not os.path.exists(path) or os.path.getsize(path) != size:
+                raise Fail("reading 0x%x bytes at 0x%x returned no or short data" % (size, offset))
+        self._again("read at 0x%x" % offset, once)
 
     def write(self, offset, path):
         size = os.path.getsize(path)
-        p = self.run(["-o", hex(offset), "-s", hex(size), "--write-partition", path])
-        if "write complete and verified" not in p.stdout:
-            raise Fail("write at 0x%x did not report a verified completion:\n%s"
-                       % (offset, p.stdout[-800:]))
+
+        def once():
+            p = self.run(["-o", hex(offset), "-s", hex(size), "--write-partition", path])
+            if "write complete and verified" not in p.stdout:
+                raise Fail("write at 0x%x did not report a verified completion:\n%s"
+                           % (offset, p.stdout[-800:]))
+        self._again("write at 0x%x" % offset, once)
 
 
 def sha256(path, length=None):

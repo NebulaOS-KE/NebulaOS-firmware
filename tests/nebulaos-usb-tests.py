@@ -44,6 +44,12 @@ if "--dump-partition" in a:
     open(a[a.index("--dump-partition") + 1], "wb").write(data); sys.exit(0)
 if "--write-partition" in a:
     off, size = opt("-o"), opt("-s")
+    fails = os.path.join(st, "write-fails")
+    n = int(open(fails).read()) if os.path.exists(fails) else int(os.environ.get("FAKE_WRITE_FAILS", "0"))
+    if n > 0:
+        open(fails, "w").write(str(n - 1))
+        print("Request 0x12 failed, only transfered: -7"); sys.exit(1)
+    open(fails, "w").write("0")
     data = open(a[a.index("--write-partition") + 1], "rb").read()
     if len(data) != size:
         print("does not match requested length"); sys.exit(1)
@@ -188,6 +194,24 @@ try:
     open(os.path.join(run, ".nebulaos-build-verified"), "w").write("BUILD_VERIFIED=NO\n")
     rc, out = tool(usb, st, "flash", "A", "--build", run)
     check("unattested build refused", rc == 1 and "BUILD_VERIFIED" in out, out[-300:])
+finally:
+    shutil.rmtree(t, ignore_errors=True)
+
+# 7. a transient USB timeout during a write is retried (ke-dev 2026-10-15)
+t, st, usb, run, xi, rf = setup()
+try:
+    rc, out = tool(usb, st, "flash", "A", "--build", run,
+                   env={"FAKE_WRITE_FAILS": "2", "NEBULAOS_USB_PAUSE": "0"})
+    check("transient write failures are retried", rc == 0 and out.count("RETRY write") == 2
+          and region(st, 0xB00000, len(xi)) == xi and region(st, 0x100000, 12) == b"ota:kernel\n\n", out[-500:])
+finally:
+    shutil.rmtree(t, ignore_errors=True)
+t, st, usb, run, xi, rf = setup()
+try:
+    rc, out = tool(usb, st, "flash", "A", "--build", run,
+                   env={"FAKE_WRITE_FAILS": "9", "NEBULAOS_USB_PAUSE": "0"})
+    check("persistent write failure gives up and never switches", rc == 1
+          and region(st, 0x100000, 13) == b"ota:kernel2\n\n", out[-300:])
 finally:
     shutil.rmtree(t, ignore_errors=True)
 
