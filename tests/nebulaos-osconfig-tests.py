@@ -554,7 +554,8 @@ class FakeWpa(object):
     def _add(self):
         nid = self.next_id
         self.next_id += 1
-        self.nets[nid] = {"ssid": b"", "psk": None, "key_mgmt": "WPA-PSK", "disabled": False}
+        self.nets[nid] = {"ssid": b"", "psk": None, "key_mgmt": "WPA-PSK", "disabled": False,
+                          "priority": 0}
         return nid
 
     def close(self):
@@ -598,6 +599,8 @@ class FakeWpa(object):
                 lines.append("%d\t%s\tany\t%s" % (nid, n["ssid"].decode("utf-8", "replace"), flags))
             return "\n".join(lines) + "\n", None
         if verb == "GET_NETWORK":
+            if len(parts) > 2 and parts[2] == "priority":
+                return "%d" % self.nets[int(parts[1])]["priority"], None
             return self._ssid_out(self.nets[int(parts[1])]["ssid"]), None
         if verb == "ADD_NETWORK":
             return "%d\n" % self._add(), None
@@ -611,6 +614,8 @@ class FakeWpa(object):
                 n["psk"] = parts[3]
             elif parts[2] == "key_mgmt":
                 n["key_mgmt"] = parts[3]
+            elif parts[2] == "priority":
+                n["priority"] = int(parts[3])
             return "OK\n", None
         if verb == "REMOVE_NETWORK":
             self.nets.pop(int(parts[1]), None)
@@ -627,7 +632,7 @@ class FakeWpa(object):
                 n["disabled"] = other != nid
             return "OK\n", lambda: self._try(nid)
         if verb == "SCAN":
-            return "OK\n", lambda: self._event("<3>CTRL-EVENT-SCAN-RESULTS ")
+            return "OK\n", self._scan_done
         if verb == "SCAN_RESULTS":
             lines = ["bssid / frequency / signal level / flags / ssid"]
             for i, (ssid, sig, flags) in enumerate(self.scan):
@@ -637,6 +642,27 @@ class FakeWpa(object):
             self.saves.append({nid: dict(n) for nid, n in self.nets.items()})
             return "OK\n", None
         return "UNKNOWN COMMAND\n", None
+
+    def _scan_done(self):
+        """Like wpa_supplicant after scan results: pick the enabled saved
+        network in range with the highest priority, the strongest signal
+        breaking a tie, and move there if it is not the current one (the
+        fallback seen on ke-dev 2026-10-15, P9)."""
+        self._event("<3>CTRL-EVENT-SCAN-RESULTS ")
+        signal_of = {}
+        for ssid, sig, _ in self.scan:              # the strongest BSS per network
+            signal_of[ssid] = max(sig, signal_of.get(ssid, sig))
+        best = None
+        for nid, n in self.nets.items():
+            ssid = n["ssid"].decode("utf-8", "replace")
+            if n["disabled"] or ssid not in signal_of or ssid not in self.passwords:
+                continue
+            key = (n["priority"], signal_of[ssid])
+            if best is None or key > best[0]:
+                best = (key, nid)
+        if best is not None and best[1] != self.current:
+            self._event("<3>CTRL-EVENT-DISCONNECTED bssid=aa:bb reason=3 locally_generated=1")
+            self._try(best[1])
 
     def _try(self, nid):
         n = self.nets[nid]
@@ -752,6 +778,25 @@ class WifiTests(unittest.TestCase):
         self.assertFalse([c for c in wpa.commands if "pa\"ss" in c or "ss word" in c])
         self.assertTrue(open(self.calls).read().startswith("apply"))   # no udhcpc: full apply
         self.assertEqual(out["address_mode"], "dhcp")
+
+    def test_chosen_network_survives_the_next_scan(self):
+        # P9 on ke-dev (2026-10-15): connected to fsociety, the screen then
+        # scanned, and wpa_supplicant picked the stronger saved network
+        # (Office) again - all saved networks had the same priority. The
+        # network the user chose last must win every later selection.
+        wpa = self.fake({"Home": "secret123", "Cafe": None}, saved=[("Home", "secret123")])
+        out = self.w.connect({"ssid": "Cafe"})
+        self.assertEqual(out["ssid"], "Cafe")
+        self.w.scan()                                  # what the screen does next
+        self.assertEqual(self.w.status()["status"]["ssid"], "Cafe")
+        prio = {n["ssid"]: n["priority"] for n in wpa.saves[-1].values()}
+        self.assertEqual(prio, {b"Home": 0, b"Cafe": 1})     # persisted for the next boot
+        # and back: choosing Home again makes Home the preferred one
+        self.w.connect({"ssid": "Home"})
+        self.w.scan()
+        self.assertEqual(self.w.status()["status"]["ssid"], "Home")
+        prio = {n["ssid"]: n["priority"] for n in wpa.saves[-1].values()}
+        self.assertEqual(prio, {b"Home": 1, b"Cafe": 0})
 
     def test_dhcp_renew_without_link_bounce(self):
         # G20: a running udhcpc is asked to release + renew; no netapply (no

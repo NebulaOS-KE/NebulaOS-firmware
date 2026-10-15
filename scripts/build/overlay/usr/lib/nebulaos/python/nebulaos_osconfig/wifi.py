@@ -416,6 +416,16 @@ def _wrong_key_event(event, target):
     return False
 
 
+def _prefer(ctrl, target):
+    """The network the user chose last wins every later selection: priority 1
+    for it, 0 for every other saved network (P9, 2026-10-15). With equal
+    priorities wpa_supplicant re-picks the strongest saved network after
+    any scan - the screen scans right after connecting - and the printer
+    left the network it had just joined. Bounded on purpose: no counting up."""
+    for n in saved_networks(ctrl):
+        ctrl.request("SET_NETWORK %d priority %d" % (n["id"], 1 if n["id"] == target else 0))
+
+
 def connect(spec):
     raw = validate_ssid(spec.get("ssid"))
     password = spec.get("password")
@@ -476,6 +486,7 @@ def connect(spec):
         if new_id is not None:
             for n in existing:
                 ctrl.request("REMOVE_NETWORK %d" % n["id"])
+        _prefer(ctrl, target)
         ctrl.request("ENABLE_NETWORK all")
         ctrl.ok("SAVE_CONFIG")
         after = wpa_status(ctrl)
