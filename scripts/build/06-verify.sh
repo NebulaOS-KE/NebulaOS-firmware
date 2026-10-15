@@ -1636,6 +1636,7 @@ check /etc/init.d/S99nebulaos-image-trial
 check /etc/init.d/S02nebulaos-early-ssh
 check /usr/bin/7za
 check /usr/lib/python3.12/site-packages/pip/__pip-runner__.py
+check /usr/lib/python3.12/site-packages/pip/_vendor/pyproject_hooks/_in_process/_in_process.py
 check /usr/lib/nebulaos/moonraker/nebulaos.py
 check /opt/moonraker/moonraker/components/nebulaos.py
 check /etc/nebulaos/moonraker/nebulaos.conf

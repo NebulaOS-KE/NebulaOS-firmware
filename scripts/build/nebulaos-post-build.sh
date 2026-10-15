@@ -97,9 +97,19 @@ PIP_BUILD_SRC=$(ls -d "${BUILD_DIR:-$(dirname "$TARGET_DIR")/build}"/python-pip-
 	echo "FATAL: post-build: pip's __pip-runner__.py not found in the Buildroot build tree" >&2
 	exit 1
 }
+# 2026-10-15 (P15 repeat): __pip-runner__.py alone was not enough - pip also
+# starts pip/_vendor/pyproject_hooks/_in_process/_in_process.py by path, and
+# may start others. Ship pip's whole .py source next to the .pyc files.
 for PIP_DIR in "$TARGET_DIR"/usr/lib/python3*/site-packages/pip; do
 	[ -d "$PIP_DIR" ] || continue
-	cp "$PIP_BUILD_SRC/__pip-runner__.py" "$PIP_DIR/__pip-runner__.py"
-	chmod 644 "$PIP_DIR/__pip-runner__.py"
-	echo "== post-build: pip __pip-runner__.py shipped in ${PIP_DIR#$TARGET_DIR} =="
+	( cd "$PIP_BUILD_SRC" && find . -name '*.py' ) | while read -r PIP_PY; do
+		mkdir -p "$PIP_DIR/$(dirname "$PIP_PY")"
+		cp "$PIP_BUILD_SRC/$PIP_PY" "$PIP_DIR/$PIP_PY"
+		chmod 644 "$PIP_DIR/$PIP_PY"
+	done
+	[ -f "$PIP_DIR/_vendor/pyproject_hooks/_in_process/_in_process.py" ] || {
+		echo "FATAL: post-build: pip's _in_process.py did not arrive in ${PIP_DIR#$TARGET_DIR}" >&2
+		exit 1
+	}
+	echo "== post-build: pip .py source shipped in ${PIP_DIR#$TARGET_DIR} =="
 done
