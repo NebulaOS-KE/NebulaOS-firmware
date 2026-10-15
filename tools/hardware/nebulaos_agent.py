@@ -332,7 +332,11 @@ def _say_slot_state(session, profile=None):
     """Report the A/B slot state and, for a NebulaOS printer, the install path
     it would take. Read-only; a probe failure is reported, never fatal."""
     try:
-        state = slots.read_slot_state(session)
+        try:
+            state = slots.read_slot_state(session)
+        except Exception:                         # noqa: BLE001 - G44: one retry
+            time.sleep(5)
+            state = slots.read_slot_state(session)
     except Exception as exc:                      # noqa: BLE001 - informational
         say("SLOT_STATE=UNREADABLE (%s)" % str(exc)[:160])
         return None
@@ -392,6 +396,7 @@ def op_verify(args):
             tried.append("%s: %s" % (address, str(exc)[:120]))
             continue
         try:
+            device.wait_for_boot_done(session, say, time.sleep, time.time)
             _say_slot_state(session)
             result = verifylib.part1_verify(
                 session, artifacts.ximage_sha, artifacts.ximage_size,
@@ -606,6 +611,7 @@ def op_reboot(args):
                     say("BOOT_ID_AFTER=%s" % boot_now)
                     say("REDISCOVERED_AFTER_S=%.0f" % (time.time() - issued))
                     say("DEVICE_UPTIME_AT_REDISCOVERY_S=%s" % out.strip())
+                    device.wait_for_boot_done(session, say, time.sleep, time.time)
                     say("RUN_NEBULAOS_HARDWARE=REBOOT_COMPLETE")
                     return 0
                 last = "boot id unchanged - not rebooted yet"

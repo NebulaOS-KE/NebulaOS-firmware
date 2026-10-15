@@ -158,6 +158,13 @@ class DeviceSession(abc.ABC):
     def boot_id(self):
         """-> an opaque per-boot value. Changes across a reboot; that IS the proof."""
 
+    def boot_progress(self):
+        """-> (state, uptime_s): state "done" once NebulaOS's rcS has run every
+        init script ("EV=done" in /run/nebulaos-boot-scripts.log), "running"
+        before that, "nolog" on a system without that log. Default: done
+        (simulators and other systems have no boot to wait for)."""
+        return "done", None
+
     # --- the marker --------------------------------------------------------
     @abc.abstractmethod
     def read_marker_block(self):
@@ -670,6 +677,19 @@ class SshDeviceSession(DeviceSession):
         rc, out, _ = self._run("cat /proc/sys/kernel/random/boot_id 2>/dev/null")
         return out.strip() if rc == 0 else ""
 
+    def boot_progress(self):
+        rc, out, _ = self._run(
+            "L=/run/nebulaos-boot-scripts.log; if [ -e $L ]; then "
+            "grep -q 'EV=done' $L && echo done || echo running; else echo nolog; fi; "
+            "cut -d' ' -f1 /proc/uptime", timeout=30)
+        lines = out.split()
+        if rc != 0 or len(lines) < 2 or lines[0] not in ("done", "running", "nolog"):
+            return "unknown", None
+        try:
+            return lines[0], float(lines[1])
+        except ValueError:
+            return lines[0], None
+
     # -- marker ------------------------------------------------------------
     def read_marker_block(self):
         target = targets.resolve("ota")
@@ -965,3 +985,36 @@ class SshDeviceSession(DeviceSession):
             except OSError:
                 pass
             self._askpass = None
+
+
+# G54/G44 (2026-10-15): with early SSH a printer answers ~20 s into its boot,
+# long before Klipper, Moonraker and the MCU guard have started - checks run
+# then fail although nothing is wrong (7 false failures after every install),
+# and S50dropbear restarting the early daemon can cut a session (a one-off
+# "cannot read /proc/cmdline"). Wait for the end of the boot first.
+BOOT_DONE_TIMEOUT = 300
+NOLOG_SETTLE_UPTIME = 120
+
+
+def wait_for_boot_done(session, say, sleep, now, timeout=BOOT_DONE_TIMEOUT):
+    """Poll session.boot_progress() until the boot has finished. Never fails:
+    a timeout is reported and the caller goes on (its checks then show what
+    did not come up). -> "done" | "settled" | "timeout"."""
+    deadline = now() + timeout
+    state = uptime = None
+    while True:
+        try:
+            state, uptime = session.boot_progress()
+        except Exception:                         # noqa: BLE001 - keep waiting
+            state, uptime = "unknown", None
+        if state == "done":
+            say("BOOT_FINISHED=YES uptime=%s" % ("%.0f" % uptime if uptime is not None else "?"))
+            return "done"
+        if state == "nolog" and uptime is not None and uptime >= NOLOG_SETTLE_UPTIME:
+            say("BOOT_FINISHED=ASSUMED (no boot log on this system; uptime %.0f s)" % uptime)
+            return "settled"
+        if now() >= deadline:
+            say("BOOT_FINISHED=TIMEOUT (%s after %d s) - checking anyway" % (state, timeout))
+            return "timeout"
+        sleep(5)
+

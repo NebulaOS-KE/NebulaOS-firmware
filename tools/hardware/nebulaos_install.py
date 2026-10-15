@@ -1034,6 +1034,7 @@ class Installer:
                 state=exc.state)
         self._advance(journal.NEBULAOS_RUNNING, "rediscovered as NebulaOS")
         try:
+            device.wait_for_boot_done(session, self._say, self.sleep, self.now)
             try:
                 after = slots.read_slot_state(session)
                 self._say("")
