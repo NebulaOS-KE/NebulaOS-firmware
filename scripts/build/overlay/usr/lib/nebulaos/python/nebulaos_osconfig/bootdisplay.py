@@ -4,7 +4,7 @@
 #   boot/display.json        source of truth (schema 1): mode, image
 #   boot/display.env         MODE= for S01splash (shell)
 #   boot/uploads/            Moonraker root "nebulaos_boot" (GUI uploads here)
-#   boot/custom.png|bmp      validated copy of the selected image
+#   boot/custom.png|bmp|jpg  validated copy of the selected image
 #   boot/cache/splash.raw    framebuffer-native render (derived)
 #   boot/cache/splash.meta   geometry + source identity of the render
 #
@@ -80,7 +80,7 @@ def _persist(cfg):
 
 
 def custom_path():
-    for ext in ("png", "bmp"):
+    for ext in ("png", "bmp", "jpg"):
         path = os.path.join(BOOT_DIR, "custom." + ext)
         if os.path.isfile(path):
             return path
@@ -158,29 +158,33 @@ def validate_image_file(path):
     if not os.path.isfile(path):
         raise invalid("IMAGE_INVALID", "not a regular file")
     if st.st_size > MAX_FILE_BYTES:
-        raise invalid("IMAGE_TOO_LARGE", "image file is larger than %d bytes" % MAX_FILE_BYTES)
+        raise invalid("IMAGE_TOO_LARGE", "the file is larger than %d MB"
+                      % (MAX_FILE_BYTES // (1024 * 1024)))
     with open(path, "rb") as handle:
         head = handle.read(8)
     if head.startswith(_PNG_SIG):
         fmt = "PNG"
     elif head[:2] == b"BM":
         fmt = "BMP"
+    elif head[:3] == b"\xff\xd8\xff":
+        fmt = "JPEG"          # 2026-10-15: phone photos
     else:
-        raise invalid("IMAGE_FORMAT", "only PNG and BMP images are supported")
+        raise invalid("IMAGE_FORMAT", "this file is not a PNG, BMP or JPEG image")
     Image, _, _ = _pil()
     try:
         with Image.open(path) as img:
             if img.format != fmt:
-                raise invalid("IMAGE_FORMAT", "file signature and content disagree")
+                raise invalid("IMAGE_FORMAT", "this file is not a valid %s image" % fmt)
             width, height = img.size
             if width > MAX_DIMENSION or height > MAX_DIMENSION or width < 1 or height < 1:
-                raise invalid("IMAGE_TOO_LARGE", "image must be at most %dx%d"
+                raise invalid("IMAGE_TOO_LARGE", "the image is larger than %d x %d pixels"
                               % (MAX_DIMENSION, MAX_DIMENSION))
             img.load()
     except OsConfigError:
         raise
     except Exception as exc:  # Pillow raises many types, incl. DecompressionBombError
-        raise invalid("IMAGE_INVALID", "image could not be decoded: %s" % exc)
+        raise invalid("IMAGE_INVALID", "the image could not be read (damaged file?)",
+                      detail=str(exc)[:200])
     return fmt, width, height
 
 
@@ -210,6 +214,8 @@ def builtin_image(width, height):
 
 def _fit(img, width, height):
     Image, _, _ = _pil()
+    from PIL import ImageOps
+    img = ImageOps.exif_transpose(img)    # a photo's own "rotate" flag
     img = img.convert("RGB")
     scale = min(float(width) / img.width, float(height) / img.height)
     size = (max(1, int(img.width * scale)), max(1, int(img.height * scale)))
@@ -339,7 +345,7 @@ def status():
             "cache": {"present": os.path.isfile(RAW), "kind": meta.get("KIND"),
                       "geometry": [meta.get("XRES"), meta.get("YRES"), meta.get("BPP")]
                       if meta else None},
-            "formats": ["png", "bmp"], "max_file_bytes": MAX_FILE_BYTES,
+            "formats": ["png", "bmp", "jpeg"], "max_file_bytes": MAX_FILE_BYTES,
             "max_dimension": MAX_DIMENSION}
 
 
@@ -372,11 +378,12 @@ def set_image(filename):
     fmt, width, height = validate_image_file(src)
     with open(src, "rb") as handle:
         data = handle.read(MAX_FILE_BYTES + 1)
-    ext = "png" if fmt == "PNG" else "bmp"
+    ext = {"PNG": "png", "BMP": "bmp", "JPEG": "jpg"}[fmt]
     common.atomic_write(os.path.join(BOOT_DIR, "custom." + ext), data)
-    other = os.path.join(BOOT_DIR, "custom." + ("bmp" if ext == "png" else "png"))
-    if os.path.exists(other):
-        os.unlink(other)
+    for other_ext in ("png", "bmp", "jpg"):
+        other = os.path.join(BOOT_DIR, "custom." + other_ext)
+        if other_ext != ext and os.path.exists(other):
+            os.unlink(other)
     cfg, _ = load_config()
     cfg = dict(cfg, mode="logo", image="custom")
     _persist(cfg)
@@ -388,7 +395,7 @@ def set_image(filename):
 
 
 def reset_image():
-    for ext in ("png", "bmp"):
+    for ext in ("png", "bmp", "jpg"):
         path = os.path.join(BOOT_DIR, "custom." + ext)
         if os.path.exists(path):
             os.unlink(path)

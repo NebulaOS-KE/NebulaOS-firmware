@@ -434,7 +434,17 @@ class BootDisplayTests(unittest.TestCase):
         open(jpg, "wb").write(b"\xff\xd8\xff\xe0" + b"0" * 100)
         with self.assertRaises(self.e.common.OsConfigError) as cm:
             self.b.validate_image_file(jpg)
-        self.assertEqual(cm.exception.code, "IMAGE_FORMAT")
+        self.assertEqual(cm.exception.code, "IMAGE_INVALID")      # a damaged JPEG
+        self.assertIn("damaged", str(cm.exception))
+        # 2026-10-15: real JPEGs (phone photos) are accepted; other formats get a plain message
+        real = os.path.join(self.e.config_root, "photo.jpg")
+        self.Image.new("RGB", (640, 480), (1, 2, 3)).save(real, "JPEG")
+        self.assertEqual(self.b.validate_image_file(real)[0], "JPEG")
+        gif = os.path.join(self.e.config_root, "a.gif")
+        self.Image.new("RGB", (8, 8)).save(gif, "GIF")
+        with self.assertRaises(self.e.common.OsConfigError) as cm:
+            self.b.validate_image_file(gif)
+        self.assertEqual(str(cm.exception), "this file is not a PNG, BMP or JPEG image")
         trunc = os.path.join(self.e.config_root, "t.png")
         open(trunc, "wb").write(open(good, "rb").read()[:40])
         with self.assertRaises(self.e.common.OsConfigError):
@@ -1459,6 +1469,20 @@ class PowerOnLogoTests(unittest.TestCase):
         # reset-image: builtin splash and the NebulaOS power-on logo
         out = self.b.reset_image()
         self.assertEqual((out["config"]["image"], out["power_on"]["logo"]), ("builtin", "nebulaos"))
+
+    def test_phone_jpeg_with_exif_rotation(self):
+        os.makedirs(self.b.UPLOAD_DIR, exist_ok=True)
+        path = os.path.join(self.b.UPLOAD_DIR, "photo.jpg")
+        exif = self.Image.Exif()
+        exif[0x0112] = 6                       # "rotate 90" as phones store it
+        self.Image.new("RGB", (400, 300), (10, 200, 10)).save(path, "JPEG", exif=exif)
+        out = self.b.set_image("photo.jpg")
+        self.assertEqual((out["result"], out["image"]["format"]), ("APPLIED", "JPEG"))
+        self.assertTrue(os.path.exists(os.path.join(self.b.BOOT_DIR, "custom.jpg")))
+        self.assertEqual(out["power_on"]["result"], "WRITTEN")
+        img = self.b._fit(self.Image.open(path), 480, 272)
+        # turned upright: 300 wide x 400 high fitted into 480x272 -> black side bars
+        self.assertEqual(img.getpixel((5, 136)), (0, 0, 0))
 
     def test_slot_a_running_writes_rtos(self):
         # G40: from slot A the rtos partition (p3) gets the logo, rtos2 stays
