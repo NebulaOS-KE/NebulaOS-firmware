@@ -117,12 +117,19 @@ update_in_progress() {
 
 # --- Normal, namespace-restricted cleanup ---
 
+# Only rotated copies (name.log.N, name.log.YYYY-...), never a live *.log.
+# G45 (2026-10-15): the old pattern "*.log*" also matched live logs not on the
+# skip list - system.log, boot-timing.log. Everything written before NTP has a
+# 2020 mtime, so right after the clock jump the whole system.log (this boot's
+# Wi-Fi/DHCP/data-partition lines and every earlier boot) was "older than 7
+# days" and deleted; syslogd then created a fresh one. system.log.0/.1 are
+# left to syslogd itself (-b 2), which bounds them without trusting mtimes.
 clean_rotated_logs() {
 	find "$NEBULAOS_ROOT/printer_data/logs" "$NEBULAOS_ROOT/maintenance/logs" \
-		-maxdepth 1 -type f -name "*.log*" -mtime +7 2>/dev/null | while read -r f; do
+		-maxdepth 1 -type f -name "*.log.*" -mtime +7 2>/dev/null | while read -r f; do
 		base=$(basename "$f")
 		case "$base" in
-			klippy.log|moonraker.log|guppyscreen.log|nginx-access.log|nginx-error.log|retention.log) continue ;;
+			system.log.*) continue ;;
 		esac
 		path_is_namespace_safe "$f" && delete "$f" "rotated-log"
 	done
