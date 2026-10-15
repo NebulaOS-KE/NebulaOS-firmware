@@ -70,6 +70,11 @@ class NebulaOS:
              self._bd_reset_image),
             ("/machine/nebulaos/boot_display/restore_original_logo", RequestType.POST,
              self._bd_restore_original_logo),
+            ("/machine/nebulaos/boot_display/images", RequestType.GET, self._bd_images),
+            ("/machine/nebulaos/boot_display/preview", RequestType.POST, self._bd_preview),
+            ("/machine/nebulaos/boot_display/import_usb", RequestType.POST, self._bd_import_usb),
+            ("/machine/nebulaos/boot_display/delete_image", RequestType.POST,
+             self._bd_delete_image),
             ("/machine/nebulaos/display/status", RequestType.GET, self._disp_status),
             ("/machine/nebulaos/display/brightness", RequestType.POST,
              self._disp_brightness),
@@ -184,6 +189,23 @@ class NebulaOS:
     async def _bd_restore_original_logo(self, web_request: WebRequest) -> Dict[str, Any]:
         await self._refuse_while_printing()
         return await self._write("boot-display", "restore-original-logo")
+
+    # G61 (2026-10-16): the boot logo page - list, preview, add from USB, delete.
+    async def _bd_images(self, web_request: WebRequest) -> Dict[str, Any]:
+        return await self._read("boot-display", "list-images")
+
+    async def _bd_preview(self, web_request: WebRequest) -> Dict[str, Any]:
+        filename = web_request.get_str("filename", "")
+        args = ["boot-display", "preview"] + (["--file", filename] if filename else [])
+        return await self._exec(args, READ_TIMEOUT)
+
+    async def _bd_import_usb(self, web_request: WebRequest) -> Dict[str, Any]:
+        return await self._write("boot-display", "import-usb", "--file",
+                                 web_request.get_str("file"))
+
+    async def _bd_delete_image(self, web_request: WebRequest) -> Dict[str, Any]:
+        return await self._write("boot-display", "delete-image", "--file",
+                                 web_request.get_str("filename"))
 
     async def _disp_status(self, web_request: WebRequest) -> Dict[str, Any]:
         return await self._read("display", "status")

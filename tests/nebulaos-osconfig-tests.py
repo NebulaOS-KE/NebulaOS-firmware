@@ -411,15 +411,58 @@ class BootDisplayTests(unittest.TestCase):
         cfg, error = self.b.load_config()
         self.assertEqual((cfg["mode"], error), ("logo", None))
 
+    def test_boot_logo_page(self):
+        # G61 (2026-10-16): dropdown shows the chosen upload; add from USB, delete, preview
+        b = self.b
+        os.makedirs(b.UPLOAD_DIR, exist_ok=True)
+        b.USB_DIR = os.path.join(self.e.tmp, "usbroot")
+        stick = os.path.join(b.USB_DIR, "sda1", "pics")
+        os.makedirs(stick)
+        self.Image.new("RGB", (800, 600), (0, 90, 200)).save(os.path.join(stick, "My Logo, final.PNG"), "PNG")
+        self.Image.new("RGB", (64, 64)).save(os.path.join(stick, "notes.gif"), "GIF")
+        b.PREVIEW_DIR = os.path.join(self.e.tmp, "preview")
+        lst = b.list_images()
+        self.assertEqual((lst["images"], lst["selected"]), ([], ""))
+        self.assertEqual([u["name"] for u in lst["usb"]], ["My Logo, final.PNG"])   # images only
+        imp = b.import_usb(lst["usb"][0]["id"])
+        self.assertEqual((imp["name"], imp["existing"]), ("My Logo, final.PNG", False))
+        self.assertTrue(b.import_usb(lst["usb"][0]["id"])["existing"])            # same file again
+        self.Image.new("RGB", (10, 10), (1, 1, 1)).save(os.path.join(stick, "My Logo, final.PNG"), "PNG")
+        self.assertEqual(b.import_usb(lst["usb"][0]["id"])["name"], "My Logo, final (2).PNG")
+        out = b.set_image("My Logo, final.PNG")                                   # spaces and a comma
+        self.assertEqual(out["result"], "APPLIED")
+        lst = b.list_images()
+        self.assertEqual(lst["selected"], "My Logo, final.PNG")
+        self.assertEqual([i["name"] for i in lst["images"]], ["My Logo, final (2).PNG", "My Logo, final.PNG"])
+        pv = b.preview("My Logo, final.PNG")
+        self.assertEqual(self.Image.open(pv["path"]).size, (240, 136))
+        self.assertEqual(b.preview("")["result"], "OK")
+        self.assertEqual(len(os.listdir(b.PREVIEW_DIR)), 1)                       # old previews dropped
+        b.delete_image("My Logo, final.PNG")
+        self.assertEqual(b.list_images()["selected"], "")                         # gone from the list
+        b.reset_image()
+        self.assertNotIn("source", b.load_config()[0])
+        for bad in ("../x.png", "a/b.png", ".hidden.png", "x\nfile.png", ""):
+            with self.assertRaises(self.e.common.OsConfigError):
+                b.resolve_upload(bad)
+        for bad in ("usb/../etc/passwd", "usb/sda1/../../x", "gcodes/x.png"):
+            with self.assertRaises(self.e.common.OsConfigError):
+                b.import_usb(bad)
+
     def test_upload_name_confinement(self):
+        # G61 (2026-10-16): ordinary names with spaces etc. are allowed (the
+        # helper never uses a shell); folders, traversal, hidden and control
+        # characters are not
         for bad in ("/etc/passwd", "../x.png", "a/b.png", "sub/../x.png", ".hidden.png",
-                    "", None, "x" * 200, "a b.png", "a;reboot.png"):
+                    "", None, "x" * 201, "a\x01b.png", "a\nb.png"):
             with self.assertRaises(self.e.common.OsConfigError, msg=repr(bad)) as cm:
                 self.b.resolve_upload(bad)
             self.assertEqual(cm.exception.code, "INVALID_FILENAME")
         os.symlink("/etc/hostname", os.path.join(self.e.config_root, "evil.png"))
         with self.assertRaises(self.e.common.OsConfigError):
             self.b.resolve_upload("evil.png")
+        for ok in ("a b.png", "Logo, final (2).PNG", "a;reboot.png"):
+            self.assertTrue(self.b.resolve_upload(ok).endswith(ok))
         self.assertEqual(self.b.resolve_upload("boot-1.png"),
                          os.path.join(os.path.realpath(self.e.config_root), "boot-1.png"))
 

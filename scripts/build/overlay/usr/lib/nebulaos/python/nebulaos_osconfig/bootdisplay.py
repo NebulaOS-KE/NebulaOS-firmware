@@ -71,7 +71,12 @@ def load_config():
     if (raw.get("schema") != SCHEMA or raw.get("mode") not in MODES
             or raw.get("image") not in ("builtin", "custom")):
         return default_config(), "CONFIG_INVALID"
-    return {"schema": SCHEMA, "mode": raw["mode"], "image": raw["image"]}, None
+    cfg = {"schema": SCHEMA, "mode": raw["mode"], "image": raw["image"]}
+    # G61 (2026-10-16): which upload the custom image came from, so the
+    # screen's dropdown can show it as selected.
+    if raw["image"] == "custom" and isinstance(raw.get("source"), str):
+        cfg["source"] = raw["source"]
+    return cfg, None
 
 
 def _persist(cfg):
@@ -356,16 +361,28 @@ def set_mode(mode):
     return {"result": "APPLIED", "config": cfg, "applies": "next boot"}
 
 
-_UPLOAD_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+IMAGE_EXTS = (".png", ".bmp", ".jpg", ".jpeg")
+USB_DIR = os.environ.get("NEBULAOS_MCU_USB_DIR", "/opt/printer_data/gcodes/USB")
+USB_DEPTH = 2
+PREVIEW_DIR = os.path.join(common.RUN_DIR, "boot-preview")
+PREVIEW_SIZE = (240, 136)
+
+
+def _plain_name(filename):
+    """G61: any ordinary file name - spaces, commas, capitals - checked for
+    safety, not for style: no folders, no hidden files, no control chars."""
+    return (isinstance(filename, str) and 0 < len(filename) <= 200
+            and "/" not in filename and "\\" not in filename
+            and not filename.startswith(".")
+            and not any(ord(c) < 32 or ord(c) == 127 for c in filename))
 
 
 def resolve_upload(filename):
     """A plain file name inside the boot upload root - no directories, no
     traversal, no symlink out of it."""
-    if not isinstance(filename, str) or not _UPLOAD_NAME_RE.match(filename):
+    if not _plain_name(filename):
         raise invalid("INVALID_FILENAME",
-                      "give the name of a file uploaded to the nebulaos_boot root "
-                      "(letters, digits, '.', '_', '-'; no folders)")
+                      "give the name of an image in the boot logo folder (no folders)")
     root = os.path.realpath(UPLOAD_DIR)
     full = os.path.realpath(os.path.join(root, filename))
     if os.path.dirname(full) != root:
@@ -385,7 +402,7 @@ def set_image(filename):
         if other_ext != ext and os.path.exists(other):
             os.unlink(other)
     cfg, _ = load_config()
-    cfg = dict(cfg, mode="logo", image="custom")
+    cfg = dict(cfg, mode="logo", image="custom", source=filename)
     _persist(cfg)
     rendered = _render_now()
     from . import poweronlogo
@@ -401,6 +418,7 @@ def reset_image():
             os.unlink(path)
     cfg, _ = load_config()
     cfg = dict(cfg, mode="logo", image="builtin")
+    cfg.pop("source", None)
     _persist(cfg)
     rendered = _render_now()
     from . import poweronlogo
@@ -413,3 +431,129 @@ def restore_original_logo():
     Linux boot screen is not changed."""
     from . import poweronlogo
     return poweronlogo.restore_original()
+
+
+# -- G61: the boot logo page (2026-10-16) --------------------------------------
+#
+# One list for the screen's dropdown (NebulaOS + every image in the boot logo
+# folder), the images on a USB stick for "Add from USB" (copied in, then
+# selected), delete, and a small preview of exactly what will be shown.
+
+def _images_in(root):
+    try:
+        names = sorted(os.listdir(root), key=str.lower)
+    except OSError:
+        return []
+    out = []
+    for name in names:
+        full = os.path.join(root, name)
+        if (_plain_name(name) and name.lower().endswith(IMAGE_EXTS)
+                and os.path.isfile(full) and not os.path.islink(full)):
+            out.append({"name": name, "size": os.path.getsize(full)})
+    return out
+
+
+def _usb_images():
+    found = []
+    try:
+        devs = sorted(os.listdir(USB_DIR))
+    except OSError:
+        return found
+    for dev in devs:
+        base = os.path.join(USB_DIR, dev)
+        if dev.startswith(".") or not os.path.isdir(base) or os.path.islink(base):
+            continue
+        for dirpath, dirnames, filenames in os.walk(base):
+            depth = os.path.relpath(dirpath, base).count(os.sep)
+            dirnames[:] = [d for d in sorted(dirnames) if not d.startswith(".")] if depth < USB_DEPTH else []
+            for name in sorted(filenames, key=str.lower):
+                full = os.path.join(dirpath, name)
+                if (_plain_name(name) and name.lower().endswith(IMAGE_EXTS)
+                        and os.path.isfile(full) and not os.path.islink(full)):
+                    rel = os.path.relpath(full, base)
+                    found.append({"id": "usb/%s/%s" % (dev, rel), "name": name,
+                                  "size": os.path.getsize(full)})
+            if len(found) >= 200:
+                return found
+    return found
+
+
+def list_images():
+    cfg, _ = load_config()
+    selected = cfg.get("source") if cfg["image"] == "custom" else None
+    images = _images_in(UPLOAD_DIR)
+    if selected and selected not in [i["name"] for i in images]:
+        selected = None            # the upload was deleted; the copy still shows
+    return {"images": images, "selected": selected or "", "custom_active": cfg["image"] == "custom",
+            "usb": _usb_images(), "usb_present": os.path.isdir(USB_DIR) and bool(
+                [d for d in os.listdir(USB_DIR) if not d.startswith(".")]) if os.path.isdir(USB_DIR) else False}
+
+
+def _resolve_usb(file_id):
+    if not isinstance(file_id, str) or not file_id.startswith("usb/"):
+        raise invalid("INVALID_FILE", "not a USB image id")
+    parts = file_id.split("/")
+    if len(parts) < 3 or any(p in ("", ".", "..") for p in parts):
+        raise invalid("INVALID_FILE", "not a USB image id")
+    root = os.path.realpath(os.path.join(USB_DIR, parts[1]))
+    full = os.path.realpath(os.path.join(USB_DIR, *parts[1:]))
+    if not full.startswith(root + os.sep) or not os.path.isfile(full):
+        raise invalid("FILE_GONE", "the file is no longer on the USB stick")
+    return full, parts[-1]
+
+
+def import_usb(file_id):
+    """Copy an image from the USB stick into the boot logo folder (validated
+    first). Returns its name there - the screen selects it."""
+    src, name = _resolve_usb(file_id)
+    validate_image_file(src)
+    if not _plain_name(name) or not name.lower().endswith(IMAGE_EXTS):
+        raise invalid("INVALID_FILENAME", "this file name cannot be used")
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    stem, ext = os.path.splitext(name)
+    target, n = name, 1
+    while os.path.exists(os.path.join(UPLOAD_DIR, target)):
+        with open(src, "rb") as a, open(os.path.join(UPLOAD_DIR, target), "rb") as b:
+            if a.read(MAX_FILE_BYTES + 1) == b.read(MAX_FILE_BYTES + 1):
+                return {"result": "IMPORTED", "name": target, "existing": True}
+        n += 1
+        target = "%s (%d)%s" % (stem, n, ext)
+    with open(src, "rb") as handle:
+        data = handle.read(MAX_FILE_BYTES + 1)
+    common.atomic_write(os.path.join(UPLOAD_DIR, target), data)
+    return {"result": "IMPORTED", "name": target, "existing": False}
+
+
+def delete_image(filename):
+    path = resolve_upload(filename)
+    if not os.path.isfile(path):
+        raise invalid("FILE_GONE", "the image is no longer there")
+    os.unlink(path)
+    return {"result": "DELETED", "name": filename}
+
+
+def preview(filename):
+    """A small PNG of exactly what the boot screen will show (fitted on
+    black), for the screen. "" or "NebulaOS" = the built-in logo."""
+    Image, _, _ = _pil()
+    if filename in ("", None, "builtin"):
+        img = builtin_image(480, 272)
+        key = "builtin-" + firmware_short_sha()
+    else:
+        path = resolve_upload(filename)
+        validate_image_file(path)
+        st = os.stat(path)
+        key = hashlib.sha256(("%s|%d|%d" % (filename, st.st_size, int(st.st_mtime))).encode()).hexdigest()[:16]
+        with Image.open(path) as src:
+            img = _fit(src, 480, 272)
+    os.makedirs(PREVIEW_DIR, exist_ok=True)
+    out = os.path.join(PREVIEW_DIR, "preview-%s.png" % key)
+    if not os.path.exists(out):
+        for old in os.listdir(PREVIEW_DIR):
+            try:
+                os.unlink(os.path.join(PREVIEW_DIR, old))
+            except OSError:
+                pass
+        img.resize(PREVIEW_SIZE, Image.LANCZOS).save(out + ".tmp", "PNG")
+        os.replace(out + ".tmp", out)
+    return {"result": "OK", "path": out, "width": PREVIEW_SIZE[0], "height": PREVIEW_SIZE[1]}

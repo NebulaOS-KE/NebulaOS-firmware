@@ -16,6 +16,8 @@
 #   nebulaos-osconfig boot-display status|reset-image
 #   nebulaos-osconfig boot-display set-mode --mode logo
 #   nebulaos-osconfig boot-display restore-original-logo
+#   nebulaos-osconfig boot-display list-images | preview [--file NAME]
+#   nebulaos-osconfig boot-display import-usb --file usb/<dev>/<path> | delete-image --file NAME
 #   nebulaos-osconfig boot-display set-image --file NAME_IN_UPLOAD_ROOT
 #   nebulaos-osconfig boot-display render [--if-stale]
 #   nebulaos-osconfig display status|sleep|wake
@@ -51,6 +53,7 @@ def _opts(args, allowed):
 
 READ_ONLY = {("system", "info"), ("network", "status"),
              ("boot-display", "status"), ("display", "status"),
+             ("boot-display", "list-images"), ("boot-display", "preview"),
              ("wifi", "status"), ("mcu", "status"), ("mcu", "list"),
              ("image", "list"), ("image", "status")}
 
@@ -138,6 +141,15 @@ def _dispatch(argv):
             if verb == "restore-original-logo":
                 _opts(rest, {})
                 return bootdisplay.restore_original_logo()
+            if verb == "list-images":
+                _opts(rest, {})
+                return bootdisplay.list_images()
+            if verb == "import-usb":
+                return bootdisplay.import_usb(_opts(rest, {"file": True}).get("file"))
+            if verb == "delete-image":
+                return bootdisplay.delete_image(_opts(rest, {"file": True}).get("file"))
+            if verb == "preview":
+                return bootdisplay.preview(_opts(rest, {"file": True}).get("file") or "")
             if verb == "render":
                 return bootdisplay.render(
                     if_stale=bool(_opts(rest, {"if-stale": False}).get("if-stale")))
