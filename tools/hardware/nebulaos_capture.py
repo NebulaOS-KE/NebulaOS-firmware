@@ -216,6 +216,18 @@ _BOOT_STATE = (
     "echo '--- boot-timing.log (last 15)'; tail -n 15 $L/boot-timing.log 2>&1"
 )
 
+# What NebulaOS itself reports as versions - what the screen shows (System
+# info, Settings > Printer > MCU firmware) - next to what Klipper reads from
+# the MCU (2026-10-15). Read-only: local Moonraker GETs only.
+_VERSIONS = (
+    "M=http://127.0.0.1:7125; "
+    "for e in machine/nebulaos/info machine/nebulaos/mcu/status machine/nebulaos/mcu/files "
+    "'printer/objects/query?mcu' server/info; do echo; echo \"== $e ==\"; "
+    "curl -s --max-time 10 \"$M/$e\" 2>&1 | head -c 6000; echo; done; "
+    "echo; echo '== /etc/nebulaos-build (image) =='; cat /etc/nebulaos-build 2>&1 | head -n 40; "
+    "echo; echo '== kernel =='; uname -r"
+)
+
 # Profiles that may also run on Creality's system (the other slot): read-only
 # and meaningful from there.
 STOCK_CAPTURE_PROFILES = ("nebulaos-postmortem", "datafs-check-readonly")
@@ -225,6 +237,7 @@ CAPTURE_PROFILES = {
     "nebulaos-postmortem": (_NEBULAOS_POSTMORTEM, False, None, 120),
     "datafs-check-readonly": (_DATAFS_CHECK_READONLY, False, None, 600),
     "boot-state": (_BOOT_STATE, False, None, 60),
+    "versions": (_VERSIONS, False, None, 90),
     # RTOS logo (G7): what is on rtos/rtos2 before anything writes rtos2.
     "rtos-hashes": (_rtos_hashes(), False, None, 120),
     # --- TOOL-01 base list ---------------------------------------------------
