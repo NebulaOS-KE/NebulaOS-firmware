@@ -256,6 +256,18 @@ CAPTURE_PROFILES = {
     "nebulaos-postmortem": (_NEBULAOS_POSTMORTEM, False, None, 120),
     "datafs-check-readonly": (_DATAFS_CHECK_READONLY, False, None, 600),
     "boot-state": (_BOOT_STATE, False, None, 60),
+    # 2026-10-15: what is on the data partition, before any cleanup. Read-only.
+    "datafs-inventory": (
+        "echo '== df'; df -k /usr/data; "
+        "echo; echo '== /usr/data top level (KB)'; du -sk /usr/data/* /usr/data/.[!.]* 2>/dev/null | sort -rn; "
+        "echo; echo '== /usr/data/nebulaos (KB, 2 levels)'; du -k -d 2 /usr/data/nebulaos 2>/dev/null | sort -rn | head -n 60; "
+        "echo; echo '== /usr/data/printer_data (KB, 2 levels)'; du -k -d 2 /usr/data/printer_data 2>/dev/null | sort -rn | head -n 30; "
+        "echo; echo '== largest files (> 1 MB)'; find /usr/data -xdev -type f -size +1024k 2>/dev/null "
+        "| while read -r f; do echo \"$(du -k \"$f\" | cut -f1) $(date -r \"$f\" +%Y-%m-%d 2>/dev/null) $f\"; done | sort -rn | head -n 60; "
+        "echo; echo '== config tree'; find /usr/data/nebulaos/printer_data/config -maxdepth 3 2>/dev/null | sort | head -n 200; "
+        "echo; echo '== logs'; ls -la /usr/data/nebulaos/printer_data/logs 2>/dev/null; "
+        "echo; echo '== nebulaos_boot uploads'; ls -la /usr/data/nebulaos/boot/uploads 2>/dev/null",
+        False, None, 180),
     "versions": (_VERSIONS, False, None, 90),
     "update-log": (_UPDATE_LOG, False, None, 60),
     # RTOS logo (G7): what is on rtos/rtos2 before anything writes rtos2.
