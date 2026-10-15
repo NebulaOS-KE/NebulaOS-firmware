@@ -280,6 +280,74 @@ def real_http_delete_status(path: str):
         raise
 
 
+class NamespaceSnapshot:
+    """G16 (2026-10-15): every lookup of a key that does not exist yet was a
+    GET that Moonraker answered 404 - and logged, at every start. This wraps
+    the transports: one read of the whole "mainsail" namespace (or none when
+    the namespace does not exist) answers key lookups locally, an absent key
+    is never deleted remotely, and every write drops the snapshot so the
+    next lookup (e.g. the verification after a create) reads fresh. The
+    seeding logic and its 404 contract are unchanged. Any failure here falls
+    back to the plain per-key request."""
+
+    PREFIX = "/server/database/item?namespace=mainsail&key="
+
+    def __init__(self, get_status, post, delete):
+        self._get, self._post, self._delete = get_status, post, delete
+        self._ns = None
+
+    def _load(self):
+        if self._ns is None:
+            status, body = self._get("/server/database/list")
+            names = json.loads(body)["result"]["namespaces"] if status == 200 else None
+            if names is None:
+                raise TransportError("namespace list unavailable")
+            if "mainsail" not in names:
+                self._ns = {}
+            else:
+                status, body = self._get("/server/database/item?namespace=mainsail")
+                if status != 200 or body is None:
+                    raise TransportError("namespace read failed")
+                value = json.loads(body)["result"]["value"]
+                self._ns = value if isinstance(value, dict) else {}
+        return self._ns
+
+    def _lookup(self, key):
+        node = self._load()
+        for part in key.split("."):
+            if not isinstance(node, dict) or part not in node:
+                return False, None
+            node = node[part]
+        return True, node
+
+    def get_status(self, path):
+        if not path.startswith(self.PREFIX):
+            return self._get(path)
+        key = path[len(self.PREFIX):]
+        try:
+            found, value = self._lookup(key)
+        except Exception:  # noqa: BLE001 - fall back to the per-key read
+            return self._get(path)
+        if not found:
+            return 404, None
+        return 200, json.dumps({"result": {"namespace": "mainsail", "key": key, "value": value}})
+
+    def post(self, path, payload):
+        self._ns = None
+        return self._post(path, payload)
+
+    def delete(self, path):
+        if path.startswith(self.PREFIX):
+            try:
+                found, _ = self._lookup(path[len(self.PREFIX):])
+                if not found:
+                    return 404, None
+            except Exception:  # noqa: BLE001 - let the real delete decide
+                pass
+        self._ns = None
+        return self._delete(path)
+
+
 def wait_for_moonraker(get_status, log, retry_attempts=RETRY_ATTEMPTS,
                         retry_delay=RETRY_DELAY_S, sleep=time.sleep) -> bool:
     """Polls a cheap, always-present database key (this project's own
@@ -863,6 +931,7 @@ def run_reset(
 
 
 if __name__ == "__main__":
+    _t = NamespaceSnapshot(real_http_get_status, real_http_post_json, real_http_delete_status)
     if len(sys.argv) > 1 and sys.argv[1] == "--reset":
-        sys.exit(run_reset())
-    sys.exit(run())
+        sys.exit(run_reset(get_status=_t.get_status, post=_t.post, delete=_t.delete))
+    sys.exit(run(get_status=_t.get_status, post=_t.post, delete=_t.delete))

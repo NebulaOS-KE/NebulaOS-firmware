@@ -1117,6 +1117,85 @@ def run_seed(marker_path, moon, groups=None, legacy_map=None,
     return rc, logs
 
 
+class NestedFakeDb:
+    """Moonraker's real shape: dotted keys address a nested namespace; a GET
+    without a key returns the whole namespace (404 when it does not exist).
+    Counts every 404 it answers - each is a warning in Moonraker's log."""
+
+    def __init__(self, data=None):
+        self.data = data
+        self.not_found = 0
+
+    def _walk(self, key, create=False):
+        node = self.data
+        parts = key.split(".")
+        for part in parts[:-1]:
+            if create:
+                node = node.setdefault(part, {})
+            elif not isinstance(node, dict) or part not in node:
+                return None, parts[-1]
+            else:
+                node = node[part]
+        return node, parts[-1]
+
+    def get_status(self, path):
+        if path == "/server/database/list":
+            return 200, json.dumps({"result": {"namespaces": ["mainsail"] if self.data is not None else []}})
+        if path == "/server/database/item?namespace=mainsail":
+            if self.data is None:
+                self.not_found += 1
+                return 404, None
+            return 200, json.dumps({"result": {"namespace": "mainsail", "value": self.data}})
+        key = path.split("key=", 1)[1]
+        node, last = self._walk(key) if self.data is not None else (None, None)
+        if not isinstance(node, dict) or last not in node:
+            self.not_found += 1
+            return 404, None
+        return 200, json.dumps({"result": {"namespace": "mainsail", "key": key, "value": node[last]}})
+
+    def post(self, path, payload):
+        if self.data is None:
+            self.data = {}
+        node, last = self._walk(payload["key"], create=True)
+        node[last] = payload["value"]
+        return json.dumps({"result": {"value": payload["value"]}})
+
+    def delete(self, path):
+        key = path.split("key=", 1)[1]
+        node, last = self._walk(key) if self.data is not None else (None, None)
+        if not isinstance(node, dict) or last not in node:
+            self.not_found += 1
+            return 404, None
+        node.pop(last)
+        return 200, json.dumps({"result": {}})
+
+
+def test_snapshot_transport_makes_no_404s():
+    # G16 (2026-10-15): a fresh install and a legacy migration through the
+    # snapshot transport give the same database, with no 404 at Moonraker.
+    for start in (None, {"macros": {"macrogroups": {"group_a": {"name": "mine"}}}}):
+        results = []
+        for snapshot in (False, True):
+            db = NestedFakeDb(json.loads(json.dumps(start)) if start is not None else None)
+            t = seed.NamespaceSnapshot(db.get_status, db.post, db.delete) if snapshot else db
+            d = tempfile.mkdtemp(prefix="mainsail-macros-snap-")
+            try:
+                rc = seed.run(get_status=t.get_status, post=t.post, delete=t.delete,
+                              marker_path=os.path.join(d, "m.json"), log=lambda m: None,
+                              groups=TWO_GROUPS, legacy_map={"old_x": "group_b"}, rc3_groups={},
+                              retry_attempts=1, retry_delay=0, sleep=lambda s: None)
+            finally:
+                shutil.rmtree(d, ignore_errors=True)
+            results.append((rc, json.dumps(db.data, sort_keys=True), db.not_found))
+        label = "fresh" if start is None else "existing"
+        check("snapshot (%s): same outcome as per-key requests" % label,
+              results[0][:2] == results[1][:2], "%s vs %s" % (results[0][:2], results[1][:2]))
+        check("snapshot (%s): per-key requests did make 404s (the noise)" % label, results[0][2] > 0)
+        check("snapshot (%s): no 404 at Moonraker" % label, results[1][2] == 0, str(results[1][2]))
+    check("entry point wires the snapshot transport",
+          "NamespaceSnapshot(real_http_get_status" in open(MODULE_PATH).read())
+
+
 def main():
     test_moonraker_unavailable()
     test_fresh_install_creates_both_groups()
@@ -1165,6 +1244,7 @@ def main():
     test_reset_never_touches_a_users_own_extra_group()
     test_run_reset_cli_entry_point_matches_reset_to_defaults()
     test_reset_then_normal_seed_run_does_not_reset_again()
+    test_snapshot_transport_makes_no_404s()
 
     print()
     print(f"=== {PASS} passed, {FAIL} failed ===")
