@@ -43,6 +43,9 @@ WRITE_TIMEOUT = 150.
 MCU_FLASH_TIMEOUT = 660.
 # Zipping every log onto a USB stick on the MIPS board.
 LOGS_SAVE_TIMEOUT = 300.
+# Walking the data drive (thousands of files) on the MIPS board.
+STORAGE_TIMEOUT = 120.
+CLEANUP_TIMEOUT = 600.
 
 
 class NebulaOS:
@@ -76,6 +79,9 @@ class NebulaOS:
             ("/machine/nebulaos/logs/status", RequestType.GET, self._logs_status),
             ("/machine/nebulaos/logs/level", RequestType.POST, self._logs_level),
             ("/machine/nebulaos/logs/save", RequestType.POST, self._logs_save),
+            ("/machine/nebulaos/storage", RequestType.GET, self._storage),
+            ("/machine/nebulaos/cleanup/plan", RequestType.GET, self._cleanup_plan),
+            ("/machine/nebulaos/cleanup/creality", RequestType.POST, self._cleanup_creality),
             ("/machine/nebulaos/boot_display/preview", RequestType.POST, self._bd_preview),
             ("/machine/nebulaos/boot_display/import_usb", RequestType.POST, self._bd_import_usb),
             ("/machine/nebulaos/boot_display/delete_image", RequestType.POST,
@@ -223,6 +229,23 @@ class NebulaOS:
 
     async def _logs_save(self, web_request: WebRequest) -> Dict[str, Any]:
         return await self._write("logs", "save", timeout=LOGS_SAVE_TIMEOUT)
+
+    # G66: what uses the data drive, and removing the Creality system's data
+    # (both walk the drive; the removal is refused while printing).
+    async def _storage(self, web_request: WebRequest) -> Dict[str, Any]:
+        return await self._exec(["system", "storage"], STORAGE_TIMEOUT)
+
+    def _videos_args(self, web_request: WebRequest) -> List[str]:
+        return ["--videos"] if web_request.get_boolean("videos", False) else []
+
+    async def _cleanup_plan(self, web_request: WebRequest) -> Dict[str, Any]:
+        return await self._exec(["system", "cleanup-plan"] + self._videos_args(web_request),
+                                STORAGE_TIMEOUT)
+
+    async def _cleanup_creality(self, web_request: WebRequest) -> Dict[str, Any]:
+        await self._refuse_while_printing()
+        return await self._write("system", "cleanup-creality", *self._videos_args(web_request),
+                                 timeout=CLEANUP_TIMEOUT)
 
     async def _disp_status(self, web_request: WebRequest) -> Dict[str, Any]:
         return await self._read("display", "status")

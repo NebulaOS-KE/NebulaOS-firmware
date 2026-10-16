@@ -5,6 +5,8 @@
 #   nebulaos-osconfig system clean-reset|cancel-clean-reset|ack-clean-reset
 #   nebulaos-osconfig system swap-slot|keep-slot
 #   nebulaos-osconfig system ack-notice --id ID
+#   nebulaos-osconfig system storage | cleanup-plan [--videos]   (read-only, walk the drive)
+#   nebulaos-osconfig system cleanup-creality [--videos]
 #   nebulaos-osconfig image list|status|ack
 #   nebulaos-osconfig image check --file ID
 #   nebulaos-osconfig image install --file ID --sha256 HEX   (starts "image worker")
@@ -37,7 +39,8 @@
 import json
 import sys
 
-from . import bootdisplay, common, display, image, logs, mcu, network, snapshot, system, wifi
+from . import (bootdisplay, cleanup, common, display, image, logs, mcu, network, snapshot,
+               system, wifi)
 
 
 def _opts(args, allowed):
@@ -62,7 +65,7 @@ READ_ONLY = {("system", "info"), ("network", "status"),
              ("boot-display", "list-images"), ("boot-display", "preview"),
              ("wifi", "status"), ("mcu", "status"), ("mcu", "list"),
              ("image", "list"), ("image", "status"), ("logs", "status"),
-             ("settings", "status")}
+             ("settings", "status"), ("system", "storage"), ("system", "cleanup-plan")}
 
 # G27 (2026-10-12): every change is one line in the system log (persistent
 # system.log), success or failure. Read-only verbs are not logged (the screen
@@ -104,10 +107,25 @@ def _audit(argv, out):
         pass
 
 
+def _syslog_line(text):
+    try:
+        import syslog
+        syslog.openlog("nebulaos-osconfig")
+        syslog.syslog(syslog.LOG_NOTICE, "cleanup-creality " + text[:300])
+        syslog.closelog()
+    except Exception:
+        pass
+
+
 def _dispatch(argv):
     if len(argv) < 2:
         raise common.invalid("USAGE", "usage: nebulaos-osconfig DOMAIN VERB [options]")
     domain, verb, rest = argv[0], argv[1], argv[2:]
+    if (domain, verb) == ("system", "storage"):
+        _opts(rest, {})
+        return cleanup.storage()
+    if (domain, verb) == ("system", "cleanup-plan"):
+        return cleanup.plan(bool(_opts(rest, {"videos": False}).get("videos")))
     if (domain, verb) == ("image", "trial"):
         _opts(rest, {})
         return image.trial()
@@ -174,6 +192,9 @@ def _dispatch(argv):
             if verb in verbs:
                 _opts(rest, {})
                 return verbs[verb]()
+            if verb == "cleanup-creality":
+                videos = bool(_opts(rest, {"videos": False}).get("videos"))
+                return cleanup.clean_creality(videos, log=_syslog_line)
             if verb == "ack-notice":
                 return system.ack_notice(_opts(rest, {"id": True}).get("id"))
         elif domain == "logs":

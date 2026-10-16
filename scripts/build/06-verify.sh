@@ -1635,6 +1635,8 @@ check /usr/lib/nebulaos/python/nebulaos_osconfig/image.py
 check /usr/lib/nebulaos/python/nebulaos_osconfig/poweronlogo.py
 check /usr/lib/nebulaos/python/nebulaos_osconfig/logs.py
 check /usr/lib/nebulaos/python/nebulaos_osconfig/snapshot.py
+check /usr/lib/nebulaos/python/nebulaos_osconfig/cleanup.py
+check /etc/e2fsck.conf
 check /usr/libexec/sftp-server
 check /usr/share/nebulaos/printer_data-README.txt
 check /etc/init.d/S01restore-clock

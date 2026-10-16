@@ -39,6 +39,16 @@ CRITICAL_FLOOR_MB=300
 # five) comfortably inside the ~150-250MB budget this script's own
 # CAUTION/CRITICAL floors above were sized against.
 LOG_ROTATE_MAX_BYTES=$((5 * 1024 * 1024))
+# G66 (2026-10-16): uploaded system images (~130 MB each). An installed one is
+# deleted by the image trial once its system is confirmed; any other goes
+# after SYSTEM_IMAGE_MAX_DAYS. Not while an image job is running.
+SYSTEM_IMAGE_DIR="${SYSTEM_IMAGE_DIR:-$NEBULAOS_ROOT/printer_data/config/uploads/system-image}"
+SYSTEM_IMAGE_MAX_DAYS=30
+IMAGE_JOB_STATE="${IMAGE_JOB_STATE:-/run/nebulaos/image-update/state.json}"
+# G66: one run at a time - S45 at boot and the housekeeping loop every 30
+# minutes. A lock older than an hour is from a run that died.
+RETENTION_LOCK="${RETENTION_LOCK:-$NEBULAOS_ROOT/maintenance/retention.lock}"
+MOONRAKER_PRINT_STATS="${MOONRAKER_PRINT_STATS:-http://127.0.0.1:7125/printer/objects/query?print_stats}"
 
 dryrun=false
 [ "$1" = "--dry-run" ] && dryrun=true
@@ -485,9 +495,47 @@ emergency_gcode_cleanup() {
 	done
 }
 
+print_active() {
+	case "$(wget -q -O - --timeout=3 "$MOONRAKER_PRINT_STATS" 2>/dev/null)" in
+		*'"state":"printing"'*|*'"state":"paused"'*) return 0 ;;
+	esac
+	return 1
+}
+
+clean_old_system_images() {
+	[ -d "$SYSTEM_IMAGE_DIR" ] || return 0
+	path_is_namespace_safe "$SYSTEM_IMAGE_DIR" || return 0
+	if grep -qE '"state": *"(running|restarting)"' "$IMAGE_JOB_STATE" 2>/dev/null; then
+		log "system image install running - old uploaded images left alone this run"
+		return 0
+	fi
+	find "$SYSTEM_IMAGE_DIR" -maxdepth 1 -type f -mtime +"$SYSTEM_IMAGE_MAX_DAYS" 2>/dev/null | \
+		while read -r f; do
+		path_is_namespace_safe "$f" || continue
+		delete "$f" "uploaded-system-image-older-than-${SYSTEM_IMAGE_MAX_DAYS}d"
+	done
+}
+
+retention_lock() {
+	mkdir -p "$(dirname "$RETENTION_LOCK")" 2>/dev/null
+	mkdir "$RETENTION_LOCK" 2>/dev/null && return 0
+	if [ -n "$(find "$RETENTION_LOCK" -maxdepth 0 -mmin +60 2>/dev/null)" ]; then
+		rmdir "$RETENTION_LOCK" 2>/dev/null
+		mkdir "$RETENTION_LOCK" 2>/dev/null && { log "removed a stale retention lock"; return 0; }
+	fi
+	return 1
+}
+
 start() {
 	mkdir -p "$NEBULAOS_ROOT/maintenance"
+	retention_lock || return 0           # another run is busy - it does the work
+	trap 'rmdir "$RETENTION_LOCK" 2>/dev/null' EXIT
 	[ -n "${NEBULAOS_RETENTION_SKIP_CLOCK_WAIT:-}" ] || wait_for_clock_sync
+	# G66: the periodic run (housekeeping, every 30 min) never competes with a
+	# print for the eMMC.
+	if [ -n "${NEBULAOS_RETENTION_PERIODIC:-}" ] && print_active; then
+		return 0
+	fi
 
 	if update_in_progress; then
 		log "update transaction in progress - restricting to backup/log-only rotation this run"
@@ -507,6 +555,8 @@ start() {
 	clean_migration_backups
 	clean_mainsail_namespace_backups
 	clean_stray_bak_files
+	# Age rules need a real clock (none before NTP or the saved clock).
+	[ "$(date +%s)" -ge 1784851200 ] && clean_old_system_images
 
 	free=$(free_mb)
 	if [ -z "$free" ]; then

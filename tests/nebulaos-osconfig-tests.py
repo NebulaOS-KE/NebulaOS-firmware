@@ -1606,6 +1606,86 @@ class SettingsSnapshotTests(unittest.TestCase):
             self.s.take("whenever")
 
 
+class CrealityCleanupTests(unittest.TestCase):
+    """G66 (2026-10-16): "Clean up Creality files" removes a fixed list from
+    the data drive - never the print files, never into a mount, a busy swap
+    file or a symlink target, never NebulaOS or the device's own files."""
+
+    def setUp(self):
+        self.e = Env()
+        self.c = importlib.import_module("nebulaos_osconfig.cleanup")
+        t = self.e.tmp
+        self.d = os.path.join(t, "usrdata")
+        self.c.DATA = self.d
+        self.c.NEBULAOS_ROOT = os.path.join(self.d, "nebulaos")
+        self.c.PROC_MOUNTS = os.path.join(t, "mounts")
+        self.c.PROC_SWAPS = os.path.join(t, "swaps")
+        self.c.other_slot_system = lambda: "creality"
+        files = ["creality/userdata/config/system_config.json", "creality/userdata/delay_image/video/1.mp4",
+                 "creality/upgrade/old.img", "opt/bin/gcc", "helper-script/x.sh", "swap",
+                 "printer_data/config/printer.cfg", "printer_data/logs/klippy.log",
+                 "printer_data/gcodes/benchy.gcode", "printer_data/gcodes/USB/stick.gcode",
+                 "nebulaos/printer_data/config/printer.cfg", "macaddr.txt", "wpa_supplicant.conf",
+                 "factory_test_result", ".nebulaos-clean-reset.log", "mainsail/index.html",
+                 "elsewhere/secret.txt"]
+        for rel in files:
+            path = os.path.join(self.d, rel)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as h:
+                h.write("x" * 5000)
+        os.symlink(os.path.join(self.d, "elsewhere"), os.path.join(self.d, "moonraker"))
+        with open(self.c.PROC_MOUNTS, "w") as h:
+            h.write("/dev/sda1 %s vfat rw 0 0\n" % os.path.join(self.d, "printer_data/gcodes/USB"))
+        with open(self.c.PROC_SWAPS, "w") as h:
+            h.write("Filename Type Size Used Priority\n")
+
+    def tearDown(self):
+        self.e.cleanup()
+
+    def exists(self, rel):
+        return os.path.lexists(os.path.join(self.d, rel))
+
+    def test_plan_then_clean(self):
+        plan = self.c.plan()
+        self.assertEqual(plan["other_slot"], "creality")
+        self.assertGreater(plan["bytes"], 0)
+        self.assertGreater(plan["videos_bytes"], 0)
+        paths = [i["path"] for i in plan["items"]]
+        self.assertNotIn(os.path.join(self.d, "printer_data/gcodes"), paths)
+        with_videos = self.c.plan(include_videos=True)["bytes"]
+        self.assertGreater(with_videos, plan["bytes"])
+        out = self.c.clean_creality()
+        self.assertEqual(out["result"], "CLEANED")
+        for gone in ("creality/userdata/config", "creality/upgrade", "opt", "helper-script", "swap",
+                     "printer_data/config", "printer_data/logs", "mainsail", "moonraker"):
+            self.assertFalse(self.exists(gone), gone)
+        for kept in ("printer_data/gcodes/benchy.gcode", "printer_data/gcodes/USB/stick.gcode",
+                     "nebulaos/printer_data/config/printer.cfg", "macaddr.txt", "wpa_supplicant.conf",
+                     "factory_test_result", ".nebulaos-clean-reset.log",
+                     "creality/userdata/delay_image/video/1.mp4",     # videos only when asked
+                     "elsewhere/secret.txt"):                        # symlink target untouched
+            self.assertTrue(self.exists(kept), kept)
+        self.c.clean_creality(include_videos=True)
+        self.assertFalse(self.exists("creality"))
+
+    def test_busy_swap_and_mount_are_kept(self):
+        with open(self.c.PROC_SWAPS, "a") as h:
+            h.write("%s file 1000 0 -2\n" % os.path.join(self.d, "swap"))
+        with open(self.c.PROC_MOUNTS, "a") as h:
+            h.write("/dev/x %s ext4 rw 0 0\n" % os.path.join(self.d, "opt/mnt"))
+        out = self.c.clean_creality()
+        why = {os.path.basename(k["path"]): k["why"] for k in out["kept"]}
+        self.assertEqual(why.get("swap"), "in use as swap")
+        self.assertEqual(why.get("opt"), "a drive is mounted there")
+        self.assertTrue(self.exists("swap") and self.exists("opt/bin/gcc"))
+
+    def test_storage_overview(self):
+        out = self.c.storage()
+        labels = [p["label"] for p in out["parts"]]
+        self.assertEqual(labels, ["Print files", "Logs", "Uploads", "Backups", "NebulaOS", "Creality files"])
+        self.assertGreater(out["parts"][-1]["bytes"], 0)
+
+
 class PowerOnLogoTests(unittest.TestCase):
     """G58/G40 (2026-10-15): the power-on logo in the running slot's RTOS -
     against fake rtos/rtos2 partitions holding a synthetic image (the real
@@ -2049,6 +2129,29 @@ class ImageTests(unittest.TestCase):
         self.assertEqual(self.i.status()["last"]["result"], "CONFIRMED")
         self.i.ack()
         self.assertIsNone(self.i.status()["last"])
+
+    def test_trial_confirmed_removes_the_installed_upload(self):
+        """G66: the ~130 MB upload goes once its system is confirmed - only
+        the exact installed file, only from the upload folder."""
+        import hashlib
+        self.cmdline("A")
+        os.makedirs(self.i.UPLOAD_DIR, exist_ok=True)
+        img = os.path.join(self.i.UPLOAD_DIR, "nebula.img")
+        open(img, "wb").write(b"IMAGE")
+        good = hashlib.sha256(b"IMAGE").hexdigest()
+        self.i._klipper_ready = lambda: True
+        self.i._gui_running = lambda: True
+        json.dump({"from": "B", "to": "A", "file": "upload/nebula.img", "sha256": "0" * 64,
+                   "version": "9.9", "system": "nebulaos"}, open(self.i.TRIAL, "w"))
+        self.assertFalse(self.i.trial()["removed_upload"])           # a different file now
+        self.assertTrue(os.path.exists(img))
+        json.dump({"from": "B", "to": "A", "file": "upload/nebula.img", "sha256": good,
+                   "version": "9.9", "system": "nebulaos"}, open(self.i.TRIAL, "w"))
+        self.assertTrue(self.i.trial()["removed_upload"])
+        self.assertFalse(os.path.exists(img))
+        json.dump({"from": "B", "to": "A", "file": "usb/sda1/nebula.img", "sha256": good,
+                   "version": "9.9", "system": "nebulaos"}, open(self.i.TRIAL, "w"))
+        self.assertFalse(self.i.trial()["removed_upload"])           # never the USB stick
 
     def test_trial_rolls_back_once(self):
         self.cmdline("A")

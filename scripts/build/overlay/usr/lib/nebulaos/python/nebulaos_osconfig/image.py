@@ -660,6 +660,7 @@ def run_job(file_id, sha256):
         # going back from there is flashing a NebulaOS .img with Creality's updater.
         if kind != "creality":
             common.atomic_write_json(TRIAL, {"from": running, "to": target, "file": file_id,
+                                             "sha256": sha256,
                                              "version": info["version"], "system": kind,
                                              "started": started})
         else:
@@ -758,6 +759,28 @@ def _record(trial, result, note=None):
         "at": int(time.time()), "acknowledged": False})
 
 
+def _remove_installed_upload(t):
+    """G66 (2026-10-16): an uploaded image (~130 MB) is deleted once the
+    system it carries has started and been confirmed - only a file in the
+    upload folder (never the USB stick), and only when it still is exactly
+    the file that was installed (sha256)."""
+    file_id, want = t.get("file"), t.get("sha256")
+    if not (isinstance(file_id, str) and file_id.startswith("upload/") and want):
+        return False
+    try:
+        path = resolve(file_id)
+        digest = hashlib.sha256()
+        with open(path, "rb") as handle:
+            for chunk in iter(lambda: handle.read(1 << 20), b""):
+                digest.update(chunk)
+        if digest.hexdigest() != want:
+            return False
+        os.unlink(path)
+        return True
+    except (OSError, OsConfigError):
+        return False
+
+
 def trial():
     """First boot after an install: confirm the new slot, or go back ONCE."""
     t, _ = common.read_json(TRIAL)
@@ -774,7 +797,7 @@ def trial():
         if _klipper_ready() and _gui_running():
             _record(t, "CONFIRMED")
             os.unlink(TRIAL)
-            return {"result": "CONFIRMED"}
+            return {"result": "CONFIRMED", "removed_upload": _remove_installed_upload(t)}
         if time.monotonic() >= deadline:
             break
         time.sleep(TRIAL_POLL)

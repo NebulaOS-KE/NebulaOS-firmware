@@ -6,6 +6,8 @@
 #   - refresh printer_data/logs/nebulaos-state.txt (versions, slots, MCU,
 #     storage) so Mainsail's own "download as zip" of the logs carries it
 #   - G69: Debug logging back to Info after 24 hours
+#   - G66: the retention job (logs, old backups, old uploaded system images),
+#     skipped while printing; S45 still runs it at boot
 #   - G65: a settings snapshot when the settings changed since the newest one
 #     (so a copy always predates the next update)
 # First pass right away (end of boot), then every 30 minutes.
@@ -18,6 +20,7 @@ chores() {
 	/etc/init.d/S01restore-clock save
 	nice -n 10 "$OSCONFIG" logs expire-debug >/dev/null 2>&1
 	nice -n 10 "$OSCONFIG" logs write-state >/dev/null 2>&1
+	NEBULAOS_RETENTION_SKIP_CLOCK_WAIT=1 NEBULAOS_RETENTION_PERIODIC=1 nice -n 10 /etc/nebulaos-retention.sh >/dev/null 2>&1
 	nice -n 10 "$OSCONFIG" settings snapshot --reason changed --if-changed --db api >/dev/null 2>&1
 }
 
