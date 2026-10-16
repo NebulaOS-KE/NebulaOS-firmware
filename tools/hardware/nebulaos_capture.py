@@ -271,7 +271,9 @@ CAPTURE_PROFILES = {
         "[ -f \"$f\" ] || continue; echo; echo \"== $f ($(wc -l < \"$f\") lines)\"; "
         "grep -iE 'error|exception|traceback|warn|fail|refus|timeout|unable|cannot|denied|critical' \"$f\" "
         "| grep -viE 'psk|passw' | sed -E 's/^[A-Z][a-z]{2} +[0-9]+ [0-9:]+ //; s/^\\[[^]]*\\] //; "
-        "s/^[0-9-]+ [0-9:,.]+ //; s/[0-9]+/N/g' | sort | uniq -c | sort -rn | head -n 25; done; "
+        "s/^[0-9-]+ [0-9:,.]+ //; s/[0-9]+/N/g' | sort | uniq -c | sort -rn | head -n 25; "
+        "echo '-- latest two, as written:'; grep -iE 'error|exception|traceback|fail|critical' \"$f\" "
+        "| grep -viE 'psk|passw|RESPOND TYPE|on_error_gcode|_ON_GCODE_FAILURE' | tail -n 2 | cut -c1-300; done; "
         "echo; echo '== nebulaos-state.txt'; cat $L/nebulaos-state.txt 2>&1 | head -n 120; "
         "echo; echo '== README'; head -n 5 /opt/printer_data/README.txt 2>&1; "
         "echo; echo '== log level'; cat /usr/data/nebulaos/system/log-level 2>&1; ps w | grep -v grep | grep syslogd",
