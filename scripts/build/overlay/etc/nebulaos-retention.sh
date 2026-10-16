@@ -188,6 +188,29 @@ rotate_platform_logs() {
 	rotate_if_oversized "$NEBULAOS_ROOT/printer_data/logs/nginx-error.log" "$LOG_ROTATE_MAX_BYTES"
 }
 
+# G60 (2026-10-16): NebulaOS's own small append-only logs - this script's own
+# retention.log, the seed logs in maintenance/logs and the data-partition
+# diagnostics - were never bounded. Past SMALL_LOG_MAX they keep their last
+# SMALL_LOG_LINES lines (the same way rcS bounds boot-timing.log).
+SMALL_LOG_MAX=$((512 * 1024))
+SMALL_LOG_LINES=2000
+
+trim_small_logs() {
+	for f in "$LOG" "$NEBULAOS_ROOT"/maintenance/logs/*.log "$NEBULAOS_ROOT"/system/diagnostics/*.log; do
+		[ -f "$f" ] || continue
+		path_is_namespace_safe "$f" || continue
+		size=$(wc -c < "$f" 2>/dev/null)
+		[ -n "$size" ] && [ "$size" -gt "$SMALL_LOG_MAX" ] || continue
+		if [ "$dryrun" = "true" ]; then
+			log "[DRY-RUN] would trim (${size}B): $f"
+			continue
+		fi
+		tail -n "$SMALL_LOG_LINES" "$f" > "$f.trim" 2>/dev/null && mv -f "$f.trim" "$f" \
+			&& log "trimmed to the last $SMALL_LOG_LINES lines (${size}B): $f"
+		rm -f "$f.trim" 2>/dev/null
+	done
+}
+
 clean_old_config_backups() {
 	find "$NEBULAOS_ROOT/backups/printer_config" -maxdepth 1 -type f -mtime +7 2>/dev/null | \
 		sort -r | tail -n +2 | while read -r f; do
@@ -449,11 +472,13 @@ start() {
 		log "update transaction in progress - restricting to backup/log-only rotation this run"
 		rotate_platform_logs
 		clean_rotated_logs
+		trim_small_logs
 		return 0
 	fi
 
 	rotate_platform_logs
 	clean_rotated_logs
+	trim_small_logs
 	clean_old_config_backups
 	clean_old_save_config_backups
 	clean_abandoned_staging
