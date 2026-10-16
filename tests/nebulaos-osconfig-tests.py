@@ -2051,7 +2051,7 @@ class ComponentTests(unittest.TestCase):
             esac
             echo '{"ok": true, "result": "APPLIED"}'
         """ % {"log": self.log})
-        self.upload_dir = os.path.join(self.tmp, "boot-uploads")
+        self.upload_dir = os.path.join(self.tmp, "uploads")          # G62: the "uploads" root
         pkg = types.ModuleType("moonraker")
         pkg.__path__ = []
         comps = types.ModuleType("moonraker.components")
@@ -2103,7 +2103,7 @@ class ComponentTests(unittest.TestCase):
 
             def get(self, key, default=None):
                 return {"helper": test.helper,
-                        "boot_upload_dir": test.upload_dir}.get(key, default)
+                        "uploads_dir": test.upload_dir}.get(key, default)
 
         class Provider(object):
             async def reboot(self):
@@ -2168,7 +2168,7 @@ class ComponentTests(unittest.TestCase):
     def test_argv_mapping_no_shell(self):
         self.call("/machine/nebulaos/network/hostname", {"hostname": "a; reboot"})
         self.assertEqual(self.argv()[:4], ["network", "set-hostname", "--hostname", "a; reboot"])
-        self.assertIn("NEBULAOS_BOOT_UPLOAD_DIR=" + self.upload_dir, self.argv())
+        self.assertIn("NEBULAOS_BOOT_UPLOAD_DIR=" + os.path.join(self.upload_dir, "boot-logo"), self.argv())
         self.call("/machine/nebulaos/display/wake")
         self.assertEqual(self.argv()[:2], ["display", "wake"])
         self.assertEqual(self.server.events[-1][0], "nebulaos:settings_changed")
@@ -2185,8 +2185,9 @@ class ComponentTests(unittest.TestCase):
                                 "gateway": "10.0.0.1", "dns": ["10.0.0.1"]})
 
     def test_boot_upload_root_registered(self):
-        self.assertEqual(self.registered, ("nebulaos_boot", self.upload_dir, True))
-        self.assertTrue(os.path.isdir(self.upload_dir))
+        self.assertEqual(self.registered, ("uploads", self.upload_dir, True))
+        for sub in ("boot-logo", "mainboard-firmware", "system-image"):
+            self.assertTrue(os.path.isdir(os.path.join(self.upload_dir, sub)))
         self.call("/machine/nebulaos/boot_display/image", {"filename": "logo.png"})
         self.assertEqual(self.argv()[:4], ["boot-display", "set-image", "--file", "logo.png"])
 

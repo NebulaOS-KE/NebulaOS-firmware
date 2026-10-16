@@ -458,7 +458,7 @@ cmd_klipper_extensions() {
 #
 # Deliberately narrow: this is a reset of the managed tree ONLY. It must
 # NEVER touch printer.cfg's own user-owned region, SAVE_CONFIG, moonraker.conf,
-# macros/, guppyscreen/, firmware/mcu/, the Moonraker database, Mainsail's
+# macros/, guppyscreen/, the Moonraker database, Mainsail's
 # layout, PLR state, or MCU state - materialize_config_tree()'s own inputs
 # and outputs are exactly $NEBULAOS_KLIPPER_CFG_DIR (read) and
 # $PRINTER_DATA_CONFIG/nebulaos (the only thing written), so this command
@@ -486,7 +486,7 @@ cmd_config() {
         echo ""
         echo "Recovery complete for config."
         echo "printer.cfg's own user-owned region, SAVE_CONFIG, macros/,"
-        echo "guppyscreen/, firmware/mcu/, and moonraker.conf are all untouched."
+        echo "guppyscreen/, uploads/ and moonraker.conf are all untouched."
         echo "No reboot is required - Klipper reads the managed tree fresh on its"
         echo "next restart; run FIRMWARE_RESTART if you want it to pick this up now."
     else
@@ -515,7 +515,7 @@ usage() {
     echo "                            (printer_data/config/nebulaos/) from the"
     echo "                            immutable image - never touches printer.cfg's"
     echo "                            own user-owned region, SAVE_CONFIG, macros/,"
-    echo "                            guppyscreen/, firmware/mcu/, or moonraker.conf"
+    echo "                            guppyscreen/, uploads/ or moonraker.conf"
     exit 1
 }
 

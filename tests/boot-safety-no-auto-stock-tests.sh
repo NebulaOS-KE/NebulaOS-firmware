@@ -197,7 +197,7 @@ test_simulation_klipper_fails() {
 		# Build a modified S00 that sources our mock instead
 		sed "s|^\. /etc/ota_marker\.sh|. $WORK/mock_ota_marker.sh|" "$S00" > "$WORK/s00_sim.sh"
 		chmod +x "$WORK/s00_sim.sh"
-		sh "$WORK/s00_sim.sh" start >/dev/null 2>&1
+		sh "$WORK/s00_sim.sh" start </dev/null >/dev/null 2>&1
 	)
 
 	# Simulate S99 start with a Moonraker that never responds (Klipper fails).
@@ -218,7 +218,7 @@ test_simulation_klipper_fails() {
 			| sed 's|wget -q -O -|false #|' \
 			> "$WORK/s99_sim.sh"
 		chmod +x "$WORK/s99_sim.sh"
-		sh "$WORK/s99_sim.sh" start >/dev/null 2>&1 || true
+		sh "$WORK/s99_sim.sh" start </dev/null >/dev/null 2>&1 || true
 	)
 
 	if [ -f "$MARKER_LOG" ]; then
@@ -248,7 +248,7 @@ test_simulation_klipper_ok() {
 		INNEREOF
 		sed "s|^\. /etc/ota_marker\.sh|. $WORK/mock_ota_marker.sh|" "$S00" > "$WORK/s00_sim.sh"
 		chmod +x "$WORK/s00_sim.sh"
-		sh "$WORK/s00_sim.sh" start >/dev/null 2>&1
+		sh "$WORK/s00_sim.sh" start </dev/null >/dev/null 2>&1
 	)
 
 	# Simulate S99 start with a Moonraker that IS healthy (klippy_state=ready).
@@ -267,7 +267,7 @@ test_simulation_klipper_ok() {
 check_moonraker() { return 0; }' \
 			> "$WORK/s99_sim.sh"
 		chmod +x "$WORK/s99_sim.sh"
-		sh "$WORK/s99_sim.sh" start >/dev/null 2>&1 || true
+		sh "$WORK/s99_sim.sh" start </dev/null >/dev/null 2>&1 || true
 	)
 
 	if [ -f "$MARKER_LOG" ]; then

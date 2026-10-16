@@ -3,7 +3,8 @@
 #
 #   boot/display.json        source of truth (schema 1): mode, image
 #   boot/display.env         MODE= for S01splash (shell)
-#   boot/uploads/            Moonraker root "nebulaos_boot" (GUI uploads here)
+#   printer_data/uploads/boot-logo/  images to pick from (Moonraker root
+#                            "uploads"; G62 2026-10-16 - was boot/uploads)
 #   boot/custom.png|bmp|jpg  validated copy of the selected image
 #   boot/cache/splash.raw    framebuffer-native render (derived)
 #   boot/cache/splash.meta   geometry + source identity of the render
@@ -38,10 +39,10 @@ ENV = os.path.join(BOOT_DIR, "display.env")
 CACHE_DIR = os.path.join(BOOT_DIR, "cache")
 RAW = os.path.join(CACHE_DIR, "splash.raw")
 META = os.path.join(CACHE_DIR, "splash.meta")
-# Moonraker file root "nebulaos_boot" (registered by the [nebulaos]
-# component): the only place an image may be picked from.
+# uploads/boot-logo in the Moonraker root "uploads" (registered by the
+# [nebulaos] component): the only place an image may be picked from.
 UPLOAD_DIR = os.environ.get("NEBULAOS_BOOT_UPLOAD_DIR",
-                            os.path.join(BOOT_DIR, "uploads"))
+                            "/opt/printer_data/uploads/boot-logo")
 FB_DEV = os.environ.get("NEBULAOS_FB_DEV", "/dev/fb0")
 FB_SYSFS = os.environ.get("NEBULAOS_FB_SYSFS", "/sys/class/graphics/fb0")
 GUPPY_CONFIG = os.environ.get("NEBULAOS_GUPPY_CONFIG", "/opt/guppyscreen/guppyconfig.json")

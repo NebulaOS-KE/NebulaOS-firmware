@@ -91,8 +91,8 @@ dmesg | grep -E 'backlight final controller|nebulaos_backlight' | tail -4
 echo "debugfs_mounts=$(grep -c ' /sys/kernel/debug debugfs ' /proc/mounts)"
 p=$(cat /var/run/nebulaos-display-sleep-wake-controller.pid 2>/dev/null); echo "touch_wake_watcher=${p:-none}"
 echo "== boot image upload root"
-ls -la /usr/data/nebulaos/boot/uploads 2>&1 | head -5
-curl -s -m 5 "$U/server/files/roots" | grep -o '"name": *"nebulaos_boot"[^}]*' | head -c 300; echo
+ls -la /usr/data/nebulaos/printer_data/uploads/boot-logo 2>&1 | head -5
+curl -s -m 5 "$U/server/files/roots" | grep -o '"name": *"uploads"[^}]*' | head -c 300; echo
 echo "== guppyscreen thumbnails"
 TP=$(grep -o '"thumbnail_path": *"[^"]*"' /opt/guppyscreen/guppyconfig.json 2>/dev/null | sed 's/.*: *"//;s/"$//')
 echo "thumbnail_path=$TP"

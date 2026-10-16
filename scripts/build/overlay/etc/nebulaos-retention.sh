@@ -361,8 +361,29 @@ clean_stray_bak_files() {
 # touched by retention.
 SAVE_CONFIG_BACKUP_KEEP=10
 
+# G62 (2026-10-16): Klipper writes printer-YYYYMMDD_HHMMSS.cfg next to
+# printer.cfg on every SAVE_CONFIG and never reads them back
+# (klippy/configfile.py). They are moved into config/backups/ (mtime kept)
+# so the config folder shows only what Klipper reads; pruning works there.
+move_save_config_backups() {
+	src="$NEBULAOS_ROOT/printer_data/config"
+	dst="$src/backups"
+	[ -d "$src" ] || return 0
+	find "$src" -maxdepth 1 -type f -name 'printer-[0-9]*_[0-9]*.cfg' 2>/dev/null | while read -r f; do
+		path_is_namespace_safe "$f" || continue
+		mkdir -p "$dst" 2>/dev/null
+		[ -e "$dst/$(basename "$f")" ] && continue
+		if [ "$dryrun" = "true" ]; then
+			log "[DRY-RUN] would move to config/backups: $f"
+		else
+			mv "$f" "$dst/" && log "moved to config/backups: $f"
+		fi
+	done
+}
+
 clean_old_save_config_backups() {
-	dir="$NEBULAOS_ROOT/printer_data/config"
+	move_save_config_backups
+	dir="$NEBULAOS_ROOT/printer_data/config/backups"
 	[ -d "$dir" ] || return 0
 	find "$dir" -maxdepth 1 -type f -name 'printer-[0-9]*_[0-9]*.cfg' -mtime +7 2>/dev/null | \
 		sort -r | tail -n "+$((SAVE_CONFIG_BACKUP_KEEP + 1))" | while read -r f; do

@@ -92,23 +92,25 @@ start() {
 	# a real device's SAVE_CONFIG/calibration/credentials must never be
 	# clobbered by a later boot just because this script runs again.
 	seed_once /opt/printer_data "$PDATA"
-	mkdir -p "$PDATA/config/GuppyScreen/scripts"
+	# G62 (2026-10-16): config/GuppyScreen is no longer created - the screen's
+	# real folder is config/guppyscreen. An empty leftover is removed; one
+	# with files stays (an old printer.cfg may still include from it).
+	rmdir "$PDATA/config/GuppyScreen/scripts" "$PDATA/config/GuppyScreen" 2>/dev/null
 	seed_once /opt/guppyscreen/guppyconfig.json "$GUPPY_STATE/guppyconfig.json"
 	# GuppyScreen's shipped thumbnail_path is /opt/guppyscreen/thumbnails, on
 	# the read-only squashfs: the image ships it as a symlink to this
 	# persistent directory, so thumbnail downloads work without touching any
 	# device's saved config (GUI readiness work, 2026-10-10).
 	mkdir -p "$GUPPY_STATE/thumbnails"
-	# Phase 2 final software closure mission (2026-09-09): user MCU
-	# application-firmware upload area, browsable through Mainsail's
-	# ordinary Config Files view (nebulaos-mcu flash resolves a bare
-	# filename against this same directory) - see
-	# docs/NEBULAOS_CONFIG_MATERIALIZATION.md. Deliberately just an empty
-	# directory here; nothing seeds content into it.
-	mkdir -p "$PDATA/config/firmware/mcu"
-	# On-printer image updates (2026-10-14): system images (.img) uploaded in
-	# Mainsail land here, next to the MCU firmware folder.
-	mkdir -p "$PDATA/config/firmware/os"
+	# G62 (2026-10-16): one place for files handed to NebulaOS - the Moonraker
+	# root "uploads" (registered by the [nebulaos] component, so it must
+	# exist before S56moonraker): boot logos, mainboard (MCU) firmware and
+	# system images. Created at every boot; S04 moves files from the old
+	# places (config/firmware/mcu, config/firmware/os, boot/uploads).
+	mkdir -p "$PDATA/uploads/boot-logo" "$PDATA/uploads/mainboard-firmware" \
+		"$PDATA/uploads/system-image"
+	# What is where, for SFTP users (the data path is not a Mainsail root).
+	cp -f /usr/share/nebulaos/printer_data-README.txt "$PDATA/README.txt" 2>/dev/null
 
 	# /opt/printer_data ships baked-in defaults on the read-only squashfs
 	# (printer.cfg, moonraker.conf) for the seed step above - bind-mounting

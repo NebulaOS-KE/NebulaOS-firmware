@@ -75,12 +75,13 @@ else
 	fail "the placeholder file creation is not guarded against overwriting existing content"
 fi
 
-# Section 9 (firmware/mcu/ upload area) is small enough to live in this
-# same S01 structural test file rather than a separate one.
-if grep -qF 'mkdir -p "$PDATA/config/firmware/mcu"' "$S01_SCRIPT"; then
-	pass "printer_data/config/firmware/mcu/ is created at boot"
+# Section 9: the upload area - printer_data/uploads/ since G62 (2026-10-16),
+# created at every boot before Moonraker registers the "uploads" root.
+if grep -qF 'mkdir -p "$PDATA/uploads/boot-logo" "$PDATA/uploads/mainboard-firmware"' "$S01_SCRIPT" \
+	&& grep -qF '"$PDATA/uploads/system-image"' "$S01_SCRIPT"; then
+	pass "printer_data/uploads/{boot-logo,mainboard-firmware,system-image} are created at boot"
 else
-	fail "printer_data/config/firmware/mcu/ creation line is missing"
+	fail "printer_data/uploads/ creation lines are missing"
 fi
 
 echo ""

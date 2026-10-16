@@ -29,10 +29,12 @@ if TYPE_CHECKING:
     from ..common import WebRequest
 
 DEFAULT_HELPER = "/usr/libexec/nebulaos/nebulaos-osconfig"
-# Moonraker file root for boot-image uploads (server.files.upload
-# root=nebulaos_boot). Its own folder, never the printer config tree.
-BOOT_UPLOAD_ROOT = "nebulaos_boot"
-DEFAULT_BOOT_UPLOAD_DIR = "/usr/data/nebulaos/boot/uploads"
+# G62 (2026-10-16): the Moonraker file root "uploads" - files handed to
+# NebulaOS: boot-logo/, mainboard-firmware/, system-image/. Replaces the old
+# "nebulaos_boot" root. S01persistent-datastore creates it before Moonraker
+# starts. Not overlapping any other root (no symlinks into it).
+UPLOADS_ROOT = "uploads"
+DEFAULT_UPLOADS_DIR = "/opt/printer_data/uploads"
 READ_TIMEOUT = 20.
 # A network change waits for DHCP/ARP verification and a possible revert.
 WRITE_TIMEOUT = 150.
@@ -51,15 +53,17 @@ class NebulaOS:
         # network change that is verifying DHCP.
         self.write_locks: Dict[str, asyncio.Lock] = {}
         self.server.register_notification("nebulaos:settings_changed")
-        self.boot_upload_dir = config.get("boot_upload_dir", DEFAULT_BOOT_UPLOAD_DIR)
-        try:
-            os.makedirs(self.boot_upload_dir, exist_ok=True)
-        except OSError as exc:
-            logging.info(f"nebulaos: cannot create {self.boot_upload_dir}: {exc}")
+        self.uploads_dir = config.get("uploads_dir", DEFAULT_UPLOADS_DIR)
+        self.boot_upload_dir = os.path.join(self.uploads_dir, "boot-logo")
+        for sub in ("boot-logo", "mainboard-firmware", "system-image"):
+            try:
+                os.makedirs(os.path.join(self.uploads_dir, sub), exist_ok=True)
+            except OSError as exc:
+                logging.info(f"nebulaos: cannot create {self.uploads_dir}/{sub}: {exc}")
         fm = self.server.lookup_component("file_manager", None)
         if fm is None or not fm.register_directory(
-                BOOT_UPLOAD_ROOT, self.boot_upload_dir, full_access=True):
-            logging.info("nebulaos: boot image upload root not registered")
+                UPLOADS_ROOT, self.uploads_dir, full_access=True):
+            logging.info("nebulaos: uploads root not registered")
         routes = [
             ("/machine/nebulaos/info", RequestType.GET, self._info),
             ("/machine/nebulaos/network/status", RequestType.GET, self._net_status),

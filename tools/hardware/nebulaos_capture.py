@@ -266,7 +266,8 @@ CAPTURE_PROFILES = {
         "| while read -r f; do echo \"$(du -k \"$f\" | cut -f1) $(date -r \"$f\" +%Y-%m-%d 2>/dev/null) $f\"; done | sort -rn | head -n 60; "
         "echo; echo '== config tree'; find /usr/data/nebulaos/printer_data/config -maxdepth 3 2>/dev/null | sort | head -n 200; "
         "echo; echo '== logs'; ls -la /usr/data/nebulaos/printer_data/logs 2>/dev/null; "
-        "echo; echo '== nebulaos_boot uploads'; ls -la /usr/data/nebulaos/boot/uploads 2>/dev/null",
+        "echo; echo '== uploads (G62)'; ls -laR /usr/data/nebulaos/printer_data/uploads 2>/dev/null | head -n 60; "
+        "echo; echo '== old boot uploads'; ls -la /usr/data/nebulaos/boot/uploads 2>/dev/null",
         False, None, 180),
     "versions": (_VERSIONS, False, None, 90),
     "update-log": (_UPDATE_LOG, False, None, 60),

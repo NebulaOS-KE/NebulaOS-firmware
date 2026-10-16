@@ -65,15 +65,15 @@ for ts in 20260101_000000 20260102_000000 20260103_000000 20260104_000000 \
 	age_days_ago 30 "$f"
 done
 run_fn "$t1" "clean_old_save_config_backups" >/dev/null 2>&1
-remaining=$(find "$t1/printer_data/config" -maxdepth 1 -type f -name 'printer-*.cfg' | wc -l)
+remaining=$(find "$t1/printer_data/config/backups" -maxdepth 1 -type f -name 'printer-*.cfg' | wc -l)
 if [ "$remaining" = "10" ]; then
 	pass "test 1: exactly 10 SAVE_CONFIG backups remain out of 14"
 else
 	fail "test 1: expected 10 remaining, got $remaining"
 fi
-[ -f "$t1/printer_data/config/printer-20260114_000000.cfg" ] \
-	&& [ -f "$t1/printer_data/config/printer-20260105_000000.cfg" ] \
-	&& [ ! -f "$t1/printer_data/config/printer-20260101_000000.cfg" ] \
+[ -f "$t1/printer_data/config/backups/printer-20260114_000000.cfg" ] \
+	&& [ -f "$t1/printer_data/config/backups/printer-20260105_000000.cfg" ] \
+	&& [ ! -f "$t1/printer_data/config/backups/printer-20260101_000000.cfg" ] \
 	&& pass "test 1: the 10 newest backups were kept, oldest were pruned" \
 	|| fail "test 1: wrong set of backups retained"
 
@@ -89,7 +89,7 @@ for day in 01 02 03 04 05 06 07 08 09 10 11 12; do
 	age_days_ago 2 "$f"
 done
 run_fn "$t2" "clean_old_save_config_backups" >/dev/null 2>&1
-remaining2=$(find "$t2/printer_data/config" -maxdepth 1 -type f -name 'printer-*.cfg' | wc -l)
+remaining2=$(find "$t2/printer_data/config/backups" -maxdepth 1 -type f -name 'printer-*.cfg' | wc -l)
 if [ "$remaining2" = "12" ]; then
 	pass "test 2: all 12 recent (<7 day) SAVE_CONFIG backups survive untouched, even beyond keep=10"
 else
@@ -125,9 +125,14 @@ run_fn "$t3" "clean_old_save_config_backups" >/dev/null 2>&1
 [ -f "$printer_cfg" ] && [ -f "$named_bak" ] && [ -f "$macro_file" ] && [ -f "$managed_file" ] \
 	&& pass "test 3: live printer.cfg, named ad-hoc backups, macros, and the managed nebulaos/ tree are never touched" \
 	|| fail "test 3: a file outside the printer-YYYYMMDD_HHMMSS.cfg pattern was deleted"
-remaining3=$(find "$t3/printer_data/config" -maxdepth 1 -type f -name 'printer-*_*.cfg' | wc -l)
+remaining3=$(find "$t3/printer_data/config/backups" -maxdepth 1 -type f -name 'printer-*_*.cfg' | wc -l)
 [ "$remaining3" = "10" ] && pass "test 3: SAVE_CONFIG pruning among the mixed directory still kept exactly 10" \
 	|| fail "test 3: expected 10 SAVE_CONFIG backups remaining among mixed content, got $remaining3"
+
+# G62: the backups leave config/ for config/backups/; printer.cfg stays
+[ -z "$(find "$t3/printer_data/config" -maxdepth 1 -type f -name 'printer-*_*.cfg')" ] && [ -f "$printer_cfg" ] \
+	&& pass "G62: no SAVE_CONFIG backups left next to printer.cfg" \
+	|| fail "G62: SAVE_CONFIG backups still in config/"
 
 # =========================================================================
 # Test 4: idempotent - running twice produces the same final state
@@ -141,9 +146,9 @@ for n in 1 2 3 4 5 6 7 8 9 10 11 12 13; do
 	age_days_ago 30 "$f"
 done
 run_fn "$t4" "clean_old_save_config_backups" >/dev/null 2>&1
-after_first=$(find "$t4/printer_data/config" -maxdepth 1 -type f -name 'printer-*.cfg' | sort)
+after_first=$(find "$t4/printer_data/config/backups" -maxdepth 1 -type f -name 'printer-*.cfg' | sort)
 run_fn "$t4" "clean_old_save_config_backups" >/dev/null 2>&1
-after_second=$(find "$t4/printer_data/config" -maxdepth 1 -type f -name 'printer-*.cfg' | sort)
+after_second=$(find "$t4/printer_data/config/backups" -maxdepth 1 -type f -name 'printer-*.cfg' | sort)
 if [ "$after_first" = "$after_second" ]; then
 	pass "test 4: second run is a true no-op (idempotent)"
 else

@@ -1470,6 +1470,52 @@ migrate_static_ip_state() {
 	return 0
 }
 
+# G62 (2026-10-16): files handed to NebulaOS live in printer_data/uploads.
+# Moves anything in the old places - including files put there while an
+# older NebulaOS ran from the other slot - into the new folders. Never
+# overwrites ("name (2).ext" instead); the old folders stay as real
+# directories when not empty (no symlinks: Moonraker roots must not overlap)
+# and are removed when empty. Idempotent, every boot.
+UPLOADS_ROOT="${UPLOADS_ROOT:-/usr/data/nebulaos/printer_data/uploads}"
+OLD_BOOT_UPLOADS="${OLD_BOOT_UPLOADS:-/usr/data/nebulaos/boot/uploads}"
+
+_mu_move_all() {
+	_mu_from="$1"; _mu_to="$2"
+	[ -d "$_mu_from" ] && [ ! -L "$_mu_from" ] || return 0
+	mkdir -p "$_mu_to" 2>/dev/null
+	for _mu_f in "$_mu_from"/* "$_mu_from"/.[!.]*; do
+		[ -f "$_mu_f" ] && [ ! -L "$_mu_f" ] || continue
+		_mu_name=$(basename "$_mu_f")
+		_mu_dst="$_mu_to/$_mu_name"
+		_mu_n=1
+		while [ -e "$_mu_dst" ]; do
+			if cmp -s "$_mu_f" "$_mu_dst"; then break; fi
+			_mu_n=$((_mu_n + 1))
+			case "$_mu_name" in
+				*.*) _mu_dst="$_mu_to/${_mu_name%.*} ($_mu_n).${_mu_name##*.}" ;;
+				*) _mu_dst="$_mu_to/$_mu_name ($_mu_n)" ;;
+			esac
+		done
+		if [ -e "$_mu_dst" ]; then
+			rm -f "$_mu_f" && log "uploads: $_mu_f already in $_mu_to - old copy removed"
+		elif mv "$_mu_f" "$_mu_dst"; then
+			log "uploads: moved $_mu_f -> $_mu_dst"
+		else
+			log "ERROR: uploads: could not move $_mu_f - left in place"
+		fi
+	done
+	rmdir "$_mu_from" 2>/dev/null
+	return 0
+}
+
+migrate_user_uploads() {
+	_mu_move_all "$PRINTER_DATA_CONFIG/firmware/mcu" "$UPLOADS_ROOT/mainboard-firmware"
+	_mu_move_all "$PRINTER_DATA_CONFIG/firmware/os" "$UPLOADS_ROOT/system-image"
+	rmdir "$PRINTER_DATA_CONFIG/firmware" 2>/dev/null
+	_mu_move_all "$OLD_BOOT_UPLOADS" "$UPLOADS_ROOT/boot-logo"
+	return 0
+}
+
 start() {
 	_diag_init
 	_expected_version=""
@@ -1508,6 +1554,7 @@ start() {
 	migrate_config_ownership
 	migrate_guppy_stale_modules
 	migrate_static_ip_state
+	migrate_user_uploads
 
 	if [ ! -f "$SEEDS/seed-manifest.json" ]; then
 		_migration_action="skipped:no_manifest"
