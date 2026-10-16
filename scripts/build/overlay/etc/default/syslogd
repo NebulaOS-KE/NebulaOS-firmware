@@ -22,3 +22,12 @@ SYSLOGD_ARGS="-O $NEBULAOS_SYSLOG -s 512 -b 2 -l $NEBULAOS_SYSLOG_L"
 mkdir -p /var/log "$(dirname "$NEBULAOS_SYSLOG")" 2>/dev/null
 [ -e /var/log/messages ] && [ ! -L /var/log/messages ] && rm -f /var/log/messages
 ln -sfn "$NEBULAOS_SYSLOG" /var/log/messages 2>/dev/null
+
+# G68 (2026-10-16): syslogd stamps every line with the host name it sees at
+# start, and S01wifi (which sets the saved name) runs after it - so the whole
+# log said "buildroot". Set the saved host name first (read-only lookup, the
+# default "nebulaos" when there is no saved one).
+NEBULAOS_NETWORK_LIB="${NEBULAOS_NETWORK_LIB:-/etc/nebulaos-network.sh}"
+if [ -r "$NEBULAOS_NETWORK_LIB" ]; then
+	( . "$NEBULAOS_NETWORK_LIB" && { nnet_load >/dev/null 2>&1; hostname "$NNET_HOSTNAME"; } ) 2>/dev/null
+fi

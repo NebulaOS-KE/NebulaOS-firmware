@@ -19,11 +19,14 @@ import subprocess
 import time
 import zipfile
 
-from . import common, image, mcu, system
+from . import common, image, mcu, network, system, wifi
 
 LEVELS = ("info", "warning", "debug")
 LEVEL_FILE = os.environ.get("NEBULAOS_LOG_LEVEL_FILE",
                             os.path.join(common.NEBULAOS_ROOT, "system", "log-level"))
+# When Debug was switched on (epoch). Separate file: log-level itself stays one
+# word, read by S01syslogd's defaults and S56moonraker.
+DEBUG_SINCE_FILE = os.environ.get("NEBULAOS_LOG_DEBUG_SINCE_FILE", LEVEL_FILE + ".debug-since")
 SYSLOGD_INIT = os.environ.get("NEBULAOS_SYSLOGD_INIT", "/etc/init.d/S01syslogd")
 LOGS_DIR = os.environ.get("NEBULAOS_LOGS_DIR", "/opt/printer_data/logs")
 STATE_FILE = os.path.join(LOGS_DIR, "nebulaos-state.txt")
@@ -31,10 +34,14 @@ USB_DIR = os.environ.get("NEBULAOS_MCU_USB_DIR", "/opt/printer_data/gcodes/USB")
 CONFIG_DIR = os.environ.get("NEBULAOS_CONFIG_DIR", "/opt/printer_data/config")
 EXTRA_LOG_DIRS = [os.path.join(common.NEBULAOS_ROOT, d)
                   for d in ("logs", "maintenance/logs", "system/diagnostics")]
+# Single files outside those folders (the retention's own log).
+EXTRA_FILES = [os.path.join(common.NEBULAOS_ROOT, "maintenance", "retention.log")]
 RUN_FILES = ("/run/nebulaos-boot-scripts.log", "/var/run/nebulaos-boot-timing.log",
              "/run/nebulaos/data-fs.state", "/run/nebulaos/data-fs.e2fsck.log",
              "/run/nebulaos-mcu-guard.state", "/proc/meminfo", "/proc/cmdline")
 CHUNK = 65536
+DEBUG_HOURS = 24
+_CLOCK_VALID = 1735689600          # 2025-01-01: before this the clock is not set yet
 
 # Any "key = value" or "key: value" whose key looks like a secret.
 _SECRET = re.compile(r"(?i)(\b(?:psk|password|passwd|passphrase|secret|token|api[_-]?key|"
@@ -45,19 +52,54 @@ def redact(line):
     return _SECRET.sub(lambda m: m.group(1) + "[redacted]", line)
 
 
-def get_level():
+def _read_level():
+    """(level, epoch Debug was switched on or None)."""
     try:
         with open(LEVEL_FILE) as handle:
             level = handle.read().strip()
     except OSError:
         level = ""
-    return level if level in LEVELS else "info"
+    level = level if level in LEVELS else "info"
+    set_at = None
+    if level == "debug":
+        try:
+            with open(DEBUG_SINCE_FILE) as handle:
+                raw = handle.read().strip()
+            if raw.isdigit() and int(raw) >= _CLOCK_VALID:
+                set_at = int(raw)
+        except OSError:
+            pass
+    return level, set_at
+
+
+def get_level():
+    return _read_level()[0]
 
 
 def status():
-    return {"level": get_level(), "levels": list(LEVELS),
-            "applies_to": ["system log", "screen", "Moonraker (debug only, at its next start)"],
-            "not_applicable": ["Klipper (no log levels)"]}
+    level, set_at = _read_level()
+    out = {"level": level, "levels": list(LEVELS),
+           "applies_to": ["system log", "screen", "Moonraker (debug only, at its next start)"],
+           "not_applicable": ["Klipper (no log levels)"]}
+    if level == "debug" and set_at:
+        out["debug_until"] = set_at + DEBUG_HOURS * 3600
+    return out
+
+
+def expire_debug(now=None):
+    """G69: detailed logging switches itself back to info after DEBUG_HOURS,
+    so a forgotten Debug never fills the disk. A level set before the clock
+    was valid gets its start time now."""
+    now = int(time.time()) if now is None else now
+    level, set_at = _read_level()
+    if level != "debug" or now < _CLOCK_VALID:
+        return {"result": "UNCHANGED", "level": level}
+    if set_at is None:
+        common.atomic_write(DEBUG_SINCE_FILE, "%d\n" % now)
+        return {"result": "UNCHANGED", "level": level}
+    if now - set_at < DEBUG_HOURS * 3600:
+        return {"result": "UNCHANGED", "level": level}
+    return dict(set_level("info"), result="EXPIRED")
 
 
 def set_level(level):
@@ -65,6 +107,14 @@ def set_level(level):
         raise common.invalid("INVALID_LEVEL", "level must be one of %s" % ", ".join(LEVELS))
     os.makedirs(os.path.dirname(LEVEL_FILE), exist_ok=True)
     common.atomic_write(LEVEL_FILE, level + "\n")
+    now = int(time.time())
+    if level == "debug" and now >= _CLOCK_VALID:
+        common.atomic_write(DEBUG_SINCE_FILE, "%d\n" % now)
+    elif level != "debug":
+        try:
+            os.unlink(DEBUG_SINCE_FILE)
+        except OSError:
+            pass
     rc, _, err = common.run([SYSLOGD_INIT, "restart"], 30)
     out = {"result": "APPLIED", "level": level, "system_log": "applied" if rc == 0 else
            "not restarted: %s" % err.strip()[:120]}
@@ -96,15 +146,19 @@ def state_text():
     add("last system image install", lambda: image.status().get("last") or "none")
     add("mcu", mcu.status)
     add("log level", status)
+    add("network", network.status)
+    add("wi-fi", wifi.status)
     for path in ("/proc/uptime", "/proc/loadavg"):
         try:
             with open(path) as handle:
                 parts.append(_section(path, handle.read()))
         except OSError:
             pass
-    rc, out, _ = common.run(["df", "-k"], 10)
-    if rc == 0:
-        parts.append(_section("df -k", out))
+    for title, argv in (("df -k", ["df", "-k"]), ("free", ["free"]),
+                        ("processes", ["ps", "-o", "pid,ppid,vsz,rss,stat,args"])):
+        rc, out, _ = common.run(argv, 10)
+        if rc == 0:
+            parts.append(_section(title, out))
     return redact_text("".join(parts))
 
 
@@ -150,6 +204,10 @@ def _files():
             full = os.path.join(base, name)
             if os.path.isfile(full) and not os.path.islink(full):
                 out.append((full, "%s/%s" % (prefix, name)))
+    for path in EXTRA_FILES:
+        if os.path.isfile(path) and not os.path.islink(path):
+            rel = os.path.relpath(path, common.NEBULAOS_ROOT)
+            out.append((path, "nebulaos/" + rel))
     for path in RUN_FILES:
         if os.path.isfile(path):
             out.append((path, "run" + path.replace("/", "_")))
@@ -165,8 +223,20 @@ def _files():
     return out
 
 
-def _add_text_stream(zf, name, handle):
-    with zf.open(name, "w") as dst:
+def _zipinfo(name, path=None):
+    """The file's own date (zip cannot hold dates before 1980)."""
+    try:
+        mtime = os.stat(path).st_mtime if path else time.time()
+    except OSError:
+        mtime = time.time()
+    stamp = time.gmtime(max(mtime, 315532800))
+    info = zipfile.ZipInfo(name, date_time=stamp[:6])
+    info.compress_type = zipfile.ZIP_DEFLATED
+    return info
+
+
+def _add_text_stream(zf, name, handle, path=None):
+    with zf.open(_zipinfo(name, path), "w") as dst:
         for line in handle:
             if isinstance(line, bytes):
                 line = line.decode("utf-8", "replace")
@@ -186,7 +256,7 @@ def save_logs():
             for path, arc in _files():
                 try:
                     with open(path, "r", encoding="utf-8", errors="replace", newline="") as handle:
-                        _add_text_stream(zf, arc, handle)
+                        _add_text_stream(zf, arc, handle, path)
                     count += 1
                 except OSError:
                     continue
@@ -205,4 +275,5 @@ def save_logs():
         raise
     os.sync()
     return {"result": "SAVED", "file": name, "files": count + 1,
-            "bytes": os.path.getsize(final), "usb": os.path.basename(target_dir)}
+            "bytes": os.path.getsize(final), "usb": os.path.basename(target_dir),
+            "safe_to_remove": True}

@@ -1442,6 +1442,7 @@ class LogsTests(unittest.TestCase):
         self.l = importlib.import_module("nebulaos_osconfig.logs")
         t = self.e.tmp
         self.l.LEVEL_FILE = os.path.join(t, "log-level")
+        self.l.DEBUG_SINCE_FILE = self.l.LEVEL_FILE + ".debug-since"
         self.calls = os.path.join(t, "calls")
         self.l.SYSLOGD_INIT = os.path.join(self.e.bin, "S01syslogd")
         write_exe(self.l.SYSLOGD_INIT, 'echo "syslogd $1" >> "%s"\n' % self.calls)
@@ -1451,6 +1452,7 @@ class LogsTests(unittest.TestCase):
         self.l.CONFIG_DIR = os.path.join(t, "config")
         self.l.EXTRA_LOG_DIRS = [os.path.join(t, "nlogs")]
         self.l.RUN_FILES = ()
+        self.l.EXTRA_FILES = [os.path.join(t, "retention.log")]
         os.makedirs(self.l.LOGS_DIR)
         os.makedirs(os.path.join(self.l.CONFIG_DIR, "backups"))
         os.makedirs(self.l.EXTRA_LOG_DIRS[0])
@@ -1462,11 +1464,30 @@ class LogsTests(unittest.TestCase):
         self.assertEqual(self.l.get_level(), "info")
         out = self.l.set_level("debug")
         self.assertEqual((out["level"], out["system_log"]), ("debug", "applied"))
-        self.assertEqual(open(self.l.LEVEL_FILE).read().strip(), "debug")
+        self.assertEqual(open(self.l.LEVEL_FILE).read(), "debug\n")   # one word: shell readers
+        self.assertEqual(self.l.get_level(), "debug")
         self.assertIn("syslogd restart", open(self.calls).read())
         with self.assertRaises(self.e.common.OsConfigError):
             self.l.set_level("trace")
         self.assertEqual(self.l.status()["levels"], ["info", "warning", "debug"])
+
+    def test_debug_expires_after_24_hours(self):
+        """G69: a forgotten Debug never stays on; a level set before the
+        clock was valid starts its 24 hours once the clock is right."""
+        now = 1792100000
+        open(self.l.LEVEL_FILE, "w").write("debug\n")             # set before the clock
+        self.assertEqual(self.l.expire_debug(now=1583020800)["result"], "UNCHANGED")
+        self.assertEqual(self.l.expire_debug(now=now)["result"], "UNCHANGED")
+        self.assertEqual(open(self.l.LEVEL_FILE).read(), "debug\n")
+        self.assertEqual(open(self.l.DEBUG_SINCE_FILE).read().strip(), str(now))
+        self.assertEqual(self.l.status()["debug_until"], now + 86400)
+        self.assertEqual(self.l.expire_debug(now=now + 86399)["level"], "debug")
+        out = self.l.expire_debug(now=now + 86400)
+        self.assertEqual((out["result"], self.l.get_level()), ("EXPIRED", "info"))
+        self.assertNotIn("debug_until", self.l.status())
+        self.assertFalse(os.path.exists(self.l.DEBUG_SINCE_FILE))
+        open(self.l.LEVEL_FILE, "w").write("warning\n")
+        self.assertEqual(self.l.expire_debug(now=now + 10 ** 6)["level"], "warning")
 
     def test_redact(self):
         r = self.l.redact
@@ -1484,12 +1505,15 @@ class LogsTests(unittest.TestCase):
         open(os.path.join(self.l.CONFIG_DIR, "printer.cfg"), "w").write("[printer]\n")
         open(os.path.join(self.l.CONFIG_DIR, "moonraker.conf"), "w").write("[authorization]\napi_key: k3y\n")
         open(os.path.join(self.l.CONFIG_DIR, "backups", "printer-1.cfg"), "w").write("x\n")
+        open(self.l.EXTRA_FILES[0], "w").write("retention ran\n")
+        os.utime(os.path.join(self.l.LOGS_DIR, "klippy.log"), (1792100000, 1792100000))
         with self.assertRaises(self.e.common.OsConfigError) as cm:
             self.l.save_logs()
         self.assertEqual(cm.exception.code, "NO_USB")
         os.makedirs(os.path.join(self.l.USB_DIR, "sda1"))
         out = self.l.save_logs()
         self.assertEqual(out["result"], "SAVED")
+        self.assertTrue(out["safe_to_remove"])
         self.assertTrue(os.path.isfile(self.l.STATE_FILE))
         import zipfile
         z = zipfile.ZipFile(os.path.join(self.l.USB_DIR, "sda1", out["file"]))
@@ -1497,13 +1521,17 @@ class LogsTests(unittest.TestCase):
         for want in ("logs/klippy.log", "logs/system.log.0", "logs/nebulaos-state.txt",
                      "nebulaos/nlogs/memguard.log", "config/printer.cfg", "config/moonraker.conf", "run/dmesg.txt"):
             self.assertIn(want, names)
+        self.assertTrue(any(n.endswith("retention.log") for n in names))
+        # G68: the file's own date, not 1980
+        self.assertEqual(z.getinfo("logs/klippy.log").date_time[:3], (2026, 10, 15))
         self.assertNotIn("config/backups/printer-1.cfg", names)
         self.assertNotIn(b"secret1", z.read("logs/klippy.log"))
         self.assertIn(b"psk=[redacted]", z.read("logs/klippy.log"))
         self.assertNotIn(b"k3y", z.read("config/moonraker.conf"))
         self.assertEqual([n for n in os.listdir(os.path.join(self.l.USB_DIR, "sda1")) if n.endswith(".part")], [])
         state = open(self.l.STATE_FILE).read()
-        for section in ("== system ==", "== slots ==", "== mcu ==", "== log level =="):
+        for section in ("== system ==", "== slots ==", "== mcu ==", "== log level ==",
+                        "== network ==", "== wi-fi ==", "== processes =="):
             self.assertIn(section, state)
 
 

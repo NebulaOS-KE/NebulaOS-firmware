@@ -5,6 +5,7 @@
 #   - save the clock (S01restore-clock restores it at the next boot)
 #   - refresh printer_data/logs/nebulaos-state.txt (versions, slots, MCU,
 #     storage) so Mainsail's own "download as zip" of the logs carries it
+#   - G69: Debug logging back to Info after 24 hours
 # First pass right away (end of boot), then every 30 minutes.
 
 INTERVAL="${NEBULAOS_HOUSEKEEPING_INTERVAL:-1800}"
@@ -13,6 +14,7 @@ OSCONFIG=/usr/libexec/nebulaos/nebulaos-osconfig
 
 chores() {
 	/etc/init.d/S01restore-clock save
+	nice -n 10 "$OSCONFIG" logs expire-debug >/dev/null 2>&1
 	nice -n 10 "$OSCONFIG" logs write-state >/dev/null 2>&1
 }
 

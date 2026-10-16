@@ -1208,7 +1208,12 @@ loop() {
 if [ -z "${NEBULAOS_UPDATE_SUPERVISOR_NO_AUTORUN:-}" ]; then
 	case "$1" in
 		loop)
-			loop
+			# G68 (2026-10-16): start-stop-daemon -b discards stdout, so every
+			# log() line was lost. Kept in maintenance/logs (trimmed by the
+			# retention, part of "Save logs to USB").
+			SUPERVISOR_LOG="${SUPERVISOR_LOG:-$NEBULAOS_ROOT/maintenance/logs/update-supervisor.log}"
+			mkdir -p "${SUPERVISOR_LOG%/*}" 2>/dev/null
+			loop >> "$SUPERVISOR_LOG" 2>&1
 			;;
 		poll-once)
 			poll_once

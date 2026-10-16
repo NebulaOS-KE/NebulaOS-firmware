@@ -53,5 +53,16 @@ out=$(cd "$O/usr/lib/nebulaos/python" && NEBULAOS_LOG_LEVEL_FILE="$W/level" pyth
 	"import sys; sys.path.insert(0, '.'); from nebulaos_osconfig import cli; sys.exit(cli.main(['logs', 'status']))" 2>&1)
 case "$out" in *'"level": "debug"'*'"ok": true'*) pass ;; *) fail "logs status via the CLI: $out" ;; esac
 
+# G68: the saved host name is set before syslogd starts (only that block of the
+# defaults file is run here - the rest touches /var/log).
+sed -n '/^# G68/,$p' "$O/etc/default/syslogd" > "$W/hostblock"
+printf '#!/bin/sh\necho "$1" > "%s/hostname-set"\n' "$W" > "$W/bin/hostname"; chmod +x "$W/bin/hostname"
+printf 'NNET_HOSTNAME=kitchen-ke\nNNET_MODE=dhcp\n' > "$W/boot.env"
+PATH="$W/bin:$PATH" NNET_ENV="$W/boot.env" NEBULAOS_NETWORK_LIB="$O/etc/nebulaos-network.sh" sh "$W/hostblock"
+[ "$(cat "$W/hostname-set" 2>/dev/null)" = kitchen-ke ] && pass || fail "saved host name not set before syslogd"
+rm -f "$W/boot.env" "$W/hostname-set"
+PATH="$W/bin:$PATH" NNET_ENV="$W/boot.env" NEBULAOS_NETWORK_LIB="$O/etc/nebulaos-network.sh" sh "$W/hostblock"
+[ "$(cat "$W/hostname-set" 2>/dev/null)" = nebulaos ] && pass || fail "default host name not set before syslogd"
+
 echo "log-level-and-clock-tests: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -16,6 +16,7 @@
 #   nebulaos-osconfig boot-display status|reset-image
 #   nebulaos-osconfig boot-display set-mode --mode logo
 #   nebulaos-osconfig logs status | set-level --level info|warning|debug | write-state | save
+#   nebulaos-osconfig logs expire-debug        (housekeeping: Debug ends after 24 h)
 #   nebulaos-osconfig boot-display restore-original-logo
 #   nebulaos-osconfig boot-display list-images | preview [--file NAME]
 #   nebulaos-osconfig boot-display import-usb --file usb/<dev>/<path> | delete-image --file NAME
@@ -63,7 +64,7 @@ READ_ONLY = {("system", "info"), ("network", "status"),
 # polls them), nor is anything from stdin (the Wi-Fi password arrives there).
 # Display sleep/wake run at every screen timeout, so only failures of those.
 _QUIET_OK = {("display", "sleep"), ("display", "wake"), ("boot-display", "render"),
-             ("logs", "write-state")}
+             ("logs", "write-state"), ("logs", "expire-debug")}
 _LOGGED_ARGS = ("--hostname", "--ssid", "--mode", "--file", "--level", "--sha256")
 _LOGGED_RESULT = ("result", "ssid", "address", "address_mode", "address_note",
                   "next_boot", "applies")
@@ -72,7 +73,7 @@ _LOGGED_RESULT = ("result", "ssid", "address", "address_mode", "address_note",
 def _audit(argv, out):
     if len(argv) < 2 or (argv[0], argv[1]) in READ_ONLY:
         return
-    if out.get("ok") and (argv[0], argv[1]) in _QUIET_OK:
+    if out.get("ok") and (argv[0], argv[1]) in _QUIET_OK and out.get("result") != "EXPIRED":
         return
     parts = [argv[0], argv[1]]
     for i, arg in enumerate(argv[2:-1], start=2):
@@ -175,6 +176,9 @@ def _dispatch(argv):
             if verb == "save":
                 _opts(rest, {})
                 return logs.save_logs()
+            if verb == "expire-debug":
+                _opts(rest, {})
+                return logs.expire_debug()
         elif domain == "image":
             if verb == "check":
                 return image.check(_opts(rest, {"file": True}).get("file"))
