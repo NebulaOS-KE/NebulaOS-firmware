@@ -113,7 +113,7 @@ def _dispatch(argv):
             return image.status() if verb == "status" else image.list_files()
         return {"system": system.info, "network": network.status,
                 "boot-display": bootdisplay.status, "display": display.status,
-                "wifi": wifi.status}[domain]()
+                "wifi": wifi.status, "logs": logs.status}[domain]()
     if (domain, verb) == ("mcu", "flash"):
         # Its own non-blocking lock: a second flash is refused, never queued.
         opts = _opts(rest, {"file": True, "sha256": True})

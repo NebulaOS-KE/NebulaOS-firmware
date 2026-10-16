@@ -46,5 +46,12 @@ clock start; [ ! -e "$W/set" ] && pass || fail "garbage saved time used"
 	= "S01persistent-datastore S01restore-clock S01syslogd " ] && [ -x "$O/etc/init.d/S01restore-clock" ] \
 	&& pass || fail "S01restore-clock must run after the data partition, before syslogd"
 
+# The screen reads the level through the CLI (read-only path); found broken on
+# the printer (KeyError 'logs', 2026-10-16).
+printf 'debug\n' > "$W/level"
+out=$(cd "$O/usr/lib/nebulaos/python" && NEBULAOS_LOG_LEVEL_FILE="$W/level" python3 -I -c \
+	"import sys; sys.path.insert(0, '.'); from nebulaos_osconfig import cli; sys.exit(cli.main(['logs', 'status']))" 2>&1)
+case "$out" in *'"level": "debug"'*'"ok": true'*) pass ;; *) fail "logs status via the CLI: $out" ;; esac
+
 echo "log-level-and-clock-tests: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]
