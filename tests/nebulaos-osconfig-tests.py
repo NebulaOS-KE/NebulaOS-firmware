@@ -2273,6 +2273,25 @@ class CliContractTests(unittest.TestCase):
         self.assertEqual(rc, 64)
         self.assertFalse(out["ok"])
 
+    def test_every_read_only_verb_reaches_its_own_function(self):
+        """Run 9 test on ke-dev: boot-display list-images fell through to the
+        domain's status (no "images" - the Boot logo page saw nothing), as
+        logs status once fell into a KeyError. Every read-only verb, through
+        the CLI the way the screen calls it."""
+        cli = self.e.cli
+        for domain, verb in sorted(cli.READ_ONLY):
+            rc, out = self.run_cli(domain, verb)
+            self.assertNotIn(out.get("error"), ("USAGE", "INTERNAL"), (domain, verb, out))
+        bd = importlib.import_module("nebulaos_osconfig.bootdisplay")
+        os.makedirs(bd.UPLOAD_DIR, exist_ok=True)
+        open(os.path.join(bd.UPLOAD_DIR, "logo.png"), "wb").write(b"x")
+        rc, out = self.run_cli("boot-display", "list-images")
+        self.assertTrue(out["ok"], out)
+        self.assertEqual([i["name"] for i in out["images"]], ["logo.png"])
+        self.assertIn("usb", out)
+        rc, out = self.run_cli("boot-display", "preview", "--file", "logo.png")
+        self.assertNotEqual(out.get("error"), "USAGE", out)
+
     def test_invalid_is_exit_1(self):
         rc, out = self.run_cli("network", "set-hostname", "--hostname", "bad_name")
         self.assertEqual((rc, out["ok"], out["error"]), (1, False, "INVALID_HOSTNAME"))

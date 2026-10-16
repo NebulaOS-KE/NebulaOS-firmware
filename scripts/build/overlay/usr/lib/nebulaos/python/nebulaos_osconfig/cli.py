@@ -73,6 +73,8 @@ READ_ONLY = {("system", "info"), ("network", "status"),
 # Display sleep/wake run at every screen timeout, so only failures of those.
 _QUIET_OK = {("display", "sleep"), ("display", "wake"), ("boot-display", "render"),
              ("logs", "write-state"), ("logs", "expire-debug")}
+# Read-only verbs that ARE the domain's status/info function.
+_STATUS_ALIASES = {("system", "info"), ("mcu", "list"), ("image", "list")}
 # A snapshot is logged when one is taken, not when nothing changed.
 _QUIET_RESULTS = ("UNCHANGED",)
 _LOGGED_ARGS = ("--hostname", "--ssid", "--mode", "--file", "--level", "--sha256", "--reason")
@@ -133,8 +135,19 @@ def _dispatch(argv):
         o = _opts(rest, {"file": True, "sha256": True})
         image.run_job(o.get("file"), o.get("sha256"))
         return {"result": "DONE"}
+    # Read-only verbs with their own function (not the domain's status):
+    # list-images and preview used to fall through to bootdisplay.status, so
+    # the Boot logo page saw no images and "no USB stick" (found on ke-dev
+    # 2026-10-16, Run 9 test).
+    if (domain, verb) == ("boot-display", "list-images"):
+        _opts(rest, {})
+        return bootdisplay.list_images()
+    if (domain, verb) == ("boot-display", "preview"):
+        return bootdisplay.preview(_opts(rest, {"file": True}).get("file") or "")
     if (domain, verb) in READ_ONLY:
         _opts(rest, {})
+        if verb != "status" and (domain, verb) not in _STATUS_ALIASES:
+            raise common.invalid("USAGE", "no handler for %s %s" % (domain, verb))
         if domain == "mcu":
             return mcu.status() if verb == "status" else mcu.list_files()
         if domain == "image":
