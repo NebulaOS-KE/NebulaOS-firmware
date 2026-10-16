@@ -1622,12 +1622,51 @@ class SettingsSnapshotTests(unittest.TestCase):
         self.assertNotIn(first["name"], names)
         self.assertIn("# 6", open(os.path.join(self.s.BACKUPS_DIR, names[-1], "printer.cfg")).read())
 
+    def test_new_system_snapshot_outlives_later_changes(self):
+        first = self.s.take("new-system", db="none", now=1792000000)["name"]
+        for i in range(8):
+            self.w("config/printer.cfg", "[printer]\n# %d\n" % i)
+            self.s.take("changed", db="none", if_changed=True, now=1792100000 + i * 60)
+        names = self.s.snapshots()
+        self.assertIn(first, names)
+        self.assertEqual(len(names), self.s.KEEP + 1)
+
     def test_api_backup_unreachable_is_recorded(self):
         out = self.s.take("manual", db="api", now=1792100000)
         self.assertEqual(out["result"], "TAKEN")
         self.assertTrue(out["database"].startswith("skipped"))
         with self.assertRaises(self.e.common.OsConfigError):
             self.s.take("whenever")
+
+
+class NoticeTests(unittest.TestCase):
+    """G65: one-line notices for the screen; ids never reach outside the folder."""
+
+    def setUp(self):
+        self.e = Env()
+        self.sy = importlib.import_module("nebulaos_osconfig.system")
+        self.sy.NOTICES_DIR = os.path.join(self.e.tmp, "notices")
+        os.makedirs(self.sy.NOTICES_DIR)
+
+    def tearDown(self):
+        self.e.cleanup()
+
+    def test_list_and_ack(self):
+        with open(os.path.join(self.sy.NOTICES_DIR, "config-edits.txt"), "w") as h:
+            h.write("Your changes to machine.cfg were replaced.\n")
+        with open(os.path.join(self.sy.NOTICES_DIR, "Bad Name.txt"), "w") as h:
+            h.write("x")
+        self.assertEqual(self.sy.notices(), [{"id": "config-edits",
+                                              "text": "Your changes to machine.cfg were replaced."}])
+        self.assertEqual(self.sy.ack_notice("config-edits")["result"], "ACKNOWLEDGED")
+        self.assertEqual(self.sy.notices(), [])
+        self.assertEqual(self.sy.ack_notice("config-edits")["result"], "ACKNOWLEDGED")   # idempotent
+        victim = os.path.join(self.e.tmp, "x.txt")
+        open(victim, "w").write("keep")
+        for bad in ("../x", "A", "", None, "a/b"):
+            with self.assertRaises(self.e.common.OsConfigError):
+                self.sy.ack_notice(bad)
+        self.assertTrue(os.path.exists(victim))
 
 
 class CrealityCleanupTests(unittest.TestCase):
@@ -1702,6 +1741,17 @@ class CrealityCleanupTests(unittest.TestCase):
         self.assertEqual(why.get("swap"), "in use as swap")
         self.assertEqual(why.get("opt"), "a drive is mounted there")
         self.assertTrue(self.exists("swap") and self.exists("opt/bin/gcc"))
+
+    def test_swap_inside_a_folder_is_kept(self):
+        os.makedirs(os.path.join(self.d, "creality/sw"))
+        with open(os.path.join(self.d, "creality/sw/swapfile"), "w") as h:
+            h.write("s")
+        with open(self.c.PROC_SWAPS, "a") as h:
+            h.write("%s file 1000 0 -2\n" % os.path.join(self.d, "creality/sw/swapfile"))
+        out = self.c.clean_creality()
+        why = {os.path.basename(k["path"]): k["why"] for k in out["kept"]}
+        self.assertEqual(why.get("creality"), "in use as swap")
+        self.assertTrue(self.exists("creality/sw/swapfile"))
 
     def test_storage_overview(self):
         out = self.c.storage()

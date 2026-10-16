@@ -179,11 +179,15 @@ def take(reason, db="api", if_changed=False, now=None):
 
 
 def prune(keep=KEEP):
-    """Newest KEEP stay (the newest is never removed); older ones go together
-    with their database copies."""
+    """Newest KEEP stay (the newest is never removed), and always the newest
+    "new-system" one - the copy from before the running system first touched
+    the settings; older ones go together with their database copies."""
     names = snapshots()
+    first = [n for n in names if n.endswith("-new-system")][-1:]
     gone = []
     for name in names[:-max(keep, 1)]:
+        if name in first:
+            continue
         shutil.rmtree(os.path.join(BACKUPS_DIR, name), ignore_errors=True)
         shutil.rmtree(os.path.join(DB_FILE_DIR, name), ignore_errors=True)
         try:

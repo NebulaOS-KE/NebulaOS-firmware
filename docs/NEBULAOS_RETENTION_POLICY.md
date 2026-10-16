@@ -20,7 +20,7 @@ Investigated directly from `https://github.com/pellcorp/creality` (`k1/services/
 
 ### 2.1 Scope boundary (namespace-restricted, not a literal port)
 
-Unlike SimpleAF's script (which operates directly on `/usr/data`), NebulaOS's retention manager is restricted to an explicit allowlist of paths under `/usr/data/nebulaos/{updates,backups,maintenance,envs,system}` plus the one deliberate special exception below (§2.4). It must:
+Unlike SimpleAF's script (which operates directly on `/usr/data`), NebulaOS's retention manager is restricted to an explicit allowlist of paths under `/usr/data/nebulaos/{updates,backups,maintenance,envs,system}` - since G66 (2026-10-16) also `printer_data/config/uploads/system-image` (uploaded images older than 30 days, never during an image install; an installed one is removed by the image trial by sha256) and `printer_data/config/backups/nebulaos-changes-*` (newest 5) - plus the one deliberate special exception below (§2.4). It must:
 
 - Reject any resolved path that escapes the namespace (`realpath` resolution, then a prefix check against `/usr/data/nebulaos`, not a string-prefix check on the unresolved path — must not be foolable by `..` or symlinks).
 - Never follow a symlink that resolves outside the namespace.
@@ -76,6 +76,13 @@ Every retention-manager run supports `--dry-run` (log intended deletions without
 ### 2.6 RTC-before-NTP handling
 
 Adapted directly from SimpleAF's own mechanism (§1): detect a start timestamp before a fixed reference date, wait for a large forward clock jump before performing any `mtime`-based comparison. NebulaOS's own implementation should use a reference date close to its own baseline (`functional-production-baseline-2026-07-23` or later) rather than SimpleAF's hardcoded 2025 date, and the same "wait for >20 minute jump" heuristic, adjusted only if real-device testing (Phase 12) shows this project's own NTP sync timing differs meaningfully from SimpleAF's board.
+
+### 2.9 When it runs (G66, 2026-10-16)
+
+- At boot from `S45nebulaos-cleanup` (waits for a real clock, up to 20 min).
+- Every 30 minutes from `S99nebulaos-housekeeping` with `NEBULAOS_RETENTION_PERIODIC=1` and no clock wait: skipped entirely while a print runs or is paused; the §2.4 emergency print-file deletion is never done in this mode (boot only).
+- One run at a time: a `mkdir` lock at `maintenance/retention.lock`, taken over when older than an hour.
+- Files of the other system on the data drive are never touched by retention; removing them is the user's explicit "Clean up Creality files" (`nebulaos_osconfig/cleanup.py`, fixed list).
 
 ## 3. Open decisions (as originally drafted — resolved in §4/§5)
 

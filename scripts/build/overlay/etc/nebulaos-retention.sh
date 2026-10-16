@@ -516,6 +516,18 @@ clean_old_system_images() {
 	done
 }
 
+# G65/G66: config/backups/nebulaos-changes-* (a user's edits of
+# config/nebulaos kept by an update) - the newest NEBULAOS_CHANGES_KEEP stay.
+NEBULAOS_CHANGES_KEEP=5
+clean_old_nebulaos_changes() {
+	_dir="$NEBULAOS_ROOT/printer_data/config/backups"
+	[ -d "$_dir" ] && path_is_namespace_safe "$_dir" || return 0
+	ls -1d "$_dir"/nebulaos-changes-* 2>/dev/null | sort -r | tail -n "+$((NEBULAOS_CHANGES_KEEP + 1))" | \
+		while read -r d; do
+		path_is_namespace_safe "$d" && delete "$d" "old-nebulaos-changes"
+	done
+}
+
 retention_lock() {
 	mkdir -p "$(dirname "$RETENTION_LOCK")" 2>/dev/null
 	mkdir "$RETENTION_LOCK" 2>/dev/null && return 0
@@ -555,6 +567,7 @@ start() {
 	clean_migration_backups
 	clean_mainsail_namespace_backups
 	clean_stray_bak_files
+	clean_old_nebulaos_changes
 	# Age rules need a real clock (none before NTP or the saved clock).
 	[ "$(date +%s)" -ge 1784851200 ] && clean_old_system_images
 
@@ -567,7 +580,13 @@ start() {
 	if [ "$free" -lt "$CRITICAL_FLOOR_MB" ]; then
 		log "CRITICAL: ${free}MB free (floor ${CRITICAL_FLOOR_MB}MB)"
 		clean_pip_cache
-		emergency_gcode_cleanup
+		# G66: deleting the user's print files stays a once-per-boot last
+		# resort (S45), never every 30 minutes from the housekeeping loop.
+		if [ -n "${NEBULAOS_RETENTION_PERIODIC:-}" ]; then
+			log "CRITICAL: print files are only cleaned at boot - not in the periodic run"
+		else
+			emergency_gcode_cleanup
+		fi
 	elif [ "$free" -lt "$CAUTION_FLOOR_MB" ]; then
 		log "CAUTION: ${free}MB free (floor ${CAUTION_FLOOR_MB}MB) - new updates should be blocked until this clears (Phase 8's own concern, not this script's)"
 	fi

@@ -2,7 +2,8 @@
 # G66 (2026-10-16): the retention job also runs from the housekeeping loop -
 # one run at a time (lock, stale after an hour), skipped while printing in
 # that periodic mode, and uploaded system images older than 30 days go
-# (never during an image install).
+# (never during an image install); print files are only an emergency at
+# boot; old nebulaos-changes-* folders pruned.
 set -u
 REPO_ROOT=$(cd "$(dirname "$0")/.." && pwd)
 RETENTION_SCRIPT="$REPO_ROOT/scripts/build/overlay/etc/nebulaos-retention.sh"
@@ -60,6 +61,28 @@ touch -d "2 hours ago" "$WORK/maintenance/retention.lock"
 run sh -c ". '$RETENTION_SCRIPT'; start"
 [ "$(wc -c < "$WORK/printer_data/logs/guppyscreen.log")" -lt 6000000 ] && [ ! -d "$WORK/maintenance/retention.lock" ] \
 	&& pass || fail "stale lock not taken over"
+
+# print files: the emergency deletion stays boot-only (S45), never periodic
+mkdir -p "$WORK/printer_data/gcodes"; echo g > "$WORK/printer_data/gcodes/old.gcode"
+touch -d "2026-08-01 00:00:00" "$WORK/printer_data/gcodes/old.gcode"
+printf '#!/bin/sh\necho "Filesystem 1M-blocks Used Available Use%% Mounted"; echo "/dev/x 6000 5900 100 99%% /usr/data"\n' > "$WORK/bin/df"; chmod +x "$WORK/bin/df"
+run NEBULAOS_RETENTION_PERIODIC=1 sh -c ". '$RETENTION_SCRIPT'; start"
+[ -e "$WORK/printer_data/gcodes/old.gcode" ] && pass || fail "periodic run deleted a print file"
+grep -q "only cleaned at boot" "$WORK/maintenance/retention.log" && pass || fail "periodic critical not logged"
+run sh -c ". '$RETENTION_SCRIPT'; start"
+[ ! -e "$WORK/printer_data/gcodes/old.gcode" ] && pass || fail "boot run did not do the emergency cleanup"
+rm -f "$WORK/bin/df"
+
+# config/backups/nebulaos-changes-*: newest 5 kept
+B="$WORK/printer_data/config/backups"; mkdir -p "$B"
+for i in 1 2 3 4 5 6 7; do mkdir -p "$B/nebulaos-changes-2026100${i}T000000Z"; done
+run sh -c ". '$RETENTION_SCRIPT'; clean_old_nebulaos_changes"
+[ "$(ls -d "$B"/nebulaos-changes-* | wc -l)" -eq 5 ] && [ ! -e "$B/nebulaos-changes-20261001T000000Z" ] \
+	&& pass || fail "nebulaos-changes pruning: $(ls "$B")"
+
+# the update supervisor's log lines go to a file (start-stop-daemon -b drops stdout)
+grep -q 'loop >> "$SUPERVISOR_LOG" 2>&1' "$REPO_ROOT/scripts/build/overlay/etc/nebulaos-update-supervisor.sh" \
+	&& pass || fail "update supervisor log not redirected"
 
 # the housekeeping loop calls it in periodic mode without the clock wait
 HK="$REPO_ROOT/scripts/build/overlay/etc/init.d/S99nebulaos-housekeeping"

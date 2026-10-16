@@ -113,8 +113,9 @@ def _blocked(path, mounts, swaps):
     for m in mounts:
         if m == real or m.startswith(real + os.sep):
             return "a drive is mounted there"
-    if real in swaps or path in swaps:
-        return "in use as swap"
+    for sw in swaps:
+        if sw in (real, path) or sw.startswith(real + os.sep) or sw.startswith(path + os.sep):
+            return "in use as swap"
     nb = os.path.realpath(NEBULAOS_ROOT)
     if real == nb or real.startswith(nb + os.sep) or nb.startswith(real + os.sep):
         return "NebulaOS"
