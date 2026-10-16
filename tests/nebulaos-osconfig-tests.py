@@ -1434,6 +1434,79 @@ else:
 """
 
 
+class LogsTests(unittest.TestCase):
+    """G60 (2026-10-16): general log level, status file, "Save logs to USB"."""
+
+    def setUp(self):
+        self.e = Env()
+        self.l = importlib.import_module("nebulaos_osconfig.logs")
+        t = self.e.tmp
+        self.l.LEVEL_FILE = os.path.join(t, "log-level")
+        self.calls = os.path.join(t, "calls")
+        self.l.SYSLOGD_INIT = os.path.join(self.e.bin, "S01syslogd")
+        write_exe(self.l.SYSLOGD_INIT, 'echo "syslogd $1" >> "%s"\n' % self.calls)
+        self.l.LOGS_DIR = os.path.join(t, "logs")
+        self.l.STATE_FILE = os.path.join(self.l.LOGS_DIR, "nebulaos-state.txt")
+        self.l.USB_DIR = os.path.join(t, "usb")
+        self.l.CONFIG_DIR = os.path.join(t, "config")
+        self.l.EXTRA_LOG_DIRS = [os.path.join(t, "nlogs")]
+        self.l.RUN_FILES = ()
+        os.makedirs(self.l.LOGS_DIR)
+        os.makedirs(os.path.join(self.l.CONFIG_DIR, "backups"))
+        os.makedirs(self.l.EXTRA_LOG_DIRS[0])
+
+    def tearDown(self):
+        self.e.cleanup()
+
+    def test_level(self):
+        self.assertEqual(self.l.get_level(), "info")
+        out = self.l.set_level("debug")
+        self.assertEqual((out["level"], out["system_log"]), ("debug", "applied"))
+        self.assertEqual(open(self.l.LEVEL_FILE).read().strip(), "debug")
+        self.assertIn("syslogd restart", open(self.calls).read())
+        with self.assertRaises(self.e.common.OsConfigError):
+            self.l.set_level("trace")
+        self.assertEqual(self.l.status()["levels"], ["info", "warning", "debug"])
+
+    def test_redact(self):
+        r = self.l.redact
+        self.assertEqual(r("psk=hunter2"), "psk=[redacted]")
+        self.assertEqual(r('  password: "x y"'), "  password: [redacted]")
+        self.assertEqual(r("api_key = abc"), "api_key = [redacted]")
+        for keep in ("bypass: 3", "PASS  install check 17/17", "authorization component loaded",
+                     "Klipper state: ready", "tokenizer loaded"):
+            self.assertEqual(r(keep), keep)
+
+    def test_state_file_and_zip(self):
+        open(os.path.join(self.l.LOGS_DIR, "klippy.log"), "w").write("start\npsk=secret1\nready\n")
+        open(os.path.join(self.l.LOGS_DIR, "system.log.0"), "w").write("old line\n")
+        open(os.path.join(self.l.EXTRA_LOG_DIRS[0], "memguard.log"), "w").write("mg\n")
+        open(os.path.join(self.l.CONFIG_DIR, "printer.cfg"), "w").write("[printer]\n")
+        open(os.path.join(self.l.CONFIG_DIR, "moonraker.conf"), "w").write("[authorization]\napi_key: k3y\n")
+        open(os.path.join(self.l.CONFIG_DIR, "backups", "printer-1.cfg"), "w").write("x\n")
+        with self.assertRaises(self.e.common.OsConfigError) as cm:
+            self.l.save_logs()
+        self.assertEqual(cm.exception.code, "NO_USB")
+        os.makedirs(os.path.join(self.l.USB_DIR, "sda1"))
+        out = self.l.save_logs()
+        self.assertEqual(out["result"], "SAVED")
+        self.assertTrue(os.path.isfile(self.l.STATE_FILE))
+        import zipfile
+        z = zipfile.ZipFile(os.path.join(self.l.USB_DIR, "sda1", out["file"]))
+        names = z.namelist()
+        for want in ("logs/klippy.log", "logs/system.log.0", "logs/nebulaos-state.txt",
+                     "nebulaos/nlogs/memguard.log", "config/printer.cfg", "config/moonraker.conf", "run/dmesg.txt"):
+            self.assertIn(want, names)
+        self.assertNotIn("config/backups/printer-1.cfg", names)
+        self.assertNotIn(b"secret1", z.read("logs/klippy.log"))
+        self.assertIn(b"psk=[redacted]", z.read("logs/klippy.log"))
+        self.assertNotIn(b"k3y", z.read("config/moonraker.conf"))
+        self.assertEqual([n for n in os.listdir(os.path.join(self.l.USB_DIR, "sda1")) if n.endswith(".part")], [])
+        state = open(self.l.STATE_FILE).read()
+        for section in ("== system ==", "== slots ==", "== mcu ==", "== log level =="):
+            self.assertIn(section, state)
+
+
 class PowerOnLogoTests(unittest.TestCase):
     """G58/G40 (2026-10-15): the power-on logo in the running slot's RTOS -
     against fake rtos/rtos2 partitions holding a synthetic image (the real

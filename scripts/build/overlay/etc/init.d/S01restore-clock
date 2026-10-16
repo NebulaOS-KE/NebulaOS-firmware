@@ -1,0 +1,43 @@
+#!/bin/sh
+#
+# G60 (2026-10-16): the KE has no battery-backed clock. Until NTP answers,
+# every boot starts at 2020-03-01, so files and log lines written early carry
+# a 2020 date (seen in Mainsail). Like fake-hwclock: restore the last saved
+# time as soon as the data partition is mounted (after S01persistent-datastore,
+# before syslogd), save it every 30 minutes (S99nebulaos-housekeeping) and at
+# shutdown. NTP still sets
+# the exact time later; the saved time is never set backwards over a newer one.
+
+CLOCK_FILE="${NEBULAOS_CLOCK_FILE:-/usr/data/nebulaos/system/saved-clock}"
+
+save_clock() {
+	[ -d "$(dirname "$CLOCK_FILE")" ] || return 0
+	date -u +%s > "$CLOCK_FILE.tmp" 2>/dev/null && mv -f "$CLOCK_FILE.tmp" "$CLOCK_FILE"
+}
+
+restore_clock() {
+	[ -r "$CLOCK_FILE" ] || return 0
+	saved=$(head -c 20 "$CLOCK_FILE" 2>/dev/null | tr -cd '0-9')
+	[ -n "$saved" ] || return 0
+	now=$(date -u +%s)
+	if [ "$saved" -gt "$now" ] 2>/dev/null; then
+		date -u -s "@$saved" >/dev/null 2>&1 && echo "S01restore-clock: clock restored to $(date -u)"
+	fi
+}
+
+case "$1" in
+	start)
+		restore_clock
+		;;
+	stop)
+		save_clock
+		;;
+	save)
+		save_clock
+		;;
+	*)
+		echo "usage: $0 start|stop|save" >&2
+		exit 64
+		;;
+esac
+exit 0

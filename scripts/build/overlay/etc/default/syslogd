@@ -7,7 +7,16 @@
 # /opt/printer_data is the persistent bind by now, and it stops before it at
 # shutdown, so the file is closed before /usr/data is unmounted.
 NEBULAOS_SYSLOG=/opt/printer_data/logs/system.log
-SYSLOGD_ARGS="-O $NEBULAOS_SYSLOG -s 512 -b 2"
+# G60 (2026-10-16): the general log level (Settings > System), one of
+# info | warning | debug, stored by nebulaos-osconfig. BusyBox -l N keeps
+# messages more urgent than N: warning -> 5, info -> 7, debug -> 8.
+NEBULAOS_LOG_LEVEL_FILE="${NEBULAOS_LOG_LEVEL_FILE:-/usr/data/nebulaos/system/log-level}"
+case "$(cat "$NEBULAOS_LOG_LEVEL_FILE" 2>/dev/null)" in
+	warning) NEBULAOS_SYSLOG_L=5 ;;
+	debug) NEBULAOS_SYSLOG_L=8 ;;
+	*) NEBULAOS_SYSLOG_L=7 ;;
+esac
+SYSLOGD_ARGS="-O $NEBULAOS_SYSLOG -s 512 -b 2 -l $NEBULAOS_SYSLOG_L"
 
 # Readers that still look in the old place (/var/log -> /tmp, RAM).
 mkdir -p /var/log "$(dirname "$NEBULAOS_SYSLOG")" 2>/dev/null

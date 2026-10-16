@@ -76,6 +76,14 @@ NEBULAOS_OOM_POLICY="${NEBULAOS_OOM_POLICY:-/etc/nebulaos-oom-policy.sh}"
 MA=0 ZU=0 ZL=0 SOME10=0 FULL10=0 PRINT=0 MAINT=0 STATE=NORMAL NOW=0
 LEVEL=0 ENTER_CNT=0 EXIT_SINCE= LAST_ESCALATE=-1000 P4_SINCE= EXHAUSTED_LOGGED=0
 
+# G60 (2026-10-16): routine per-process oom_score_adj changes filled the
+# system log ("adj 3218 (head) -300 -> 500" for every short-lived command).
+# They go to syslog at debug priority only - visible at log level Debug.
+mg_debug() {
+	logger -t memguard -p user.debug "$*" 2>/dev/null
+	return 0
+}
+
 mg_log() {
 	_line="$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null) $*"
 	logger -t memguard "$*" 2>/dev/null
@@ -170,7 +178,7 @@ mg_set_adj() { # pid value
 	read -r _cur < "$MG_PROC/$1/oom_score_adj" 2>/dev/null || return 0
 	[ "$_cur" = "$2" ] && return 0
 	echo "$2" > "$MG_PROC/$1/oom_score_adj" 2>/dev/null \
-		&& mg_log "adj $1 ($(cat "$MG_PROC/$1/comm" 2>/dev/null)) $_cur -> $2"
+		&& mg_debug "adj $1 ($(cat "$MG_PROC/$1/comm" 2>/dev/null)) $_cur -> $2"
 }
 
 # D4 table: pidfile members are re-asserted; nginx/dropbear by comm (workers

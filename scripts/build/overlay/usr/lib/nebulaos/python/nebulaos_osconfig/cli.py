@@ -15,6 +15,7 @@
 #   nebulaos-osconfig network set-ipv4 --json '{"mode":"static",...}'
 #   nebulaos-osconfig boot-display status|reset-image
 #   nebulaos-osconfig boot-display set-mode --mode logo
+#   nebulaos-osconfig logs status | set-level --level info|warning|debug | write-state | save
 #   nebulaos-osconfig boot-display restore-original-logo
 #   nebulaos-osconfig boot-display list-images | preview [--file NAME]
 #   nebulaos-osconfig boot-display import-usb --file usb/<dev>/<path> | delete-image --file NAME
@@ -31,7 +32,7 @@
 import json
 import sys
 
-from . import bootdisplay, common, display, image, mcu, network, system, wifi
+from . import bootdisplay, common, display, image, logs, mcu, network, system, wifi
 
 
 def _opts(args, allowed):
@@ -55,13 +56,14 @@ READ_ONLY = {("system", "info"), ("network", "status"),
              ("boot-display", "status"), ("display", "status"),
              ("boot-display", "list-images"), ("boot-display", "preview"),
              ("wifi", "status"), ("mcu", "status"), ("mcu", "list"),
-             ("image", "list"), ("image", "status")}
+             ("image", "list"), ("image", "status"), ("logs", "status")}
 
 # G27 (2026-10-12): every change is one line in the system log (persistent
 # system.log), success or failure. Read-only verbs are not logged (the screen
 # polls them), nor is anything from stdin (the Wi-Fi password arrives there).
 # Display sleep/wake run at every screen timeout, so only failures of those.
-_QUIET_OK = {("display", "sleep"), ("display", "wake"), ("boot-display", "render")}
+_QUIET_OK = {("display", "sleep"), ("display", "wake"), ("boot-display", "render"),
+             ("logs", "write-state")}
 _LOGGED_ARGS = ("--hostname", "--ssid", "--mode", "--file", "--level", "--sha256")
 _LOGGED_RESULT = ("result", "ssid", "address", "address_mode", "address_note",
                   "next_boot", "applies")
@@ -161,6 +163,18 @@ def _dispatch(argv):
             if verb in verbs:
                 _opts(rest, {})
                 return verbs[verb]()
+        elif domain == "logs":
+            if verb == "status":
+                _opts(rest, {})
+                return logs.status()
+            if verb == "set-level":
+                return logs.set_level(_opts(rest, {"level": True}).get("level"))
+            if verb == "write-state":
+                _opts(rest, {})
+                return logs.write_state()
+            if verb == "save":
+                _opts(rest, {})
+                return logs.save_logs()
         elif domain == "image":
             if verb == "check":
                 return image.check(_opts(rest, {"file": True}).get("file"))

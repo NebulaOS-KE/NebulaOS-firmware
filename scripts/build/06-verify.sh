@@ -1633,6 +1633,9 @@ check /usr/libexec/nebulaos/nebulaos-clean-reset
 check /usr/libexec/nebulaos/nebulaos-slot-swap
 check /usr/lib/nebulaos/python/nebulaos_osconfig/image.py
 check /usr/lib/nebulaos/python/nebulaos_osconfig/poweronlogo.py
+check /usr/lib/nebulaos/python/nebulaos_osconfig/logs.py
+check /etc/init.d/S01restore-clock
+check /etc/init.d/S99nebulaos-housekeeping
 check /usr/lib/nebulaos/python/rtos_logo.py
 check /usr/lib/nebulaos/python/assets/nebulaos-rtos-logo.jpg
 check /etc/init.d/S99nebulaos-image-trial

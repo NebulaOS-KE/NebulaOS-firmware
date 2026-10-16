@@ -39,6 +39,8 @@ WRITE_TIMEOUT = 150.
 # An MCU flash stops Klipper, enters the bootloader, transfers and restarts
 # Klipper; the helper bounds it at 600 s itself. Never kill it first.
 MCU_FLASH_TIMEOUT = 660.
+# Zipping every log onto a USB stick on the MIPS board.
+LOGS_SAVE_TIMEOUT = 300.
 
 
 class NebulaOS:
@@ -71,6 +73,9 @@ class NebulaOS:
             ("/machine/nebulaos/boot_display/restore_original_logo", RequestType.POST,
              self._bd_restore_original_logo),
             ("/machine/nebulaos/boot_display/images", RequestType.GET, self._bd_images),
+            ("/machine/nebulaos/logs/status", RequestType.GET, self._logs_status),
+            ("/machine/nebulaos/logs/level", RequestType.POST, self._logs_level),
+            ("/machine/nebulaos/logs/save", RequestType.POST, self._logs_save),
             ("/machine/nebulaos/boot_display/preview", RequestType.POST, self._bd_preview),
             ("/machine/nebulaos/boot_display/import_usb", RequestType.POST, self._bd_import_usb),
             ("/machine/nebulaos/boot_display/delete_image", RequestType.POST,
@@ -206,6 +211,16 @@ class NebulaOS:
     async def _bd_delete_image(self, web_request: WebRequest) -> Dict[str, Any]:
         return await self._write("boot-display", "delete-image", "--file",
                                  web_request.get_str("filename"))
+
+    # G60 (2026-10-16): the general log level and "Save logs to USB".
+    async def _logs_status(self, web_request: WebRequest) -> Dict[str, Any]:
+        return await self._read("logs", "status")
+
+    async def _logs_level(self, web_request: WebRequest) -> Dict[str, Any]:
+        return await self._write("logs", "set-level", "--level", web_request.get_str("level"))
+
+    async def _logs_save(self, web_request: WebRequest) -> Dict[str, Any]:
+        return await self._write("logs", "save", timeout=LOGS_SAVE_TIMEOUT)
 
     async def _disp_status(self, web_request: WebRequest) -> Dict[str, Any]:
         return await self._read("display", "status")

@@ -26,6 +26,7 @@ sync_clock() {
 	for server in $NTP_SERVERS; do
 		if ntpd -n -q -p "$server" >/tmp/ntpsync.log 2>&1; then
 			log "clock synced via $server: $(date -u)"
+			/etc/init.d/S01restore-clock save 2>/dev/null   # G60
 			return 0
 		fi
 	done

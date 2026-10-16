@@ -137,6 +137,9 @@ start_daemon() {
 	# MEM-T08: Moonraker's git (update_manager) resolves through PATH; the
 	# NebulaOS wrapper sets its OOM priority and keeps network git out of a
 	# running print and out of memory pressure.
+	# G60 (2026-10-16): general log level debug -> Moonraker's verbose log.
+	MOONRAKER_VERBOSE=
+	[ "$(cat /usr/data/nebulaos/system/log-level 2>/dev/null)" = debug ] && MOONRAKER_VERBOSE=-v
 	export PATH="/usr/libexec/nebulaos/bin:$PATH"
 	echo "Starting moonraker (using $PYTHON3)"
 	# OOM priority at birth (MEM-T07): Moonraker coordinates updates and
@@ -145,7 +148,7 @@ start_daemon() {
 		start-stop-daemon -S -b -m -p "$PIDFILE" \
 		-x "$PYTHON3" -- \
 		"$MOONRAKER" -d "$DATAPATH" -c "$CONFIG" -l "$LOGFILE" \
-		-u "$UNIXSOCKET"
+		-u "$UNIXSOCKET" $MOONRAKER_VERBOSE
 }
 
 stop() {

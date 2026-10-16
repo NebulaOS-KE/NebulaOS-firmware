@@ -1,0 +1,33 @@
+#!/bin/sh
+#
+# G60 (2026-10-16): one small background loop for periodic NebulaOS chores,
+# instead of one process each:
+#   - save the clock (S01restore-clock restores it at the next boot)
+#   - refresh printer_data/logs/nebulaos-state.txt (versions, slots, MCU,
+#     storage) so Mainsail's own "download as zip" of the logs carries it
+# First pass right away (end of boot), then every 30 minutes.
+
+INTERVAL="${NEBULAOS_HOUSEKEEPING_INTERVAL:-1800}"
+PIDFILE=/var/run/nebulaos-housekeeping.pid
+OSCONFIG=/usr/libexec/nebulaos/nebulaos-osconfig
+
+chores() {
+	/etc/init.d/S01restore-clock save
+	nice -n 10 "$OSCONFIG" logs write-state >/dev/null 2>&1
+}
+
+case "$1" in
+	start)
+		( chores; while sleep "$INTERVAL"; do chores; done ) </dev/null >/dev/null 2>&1 &
+		echo $! > "$PIDFILE"
+		;;
+	stop)
+		[ -r "$PIDFILE" ] && kill "$(cat "$PIDFILE")" 2>/dev/null
+		rm -f "$PIDFILE"
+		;;
+	*)
+		echo "usage: $0 start|stop" >&2
+		exit 64
+		;;
+esac
+exit 0
