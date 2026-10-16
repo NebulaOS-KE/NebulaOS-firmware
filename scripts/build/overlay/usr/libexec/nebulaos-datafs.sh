@@ -51,7 +51,10 @@ NDF_KILL="${NDF_KILL:-kill}"
 NDF_KMSG="${NDF_KMSG:-/dev/kmsg}"
 ndf_log() {
 	echo "nebulaos-datafs: $*"
-	[ -n "$NDF_KMSG" ] && { echo "nebulaos-datafs: $*" >> "$NDF_KMSG"; } 2>/dev/null
+	# G67: kmsg lines without a <N> prefix land at warning level; routine
+	# lines are info (<6>), only failures stay warnings (<4>).
+	case "$*" in *FAIL*|*fail*|*RECOVERY*|*READ-ONLY*|*"could not"*|*"still holding"*|*"left mounted"*) _ndf_pri="<4>" ;; *) _ndf_pri="<6>" ;; esac
+	[ -n "$NDF_KMSG" ] && { echo "${_ndf_pri}nebulaos-datafs: $*" >> "$NDF_KMSG"; } 2>/dev/null
 	command -v logger >/dev/null 2>&1 && logger -t nebulaos-datafs -- "$*" 2>/dev/null
 	return 0
 }

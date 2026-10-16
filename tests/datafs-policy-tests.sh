@@ -276,6 +276,10 @@ r=$(mount_try 1)
 : > "$W/state"
 r=$(mount_try 2)
 [ "$r" = rc=1 ] && [ "$(grep -c '^mount' "$W/calls")" = 2 ] && grep -q 'MOUNT FAILED' "$W/kmsg" && grep -q DATAFS_MOUNT_FAILED=1 "$W/state" && pass || fail "failed mount not reported: $r"
+# G67: routine kmsg lines are info (<6>), failures stay warnings (<4>)
+grep -q '^<4>nebulaos-datafs: MOUNT FAILED' "$W/kmsg" && grep -q '^<4>nebulaos-datafs: mount of /dev/x.*failed' "$W/kmsg" && pass || fail "failure kmsg lines not at warning priority"
+r=$(mount_try 0)
+grep -q '^<6>nebulaos-datafs: mounted /dev/x' "$W/kmsg" && pass || fail "routine kmsg line not at info priority"
 
 echo "datafs-policy-tests: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]

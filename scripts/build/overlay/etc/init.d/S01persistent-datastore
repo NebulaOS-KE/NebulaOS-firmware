@@ -69,14 +69,25 @@ NEBULAOS_DATAFS_LIB="${NEBULAOS_DATAFS_LIB:-/usr/libexec/nebulaos-datafs.sh}"
 # shellcheck disable=SC1090
 [ -r "$NEBULAOS_DATAFS_LIB" ] && . "$NEBULAOS_DATAFS_LIB"
 
+# G67 (2026-10-16): the board has no clock battery. Restore the saved clock
+# as soon as /usr/data is mounted - before anything below creates a folder or
+# writes a log line, which otherwise got 2020 dates. S01restore-clock runs
+# again after this script and never sets the clock backwards.
+NEBULAOS_RESTORE_CLOCK="${NEBULAOS_RESTORE_CLOCK:-/etc/init.d/S01restore-clock}"
+restore_saved_clock() {
+	[ -x "$NEBULAOS_RESTORE_CLOCK" ] && "$NEBULAOS_RESTORE_CLOCK" start
+}
+
 start() {
 	mkdir -p /usr/data
 	if command -v ndf_precheck >/dev/null 2>&1; then
 		ndf_precheck
 		ndf_mount
+		restore_saved_clock
 		ndf_record
 	else
 		mount -t ext4 /dev/mmcblk0p10 /usr/data
+		restore_saved_clock
 	fi
 
 	# Clean NebulaOS reset (S2, 2026-10-11): when requested from the screen,

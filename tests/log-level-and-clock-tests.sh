@@ -53,6 +53,16 @@ out=$(cd "$O/usr/lib/nebulaos/python" && NEBULAOS_LOG_LEVEL_FILE="$W/level" pyth
 	"import sys; sys.path.insert(0, '.'); from nebulaos_osconfig import cli; sys.exit(cli.main(['logs', 'status']))" 2>&1)
 case "$out" in *'"level": "debug"'*'"ok": true'*) pass ;; *) fail "logs status via the CLI: $out" ;; esac
 
+# G67: S01persistent-datastore restores the clock right after mounting /usr/data,
+# before it creates anything or the data-partition check logs its result.
+S01P="$O/etc/init.d/S01persistent-datastore"
+_r=$(grep -n '^		restore_saved_clock$' "$S01P" | head -1 | cut -d: -f1)
+_rec=$(grep -n '^		ndf_record$' "$S01P" | head -1 | cut -d: -f1)
+_seed=$(grep -n 'seed_once /opt/printer_data' "$S01P" | head -1 | cut -d: -f1)
+[ -n "$_r" ] && [ -n "$_rec" ] && [ -n "$_seed" ] && [ "$_r" -lt "$_rec" ] && [ "$_r" -lt "$_seed" ] \
+	&& pass || fail "clock not restored before the data-partition record / first folders"
+grep -q 'broken_system_clock = 1' "$O/etc/e2fsck.conf" && pass || fail "e2fsck.conf broken_system_clock"
+
 # G68: the saved host name is set before syslogd starts (only that block of the
 # defaults file is run here - the rest touches /var/log).
 sed -n '/^# G68/,$p' "$O/etc/default/syslogd" > "$W/hostblock"
