@@ -260,6 +260,22 @@ CAPTURE_PROFILES = {
     "nebulaos-postmortem": (_NEBULAOS_POSTMORTEM, False, None, 120),
     "datafs-check-readonly": (_DATAFS_CHECK_READONLY, False, None, 600),
     "boot-state": (_BOOT_STATE, False, None, 60),
+    # G60 (2026-10-16): a log review - per log, its errors and warnings
+    # grouped and counted (timestamps and numbers stripped so repeats
+    # collapse), plus the state file and README. Read-only.
+    "logs-review": (
+        "L=/opt/printer_data/logs; echo '== files'; ls -la $L; "
+        "for f in $L/klippy.log $L/moonraker.log $L/system.log $L/system.log.0 $L/guppyscreen.log "
+        "$L/nginx-error.log /usr/data/nebulaos/logs/memguard.log /usr/data/nebulaos/maintenance/retention.log "
+        "/usr/data/nebulaos/maintenance/logs/*.log /usr/data/nebulaos/system/diagnostics/*.log; do "
+        "[ -f \"$f\" ] || continue; echo; echo \"== $f ($(wc -l < \"$f\") lines)\"; "
+        "grep -iE 'error|exception|traceback|warn|fail|refus|timeout|unable|cannot|denied|critical' \"$f\" "
+        "| grep -viE 'psk|passw' | sed -E 's/^[A-Z][a-z]{2} +[0-9]+ [0-9:]+ //; s/^\\[[^]]*\\] //; "
+        "s/^[0-9-]+ [0-9:,.]+ //; s/[0-9]+/N/g' | sort | uniq -c | sort -rn | head -n 25; done; "
+        "echo; echo '== nebulaos-state.txt'; cat $L/nebulaos-state.txt 2>&1 | head -n 120; "
+        "echo; echo '== README'; head -n 5 /opt/printer_data/README.txt 2>&1; "
+        "echo; echo '== log level'; cat /usr/data/nebulaos/system/log-level 2>&1; ps w | grep -v grep | grep syslogd",
+        False, None, 120),
     # 2026-10-15: what is on the data partition, before any cleanup. Read-only.
     "datafs-inventory": (
         "echo '== df'; df -k /usr/data; "
