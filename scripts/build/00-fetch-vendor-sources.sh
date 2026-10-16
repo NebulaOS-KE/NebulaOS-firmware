@@ -347,17 +347,23 @@ clone_pinned klipper "$KLIPPER_REPO" "$KLIPPER_PIN" "" "$KLIPPER_BRANCH"
 # cosmetic, so a failure warns and the build goes on with depth 1.
 deepen_to_release_tag() {
 	name="$1"; ref="$2"
-	if git -C "$name" describe --tags --abbrev=0 HEAD >/dev/null 2>&1; then
-		echo "== $name: $(git -C "$name" describe --tags --long HEAD) (release tag present) =="
+	# G67 (2026-10-16): only a release tag (v1.2.3) counts - the extensions
+	# repo also carries e.g. phase2-software-freeze-*, which Moonraker does not
+	# read as a version (it showed v0.0.0-84).
+	if git -C "$name" describe --tags --match 'v[0-9]*' --abbrev=0 HEAD >/dev/null 2>&1; then
+		echo "== $name: $(git -C "$name" describe --tags --match 'v[0-9]*' --long HEAD) (release tag present) =="
 		return 0
 	fi
 	for tag in $(git -C "$name" ls-remote --tags origin 'v*' 2>/dev/null | grep -v '\^{}$' \
 			| sed 's#.*refs/tags/##' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -rV | head -n 3); do
-		git -C "$name" fetch -q --shallow-exclude="$tag" origin "$ref" 2>/dev/null || continue
-		git -C "$name" fetch -q --deepen=1 origin "$ref" 2>/dev/null || continue
+		# A full clone (the extensions) already has the history; only the tag.
+		if [ "$(git -C "$name" rev-parse --is-shallow-repository)" = true ]; then
+			git -C "$name" fetch -q --shallow-exclude="$tag" origin "$ref" 2>/dev/null || continue
+			git -C "$name" fetch -q --deepen=1 origin "$ref" 2>/dev/null || continue
+		fi
 		git -C "$name" fetch -q --no-tags origin "refs/tags/$tag:refs/tags/$tag" 2>/dev/null || continue
 		if git -C "$name" merge-base --is-ancestor "$tag" HEAD 2>/dev/null; then
-			echo "== $name: $(git -C "$name" describe --tags --long HEAD) (history deepened to $tag) =="
+			echo "== $name: $(git -C "$name" describe --tags --match 'v[0-9]*' --long HEAD) (history deepened to $tag) =="
 			return 0
 		fi
 		git -C "$name" tag -d "$tag" >/dev/null 2>&1
@@ -387,6 +393,9 @@ deepen_to_release_tag klipper "$KLIPPER_PIN"
 # correct by construction on every fresh clone, not merely on a persisted
 # vendor/ checkout that happened to get it right earlier.
 clone_pinned nebulaos-klipper-extensions "$KLIPPER_EXTENSIONS_REPO" "$KLIPPER_EXTENSIONS_PIN" "" "" "$KLIPPER_EXTENSIONS_BRANCH"
+# G67 (2026-10-16): the extensions' release tag too (v0.1.0 at 8f86925), so
+# Mainsail shows its version instead of v0.0.0-84.
+deepen_to_release_tag nebulaos-klipper-extensions "$KLIPPER_EXTENSIONS_PIN"
 
 # Official Moonraker - not a fork, no reason to deviate.
 clone_pinned moonraker "$MOONRAKER_REPO" "$MOONRAKER_PIN"

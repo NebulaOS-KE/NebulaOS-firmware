@@ -354,15 +354,17 @@ def wait_for_moonraker(get_status, log, retry_attempts=RETRY_ATTEMPTS,
     calibration-journal path is arbitrary; any namespace works, we only
     need "does Moonraker answer database requests at all") - bounded
     backoff, never raises."""
+    # G67 (2026-10-16): Moonraker normally needs a few attempts at boot - one
+    # line for the outcome, not one per attempt (was ~100 lines per boot).
     last_err = None
     for attempt in range(1, retry_attempts + 1):
         try:
             get_status("/server/database/list")
+            if attempt > 1:
+                log(f"Moonraker database API available after {attempt} attempts")
             return True
         except Exception as exc:  # noqa: BLE001
             last_err = exc
-            log(f"attempt {attempt}/{retry_attempts}: Moonraker database API "
-                f"unavailable ({exc}) - retrying")
             if attempt < retry_attempts:
                 sleep(retry_delay)
     log(f"Moonraker database API never became available after "
