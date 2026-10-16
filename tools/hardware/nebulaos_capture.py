@@ -230,6 +230,10 @@ _VERSIONS = (
     "[print(k, *[\"%s=%s\" % (f, v.get(f)) for f in (\"version\", \"remote_version\", \"is_valid\", "
     "\"corrupt\", \"channel\", \"warnings\", \"anomalies\")]) for k, v in sorted(d.items()) "
     "if isinstance(v, dict)]' 2>&1; "
+    # G56: why Klipper calls its own checkout "-dirty" - klippy.log lists
+    # the git version and the files it sees as modified/untracked at start.
+    "echo; echo '== klippy.log git info (last start)'; grep -E 'Git version|Branch:|Remote:|Tracked URL|Modified|Untracked|file_status|dirty' "
+    "/opt/printer_data/logs/klippy.log 2>/dev/null | tail -n 25; "
     "echo; echo '== /etc/nebulaos-build (image) =='; cat /etc/nebulaos-build 2>&1 | head -n 40; "
     "echo; echo '== kernel =='; uname -r"
 )
