@@ -342,6 +342,17 @@ CAPTURE_PROFILES = {
             False, None, 60),
     "wifi": ("iw dev; iw dev wlan0 link; iw dev wlan0 station dump 2>/dev/null | head -40; dmesg | grep -iE 'brcmf|cfg80211'",
              False, None, 60),
+    # G10 (2026-10-16): can this Wi-Fi chip/driver join WPA3 (SAE) networks?
+    # Read-only: phy capabilities, driver, supplicant's own key management
+    # list and the security of nearby networks (cached scan, no new scan).
+    "wifi-caps": ("echo '== driver'; readlink /sys/class/net/wlan0/device/driver; "
+                  "dmesg | grep -iE 'brcmf|firmware|wlan' | head -20; "
+                  "echo '== iw phy'; iw phy; "
+                  "echo '== supplicant'; wpa_supplicant -v 2>&1 | head -2; "
+                  "wpa_cli -i wlan0 get_capability key_mgmt 2>&1; wpa_cli -i wlan0 get_capability auth_alg 2>&1; "
+                  "echo '== nearby networks (cached)'; "
+                  "iw dev wlan0 scan dump 2>/dev/null | grep -E '^BSS|SSID:|Authentication suites|Group cipher|^\\s+\\* (Version|Pairwise)'",
+                  False, None, 60),
     "irq-threads": (_IRQ_RATE, False, None, 60),
     "irq-rate-streaming": (_IRQ_RATE, False, None, 60),
     "irq-rate-paused": (_IRQ_RATE, False, None, 60),
