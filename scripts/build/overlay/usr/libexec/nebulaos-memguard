@@ -86,7 +86,7 @@ mg_debug() {
 
 mg_log() {
 	_line="$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null) $*"
-	logger -t memguard "$*" 2>/dev/null
+	logger -t memguard -p "${MG_SYSLOG_PRIORITY:-user.notice}" "$*" 2>/dev/null
 	[ -n "$MG_LOG" ] || return 0
 	if [ ! -d "${MG_LOG%/*}" ]; then
 		mkdir -p "${MG_LOG%/*}" 2>/dev/null || return 0
@@ -251,7 +251,11 @@ mg_snapshot() {
 		mg_rss_kb "$_p"
 		_s="$_s ${_e%.pid}=${_rss}kB"
 	done
+	# Once a minute: always in memguard.log, in the system log only at log
+	# level Debug (it filled system.log at Info - Run 9 log review).
+	MG_SYSLOG_PRIORITY=user.debug
 	mg_log "$_s"
+	MG_SYSLOG_PRIORITY=
 }
 
 # MEM-T14 conditions. "zram nearly full" only counts when a limit is set.

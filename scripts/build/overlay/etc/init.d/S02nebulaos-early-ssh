@@ -22,7 +22,7 @@ case "$1" in
 	start)
 		[ -x "$KEYS_INIT" ] && "$KEYS_INIT" start
 		[ -x "$SSHD_INIT" ] && "$SSHD_INIT" start
-		echo "nebulaos-early-ssh: started" > /dev/kmsg 2>/dev/null
+		echo "<6>nebulaos-early-ssh: started" > /dev/kmsg 2>/dev/null
 		;;
 	*)
 		;;

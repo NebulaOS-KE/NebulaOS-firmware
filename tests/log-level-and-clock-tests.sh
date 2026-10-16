@@ -22,6 +22,14 @@ grep -q 'log-level 2>/dev/null)" = debug ] && MOONRAKER_VERBOSE=-v' "$O/etc/init
 grep -q 'mg_debug "adj ' "$O/usr/libexec/nebulaos-memguard" && grep -q 'logger -t memguard -p user.debug' "$O/usr/libexec/nebulaos-memguard" \
 	&& pass || fail "memguard adj lines not at debug priority"
 
+# Run 9 log review: memguard's once-a-minute snapshot goes to the system log
+# at debug only (its own memguard.log keeps every one); alerts stay notice.
+MG="$O/usr/libexec/nebulaos-memguard"
+grep -q 'logger -t memguard -p "${MG_SYSLOG_PRIORITY:-user.notice}"' "$MG" \
+	&& sed -n '/^mg_snapshot()/,/^}/p' "$MG" | grep -q 'MG_SYSLOG_PRIORITY=user.debug' \
+	&& pass || fail "memguard snapshot not at debug priority"
+grep -q '"<6>nebulaos-early-ssh: started"' "$O/etc/init.d/S02nebulaos-early-ssh" && pass || fail "early-ssh kmsg not info"
+
 # clock: fake date records what it was asked to set
 mkdir -p "$W/bin"
 cat > "$W/bin/date" <<EOT
