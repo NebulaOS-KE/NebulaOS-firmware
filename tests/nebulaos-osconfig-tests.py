@@ -676,6 +676,8 @@ class FakeWpa(object):
                 n["key_mgmt"] = parts[3]
             elif parts[2] == "priority":
                 n["priority"] = int(parts[3])
+            elif parts[2] == "scan_ssid":
+                n["scan_ssid"] = parts[3]
             return "OK\n", None
         if verb == "REMOVE_NETWORK":
             self.nets.pop(int(parts[1]), None)
@@ -729,6 +731,8 @@ class FakeWpa(object):
         ssid = n["ssid"].decode("utf-8", "replace")
         if ssid not in self.passwords:
             return                                  # not in range: no event
+        if ssid in getattr(self, "hidden", ()) and n.get("scan_ssid") != "1":
+            return                                  # hidden: only found when probed for
         pw = self.passwords[ssid]
         ok = (n["key_mgmt"] == "NONE" and pw is None) or (
             pw is not None and n["psk"] == self._psk(n["ssid"], pw))
@@ -838,6 +842,26 @@ class WifiTests(unittest.TestCase):
         self.assertFalse([c for c in wpa.commands if "pa\"ss" in c or "ss word" in c])
         self.assertTrue(open(self.calls).read().startswith("apply"))   # no udhcpc: full apply
         self.assertEqual(out["address_mode"], "dhcp")
+
+    def test_hidden_network(self):
+        """G10: a network that is not in the scan, typed in with "hidden"."""
+        wpa = self.fake({"Home": "secret123", "Attic": "atticpass1"}, saved=[("Home", "secret123")])
+        wpa.hidden = {"Attic"}
+        with self.assertRaises(self.e.common.OsConfigError):
+            self.w.connect({"ssid": "Attic", "password": "atticpass1"})   # not probed: times out
+        out = self.w.connect({"ssid": "Attic", "password": "atticpass1", "hidden": True})
+        self.assertEqual(out["ssid"], "Attic")
+        attic = [n for n in wpa.saves[-1].values() if n["ssid"] == b"Attic"][0]
+        self.assertEqual(attic.get("scan_ssid"), "1")
+
+    def test_wpa3_only_network_explained(self):
+        self.SCAN = self.SCAN + [("Modern", -45, "[WPA2-SAE-CCMP][ESS]"),
+                                 ("Mixed", -46, "[WPA2-PSK+SAE-CCMP][ESS]")]
+        self.fake({"Modern": "longpassword", "Mixed": "longpassword"})
+        with self.assertRaises(self.e.common.OsConfigError) as cm:
+            self.w.connect({"ssid": "Modern", "password": "longpassword"})
+        self.assertIn("WPA2/WPA3", cm.exception.message)
+        self.assertEqual(self.w.connect({"ssid": "Mixed", "password": "longpassword"})["ssid"], "Mixed")
 
     def test_chosen_network_survives_the_next_scan(self):
         # P9 on ke-dev (2026-10-15): connected to fsociety, the screen then

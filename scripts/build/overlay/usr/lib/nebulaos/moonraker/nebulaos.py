@@ -272,6 +272,8 @@ class NebulaOS:
         # The password goes to the helper on stdin, never on a command line.
         spec = {"ssid": web_request.get_str("ssid"),
                 "password": web_request.get_str("password", "")}
+        if web_request.get_boolean("hidden", False):
+            spec["hidden"] = True          # G10: typed in, not from the scan
         return await self._write("wifi", "connect", "--stdin",
                                  stdin=json.dumps(spec).encode("utf-8"))
 

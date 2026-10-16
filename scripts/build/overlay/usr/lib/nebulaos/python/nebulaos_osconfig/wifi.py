@@ -432,6 +432,9 @@ def connect(spec):
     if password in ("", None):
         password = None
     psk = psk_for(raw, password) if password is not None else None
+    # G10 (2026-10-16): a hidden network does not appear in the scan; the
+    # user types its name, and wpa_supplicant has to probe for it.
+    hidden = spec.get("hidden") is True
     with Ctrl() as ctrl:
         before = wpa_status(ctrl)
         nets = saved_networks(ctrl)
@@ -440,7 +443,13 @@ def connect(spec):
         for entry in parse_scan_results(ctrl.request("SCAN_RESULTS")):
             if entry["ssid"].encode("utf-8") == raw:
                 sec = entry["security"]
-        if sec in ("wep", "eap", "sae"):
+        if sec == "sae":
+            # G10: checked on ke-dev 2026-10-16 - the BCM43430/1 firmware has
+            # no WPA3 (SAE); WPA2/WPA3 mixed networks report PSK too and work.
+            raise invalid("UNSUPPORTED_SECURITY",
+                          "this network only allows WPA3, which this printer's Wi-Fi does "
+                          "not support - set the router to WPA2/WPA3 (mixed) mode")
+        if sec in ("wep", "eap"):
             raise invalid("UNSUPPORTED_SECURITY",
                           "this network uses %s security, which the printer cannot join"
                           % sec.upper())
@@ -448,7 +457,7 @@ def connect(spec):
         if psk is None and existing:
             target = existing[0]["id"]
         else:
-            if psk is None and sec != "open":
+            if psk is None and sec != "open" and not (hidden and sec is None):
                 raise invalid("PASSWORD_REQUIRED", "this network needs a password")
             reply = ctrl.request("ADD_NETWORK").strip()
             if not reply.isdigit():
@@ -456,6 +465,8 @@ def connect(spec):
             new_id = target = int(reply)
             try:
                 ctrl.ok("SET_NETWORK %d ssid %s" % (target, raw.hex()))
+                if hidden:
+                    ctrl.ok("SET_NETWORK %d scan_ssid 1" % target)
                 if psk is None:
                     ctrl.ok("SET_NETWORK %d key_mgmt NONE" % target)
                 else:
