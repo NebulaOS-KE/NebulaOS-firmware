@@ -37,7 +37,7 @@ MCU_FLASH_FILE="${MCU_FLASH_FILE:-/etc/nebulaos/mcu_flash_file.py}"
 # ordinary Config Files browser - see docs/NEBULAOS_CONFIG_MATERIALIZATION.md.
 # Internal MCU lifecycle state (MCU_MANAGED_DIR above) stays separate and
 # is never moved here.
-MCU_UPLOAD_DIR="${MCU_UPLOAD_DIR:-/opt/printer_data/uploads/mainboard-firmware}"
+MCU_UPLOAD_DIR="${MCU_UPLOAD_DIR:-/opt/printer_data/config/uploads/mainboard-firmware}"
 # The shipped native application (hash-pinned at build time, 06-verify.sh).
 # Flashing a byte-identical file is a return to NebulaOS management.
 MCU_NATIVE_CANDIDATE="${MCU_NATIVE_CANDIDATE:-/opt/nebulaos/mcu-candidates/candidate-001.bin}"
@@ -168,8 +168,8 @@ cmd_flash() {
     # Absolute paths are used exactly as given, unchanged (an explicit
     # full path always means what it says). A bare filename - no leading
     # "/" - resolves against MCU_UPLOAD_DIR, so a user who uploaded
-    # firmware.bin through Mainsail (root "uploads", folder
-    # mainboard-firmware/ - G62) can just run
+    # firmware.bin through Mainsail (config/uploads/mainboard-firmware/ -
+    # G63) can just run
     # `nebulaos-mcu flash firmware.bin` without typing the full path.
     # Deliberately narrow: no glob expansion, no search path beyond this
     # one directory - this is a convenience for the common case, not a

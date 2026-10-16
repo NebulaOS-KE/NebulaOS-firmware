@@ -38,10 +38,21 @@ else
 fi
 
 original_bind_count=$(grep -cF 'mount --bind "$GUPPY_STATE/guppyconfig.json"' "$S01_SCRIPT")
-if [ "$original_bind_count" = "2" ]; then
-	pass "exactly two bind mounts of the same real \$GUPPY_STATE/guppyconfig.json source exist (the original + the new config-visible one)"
+if [ "$original_bind_count" = "3" ]; then
+	pass "exactly three bind mounts of the same real \$GUPPY_STATE/guppyconfig.json source exist (the screen's own path, \$PDATA/config and the /opt view - G63)"
 else
-	fail "expected exactly 2 bind mounts of \$GUPPY_STATE/guppyconfig.json, found $original_bind_count"
+	fail "expected exactly 3 bind mounts of \$GUPPY_STATE/guppyconfig.json, found $original_bind_count"
+fi
+
+# G63 (2026-10-16): the /opt/printer_data view (Mainsail, SFTP, log zip) must
+# get the file too, AFTER the non-recursive "$PDATA -> /opt/printer_data" bind
+# - before this, Mainsail showed an empty guppyconfig.json.
+opt_tree_line=$(grep -n 'mount --bind "\$PDATA" /opt/printer_data' "$S01_SCRIPT" | head -1 | cut -d: -f1)
+opt_file_line=$(grep -n 'mount --bind "\$GUPPY_STATE/guppyconfig.json" /opt/printer_data/config/guppyscreen/guppyconfig.json' "$S01_SCRIPT" | cut -d: -f1)
+if [ -n "$opt_tree_line" ] && [ -n "$opt_file_line" ] && [ "$opt_tree_line" -lt "$opt_file_line" ]; then
+	pass "guppyconfig.json is bound into the /opt/printer_data view after that view exists"
+else
+	fail "guppyconfig.json is not bound into /opt/printer_data after the tree bind (tree=$opt_tree_line file=$opt_file_line)"
 fi
 
 # The new mount point must be created (mkdir + touch) before the bind
@@ -75,13 +86,18 @@ else
 	fail "the placeholder file creation is not guarded against overwriting existing content"
 fi
 
-# Section 9: the upload area - printer_data/uploads/ since G62 (2026-10-16),
-# created at every boot before Moonraker registers the "uploads" root.
-if grep -qF 'mkdir -p "$PDATA/uploads/boot-logo" "$PDATA/uploads/mainboard-firmware"' "$S01_SCRIPT" \
-	&& grep -qF '"$PDATA/uploads/system-image"' "$S01_SCRIPT"; then
-	pass "printer_data/uploads/{boot-logo,mainboard-firmware,system-image} are created at boot"
+# Section 9: the upload area - config/uploads/ since G63 (2026-10-16): inside
+# the config root, because Mainsail only uploads there. No own root.
+if grep -qF 'mkdir -p "$PDATA/config/uploads/boot-logo" "$PDATA/config/uploads/mainboard-firmware"' "$S01_SCRIPT" \
+	&& grep -qF '"$PDATA/config/uploads/system-image"' "$S01_SCRIPT"; then
+	pass "config/uploads/{boot-logo,mainboard-firmware,system-image} are created at boot"
 else
-	fail "printer_data/uploads/ creation lines are missing"
+	fail "config/uploads/ creation lines are missing"
+fi
+if grep -q 'printer_data/uploads/' "$(dirname "$S01_SCRIPT")/S02nebulaos-namespace"; then
+	fail "S02 still creates the retired printer_data/uploads/ (S04 would move it again every boot)"
+else
+	pass "S02 no longer creates the retired printer_data/uploads/"
 fi
 
 echo ""

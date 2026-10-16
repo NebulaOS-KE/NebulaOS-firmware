@@ -260,6 +260,41 @@ after_6=$(find "$t6/printer_data/config/nebulaos" -type f -exec sha256sum {} \; 
 [ "$before_6" = "$after_6" ] && pass "test 6: existing materialized tree is untouched after a hash-mismatch refusal" \
 	|| fail "test 6: existing tree was modified despite the hash-mismatch refusal"
 
+# --- G65 (2026-10-16): a user's edit in config/nebulaos survives an update
+# as a visible copy with a notice; README written; per-file hashes recorded.
+t7="$WORK/t7"; src7a="$WORK/src7a"; src7b="$WORK/src7b"
+make_immutable_source "$src7a" "gen-a"
+make_immutable_source "$src7b" "gen-b"
+run_materialize "$t7" "$src7a" "boot-materialization" >/dev/null
+cfg7="$t7/printer_data/config"
+[ -f "$cfg7/nebulaos/README.txt" ] && grep -q "do not edit" "$cfg7/nebulaos/README.txt" \
+	&& pass "test 7a: README.txt written into config/nebulaos" || fail "test 7a: README.txt missing"
+gen7="$t7/system/config-generation.json"
+python3 -c "import json,sys; d=json.load(open(sys.argv[1])); assert d['file_sha256.machine.cfg'] and d['generation']" "$gen7" 2>/dev/null \
+	&& pass "test 7b: config-generation.json is valid JSON with per-file hashes" || fail "test 7b: $(cat "$gen7")"
+echo "# my change" >> "$cfg7/nebulaos/machine.cfg"
+run_materialize "$t7" "$src7b" "boot-materialization" >/dev/null
+kept7=$(ls -d "$cfg7"/backups/nebulaos-changes-* 2>/dev/null | head -1)
+[ -n "$kept7" ] && grep -q "# my change" "$kept7/machine.cfg" && [ ! -e "$kept7/platform.cfg" ] \
+	&& [ -f "$kept7/WHAT-HAPPENED.txt" ] && pass "test 7c: only the edited file kept, with an explanation" \
+	|| fail "test 7c: kept=$kept7 $(ls "$kept7" 2>/dev/null)"
+grep -q "machine.cfg" "$t7/system/notices/config-edits.txt" 2>/dev/null \
+	&& pass "test 7d: notice left for the screen" || fail "test 7d: no notice"
+grep -q "# machine gen-b" "$cfg7/nebulaos/machine.cfg" && [ -f "$cfg7/nebulaos/README.txt" ] \
+	&& pass "test 7e: new generation in place, README kept" || fail "test 7e: new tree wrong"
+
+# --- G65: a device materialized by an older image (no per-file hashes): a
+# file that differs from the new image is kept quietly - no notice.
+t8="$WORK/t8"; src8a="$WORK/src8a"; src8b="$WORK/src8b"
+make_immutable_source "$src8a" "old"
+make_immutable_source "$src8b" "new"
+run_materialize "$t8" "$src8a" "boot-materialization" >/dev/null
+printf '{\n  "schema_version": 1,\n  "generation": "legacy"\n}\n' > "$t8/system/config-generation.json"
+run_materialize "$t8" "$src8b" "boot-materialization" >/dev/null
+kept8=$(ls -d "$t8"/printer_data/config/backups/nebulaos-changes-* 2>/dev/null | head -1)
+[ -n "$kept8" ] && [ -f "$kept8/machine.cfg" ] && [ ! -f "$kept8/WHAT-HAPPENED.txt" ] && [ ! -e "$t8/system/notices/config-edits.txt" ] \
+	&& pass "test 8: no hash record - differing files kept quietly, no notice" || fail "test 8: kept=$kept8"
+
 echo ""
 echo "config-materialization-tests: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

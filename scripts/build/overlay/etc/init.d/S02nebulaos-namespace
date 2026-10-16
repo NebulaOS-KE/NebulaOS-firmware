@@ -52,9 +52,9 @@ create_layout() {
 		"$NEBULAOS_ROOT/apps/guppyscreen" \
 		"$NEBULAOS_ROOT/envs/moonraker" \
 		"$NEBULAOS_ROOT/envs/klipper" \
-		"$NEBULAOS_ROOT/printer_data/uploads/boot-logo" \
-		"$NEBULAOS_ROOT/printer_data/uploads/mainboard-firmware" \
-		"$NEBULAOS_ROOT/printer_data/uploads/system-image" \
+		"$NEBULAOS_ROOT/printer_data/config/uploads/boot-logo" \
+		"$NEBULAOS_ROOT/printer_data/config/uploads/mainboard-firmware" \
+		"$NEBULAOS_ROOT/printer_data/config/uploads/system-image" \
 		"$NEBULAOS_ROOT/printer_data/logs" \
 		"$NEBULAOS_ROOT/printer_data/database" \
 		"$NEBULAOS_ROOT/printer_data/certs" \

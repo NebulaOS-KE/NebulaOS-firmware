@@ -1634,6 +1634,7 @@ check /usr/libexec/nebulaos/nebulaos-slot-swap
 check /usr/lib/nebulaos/python/nebulaos_osconfig/image.py
 check /usr/lib/nebulaos/python/nebulaos_osconfig/poweronlogo.py
 check /usr/lib/nebulaos/python/nebulaos_osconfig/logs.py
+check /usr/lib/nebulaos/python/nebulaos_osconfig/snapshot.py
 check /usr/libexec/sftp-server
 check /usr/share/nebulaos/printer_data-README.txt
 check /etc/init.d/S01restore-clock
@@ -1848,10 +1849,10 @@ if [ -n "$S01_CONTENT" ]; then
 	else
 		echo "MISS S01persistent-datastore does not expose guppyconfig.json under printer_data/config/guppyscreen/"
 	fi
-	if echo "$S01_CONTENT" | grep -qF 'mkdir -p "$PDATA/uploads/boot-logo" "$PDATA/uploads/mainboard-firmware"'; then
-		echo "OK   S01persistent-datastore creates printer_data/uploads/{boot-logo,mainboard-firmware,system-image}"
+	if echo "$S01_CONTENT" | grep -qF 'mkdir -p "$PDATA/config/uploads/boot-logo" "$PDATA/config/uploads/mainboard-firmware"'; then
+		echo "OK   S01persistent-datastore creates config/uploads/{boot-logo,mainboard-firmware,system-image}"
 	else
-		echo "MISS S01persistent-datastore does not create printer_data/uploads/"
+		echo "MISS S01persistent-datastore does not create config/uploads/"
 	fi
 else
 	echo "MISS could not read /etc/init.d/S01persistent-datastore from the built image"
@@ -1859,10 +1860,10 @@ fi
 
 NEBULAOS_MCU_CONTENT=$(debugfs -R "cat /usr/bin/nebulaos-mcu" ${IMAGES}/rootfs.ext2 2>/dev/null)
 if [ -n "$NEBULAOS_MCU_CONTENT" ]; then
-	if echo "$NEBULAOS_MCU_CONTENT" | grep -qF 'MCU_UPLOAD_DIR="${MCU_UPLOAD_DIR:-/opt/printer_data/uploads/mainboard-firmware}"'; then
-		echo "OK   nebulaos-mcu flash resolves bare filenames against printer_data/uploads/mainboard-firmware/"
+	if echo "$NEBULAOS_MCU_CONTENT" | grep -qF 'MCU_UPLOAD_DIR="${MCU_UPLOAD_DIR:-/opt/printer_data/config/uploads/mainboard-firmware}"'; then
+		echo "OK   nebulaos-mcu flash resolves bare filenames against config/uploads/mainboard-firmware/"
 	else
-		echo "MISS nebulaos-mcu flash does not resolve bare filenames against printer_data/uploads/mainboard-firmware/"
+		echo "MISS nebulaos-mcu flash does not resolve bare filenames against config/uploads/mainboard-firmware/"
 	fi
 else
 	echo "MISS could not read /usr/bin/nebulaos-mcu from the built image"

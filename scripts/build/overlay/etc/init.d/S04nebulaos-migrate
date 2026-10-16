@@ -1392,91 +1392,72 @@ migrate_guppy_stale_modules() {
 	return 0
 }
 
-# Audit F-11. GuppyScreen's static_ip.py used to write its two state files
-# under /usr/data/printer_data/config/ - a RETIRED top-level alias on the
-# partition S01persistent-datastore describes as "physically shared with
-# stock". NebulaOS-owned state must live in the NebulaOS namespace, reached
-# through the /opt/printer_data bind mount. NebulaOS-guppyscreen fixed this
-# at GUPPYSCREEN_PIN 5f1911ac; a later firmware restore from a live device
-# silently reverted it, which is how the two paths came back.
-#
-# The migration lives HERE, not in static_ip.py, because that file is owned
-# by NebulaOS-guppyscreen and this repository's copy must stay byte-identical
-# to it (tests/guppyscreen-owned-files-tests.sh). Namespace-state migration
-# is already this script's job.
-#
-# SCOPE, stated plainly so a later reader does not overestimate it: no image
-# has ever been BUILT carrying the reverted paths. build-manifest.txt records
-# the last build at 2026-08-28 (git_commit_main 85814b60); the revert landed
-# 2026-09-10. So the only devices that can hold state at the old location
-# were flashed from an image predating b1f0436 (2026-08-19). This is a narrow
-# legacy path, not a broad one - but those devices exist, so it runs.
-#
-# Two guards below handle the pre-b1f0436 alias case, and it is worth being
-# precise about which one actually does it. Before b1f0436,
-# S01persistent-datastore created a compatibility SYMLINK
-# /usr/data/printer_data -> /opt/printer_data, so "old" and "new" can be the
-# SAME FILE and a string-compare migration would move a file onto itself.
-#
-# The realpath compare catches that only when the alias is a symlink the whole
-# way. It does NOT catch it on a real device: `old` resolves through the
-# symlink to /opt/printer_data/config/..., while `new` is
-# $PRINTER_DATA_CONFIG (/usr/data/nebulaos/printer_data/config/...), which
-# reaches the same inode through a BIND MOUNT (S01persistent-datastore,
-# S05nebulaos-activate). readlink -f does not resolve bind mounts, so the two
-# strings differ even though it is one file. What saves us there is the next
-# guard, `[ -e "$_msis_new" ]`, which is true for that same file and takes the
-# "already exists at the canonical location" path. Both are kept: the realpath
-# compare for the pure-symlink case, the -e guard for the bind-mount case.
-migrate_static_ip_state() {
-	_msis_old_dir="/usr/data/printer_data/config"
-	_msis_new_dir="$PRINTER_DATA_CONFIG"
-	[ -d "$_msis_old_dir" ] || return 0
-	[ -n "$_msis_new_dir" ] || return 0
-
-	for _msis_name in static_ip.json static_ip_dhcp_snapshot.json; do
-		_msis_old="$_msis_old_dir/$_msis_name"
-		_msis_new="$_msis_new_dir/$_msis_name"
-		[ -f "$_msis_old" ] || continue
-
-		# Same file reached by two names (pre-b1f0436 symlink device).
-		_msis_ro=$(readlink -f "$_msis_old" 2>/dev/null || echo "$_msis_old")
-		_msis_rn=$(readlink -f "$_msis_new" 2>/dev/null || echo "$_msis_new")
-		if [ "$_msis_ro" = "$_msis_rn" ]; then
-			log "static-ip state: $_msis_name already resolves to the canonical location - nothing to migrate"
-			continue
-		fi
-
-		# Never overwrite valid newer canonical state with legacy state.
-		if [ -e "$_msis_new" ]; then
-			log "static-ip state: $_msis_name already exists at the canonical location - leaving the legacy copy in place, untouched"
-			continue
-		fi
-
-		# Validate before promoting. A corrupt legacy file must not become
-		# the device's canonical state.
-		if ! python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$_msis_old" 2>/dev/null; then
-			log "ERROR: static-ip state: $_msis_old is not valid JSON - refusing to migrate it, leaving both locations untouched"
-			continue
-		fi
-
-		mkdir -p "$_msis_new_dir" 2>/dev/null
-		if mv "$_msis_old" "$_msis_new"; then
-			log "static-ip state: migrated $_msis_name out of the retired top-level printer_data alias into $_msis_new_dir"
-		else
-			log "ERROR: static-ip state: could not move $_msis_old to $_msis_new - leaving the legacy copy in place"
+# G63 (2026-10-16): leftovers in the config folder that nothing reads any
+# more, retired here (this replaces audit F-11's migrate_static_ip_state,
+# which copied the two static-IP files INTO config from the retired
+# /usr/data/printer_data alias):
+#   - static_ip.json, static_ip_dhcp_snapshot.json: GuppyScreen's retired
+#     static_ip.py state; network settings live in network/osconfig.json.
+#     Moved (never deleted) to system/migration-backups/retired-config/.
+#   - GuppyScreen/scripts/static_ip.py: removed only when it is byte-for-byte
+#     a version NebulaOS shipped (sha256 of each, from git history); any
+#     other file stays. Empty folders are removed.
+RETIRED_STATIC_IP_PY_SHA256="b3e7a0dae3f86343a4d205effed240b971ff6e2977ded547f39767fe0da6aa72 c131017c03b61e225a46f1cd3b70a0a5f602c6fe994bc761dd9f58bd23bc2b20 c95ca46e97a4f41a02d0ef89d07cc8188cc143b93a8841cfffc87a2c92c25e6a e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+retire_config_leftovers() {
+	[ -n "$PRINTER_DATA_CONFIG" ] && [ -d "$PRINTER_DATA_CONFIG" ] || return 0
+	_rcl_dir="$BACKUP_ROOT/retired-config"
+	for _rcl_name in static_ip.json static_ip_dhcp_snapshot.json; do
+		_rcl_f="$PRINTER_DATA_CONFIG/$_rcl_name"
+		[ -f "$_rcl_f" ] && [ ! -L "$_rcl_f" ] || continue
+		mkdir -p "$_rcl_dir" 2>/dev/null
+		if mv "$_rcl_f" "$_rcl_dir/$_rcl_name.$(date -u +%Y%m%dT%H%M%SZ)"; then
+			log "config: retired $_rcl_f (unused since the network settings moved) -> $_rcl_dir"
 		fi
 	done
+	_rcl_py="$PRINTER_DATA_CONFIG/GuppyScreen/scripts/static_ip.py"
+	if [ -f "$_rcl_py" ] && [ ! -L "$_rcl_py" ]; then
+		_rcl_sum=$(sha256sum "$_rcl_py" 2>/dev/null | cut -c1-64)
+		case " $RETIRED_STATIC_IP_PY_SHA256 " in
+			*" $_rcl_sum "*) rm -f "$_rcl_py" && log "config: removed the retired $_rcl_py (a version NebulaOS shipped)" ;;
+			*) log "config: $_rcl_py is not a version NebulaOS shipped - left in place" ;;
+		esac
+	fi
+	rmdir "$PRINTER_DATA_CONFIG/GuppyScreen/scripts" "$PRINTER_DATA_CONFIG/GuppyScreen" 2>/dev/null
 	return 0
 }
 
-# G62 (2026-10-16): files handed to NebulaOS live in printer_data/uploads.
-# Moves anything in the old places - including files put there while an
-# older NebulaOS ran from the other slot - into the new folders. Never
-# overwrites ("name (2).ext" instead); the old folders stay as real
-# directories when not empty (no symlinks: Moonraker roots must not overlap)
-# and are removed when empty. Idempotent, every boot.
-UPLOADS_ROOT="${UPLOADS_ROOT:-/usr/data/nebulaos/printer_data/uploads}"
+# G65 (2026-10-16): a copy of the user's settings at the first boot of every
+# new or rolled-back system - before migrate_moonraker_pin_include and the
+# rest rewrite moonraker.conf/printer.cfg or materialization replaces
+# config/nebulaos. Keyed on the image's seed manifest (any change, including
+# a downgrade). Moonraker is not running yet (S56), so its database file is
+# copied directly. A failed snapshot never blocks the boot.
+OSCONFIG="${OSCONFIG:-/usr/libexec/nebulaos/nebulaos-osconfig}"
+SETTINGS_SNAPSHOT_MARK="${SETTINGS_SNAPSHOT_MARK:-$SYSTEM/settings-snapshot.system}"
+settings_snapshot_on_new_system() {
+	[ -f "$SEEDS/seed-manifest.json" ] && [ -x "$OSCONFIG" ] || return 0
+	_ss_id=$(sha256sum "$SEEDS/seed-manifest.json" 2>/dev/null | cut -c1-64)
+	[ -n "$_ss_id" ] || return 0
+	[ "$(cat "$SETTINGS_SNAPSHOT_MARK" 2>/dev/null)" = "$_ss_id" ] && return 0
+	if _ss_out=$("$OSCONFIG" settings snapshot --reason new-system --db file 2>&1); then
+		mkdir -p "$(dirname "$SETTINGS_SNAPSHOT_MARK")" 2>/dev/null
+		echo "$_ss_id" > "$SETTINGS_SNAPSHOT_MARK"
+		log "settings: snapshot taken before this system's first start ($_ss_out)"
+	else
+		log "ERROR: settings: snapshot before this system's first start failed - continuing ($_ss_out)"
+	fi
+	return 0
+}
+
+# G62/G63 (2026-10-16): files handed to NebulaOS live in
+# printer_data/config/uploads (G63: inside the config root - Mainsail's upload
+# button only uploads there; G62's separate root printer_data/uploads is
+# retired). Moves anything in the old places - including files put there
+# while an older NebulaOS ran from the other slot - into the new folders.
+# Never overwrites ("name (2).ext" instead); old folders are removed when
+# empty. Idempotent, every boot.
+UPLOADS_ROOT="${UPLOADS_ROOT:-/usr/data/nebulaos/printer_data/config/uploads}"
+G62_UPLOADS_ROOT="${G62_UPLOADS_ROOT:-/usr/data/nebulaos/printer_data/uploads}"
 OLD_BOOT_UPLOADS="${OLD_BOOT_UPLOADS:-/usr/data/nebulaos/boot/uploads}"
 
 _mu_move_all() {
@@ -1513,6 +1494,13 @@ migrate_user_uploads() {
 	_mu_move_all "$PRINTER_DATA_CONFIG/firmware/os" "$UPLOADS_ROOT/system-image"
 	rmdir "$PRINTER_DATA_CONFIG/firmware" 2>/dev/null
 	_mu_move_all "$OLD_BOOT_UPLOADS" "$UPLOADS_ROOT/boot-logo"
+	# G63: the G62 root, and a boot logo uploaded through Mainsail into
+	# config/boot-logo while that root existed (Mainsail uploads into config).
+	for _mu_sub in boot-logo mainboard-firmware system-image; do
+		_mu_move_all "$G62_UPLOADS_ROOT/$_mu_sub" "$UPLOADS_ROOT/$_mu_sub"
+	done
+	rmdir "$G62_UPLOADS_ROOT" 2>/dev/null
+	_mu_move_all "$PRINTER_DATA_CONFIG/boot-logo" "$UPLOADS_ROOT/boot-logo"
 	return 0
 }
 
@@ -1535,6 +1523,8 @@ start() {
 	_last_error="none"
 
 	log "--- migration pass starting ---"
+	# G65: first, before anything below rewrites a setting.
+	settings_snapshot_on_new_system
 
 	_klipper_before=$( [ -d "$APPS/klipper/.git" ] && git -C "$APPS/klipper" rev-parse HEAD 2>/dev/null || echo "absent")
 	_extensions_before=$( [ -d "$APPS/nebulaos-klipper-extensions/.git" ] && git -C "$APPS/nebulaos-klipper-extensions" rev-parse HEAD 2>/dev/null || echo "absent")
@@ -1553,7 +1543,7 @@ start() {
 	migrate_printer_cfg_to_managed_tree
 	migrate_config_ownership
 	migrate_guppy_stale_modules
-	migrate_static_ip_state
+	retire_config_leftovers
 	migrate_user_uploads
 
 	if [ ! -f "$SEEDS/seed-manifest.json" ]; then

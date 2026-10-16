@@ -56,6 +56,51 @@ config_materialization_needed() {
 	return 0
 }
 
+# G65 (2026-10-16): before config/nebulaos is replaced, keep any file the user
+# edited where they can see it - config/backups/nebulaos-changes-<UTC>/ - and
+# leave a notice for the screen. A file counts as edited when it differs from
+# the sha256 recorded at the previous materialization. Without a record (a
+# device materialized by an older image) every file that differs from this
+# image's version is kept, without a notice: an older shipped version cannot
+# be told from an edit.
+NOTICES_DIR="${NOTICES_DIR:-$SYSTEM/notices}"
+_cm_save_user_edits() {
+	_cse_dest="$1"
+	[ -d "$_cse_dest" ] || return 0
+	_cse_out="$PRINTER_DATA_CONFIG/backups/nebulaos-changes-$(date -u +%Y%m%dT%H%M%SZ)"
+	_cse_edited=""
+	_cse_kept=""
+	for _cse_f in "$_cse_dest"/*.cfg; do
+		[ -f "$_cse_f" ] && [ ! -L "$_cse_f" ] || continue
+		_cse_name=$(basename "$_cse_f")
+		_cse_cur=$(sha256sum "$_cse_f" | cut -d' ' -f1)
+		_cse_rec=$(_cm_json_get "$CONFIG_GENERATION_FILE" "file_sha256.$_cse_name")
+		if [ -n "$_cse_rec" ]; then
+			[ "$_cse_cur" = "$_cse_rec" ] && continue
+			_cse_edited="$_cse_edited $_cse_name"
+		else
+			_cse_new=$(_cm_json_get "$NEBULAOS_KLIPPER_CFG_DIR/.manifest.json" "$_cse_name")
+			[ "$_cse_cur" = "$_cse_new" ] && continue
+		fi
+		mkdir -p "$_cse_out" && cp -a "$_cse_f" "$_cse_out/$_cse_name" && _cse_kept="$_cse_kept $_cse_name"
+	done
+	[ -n "$_cse_kept" ] || return 0
+	log "materialize_config_tree: kept the previous version of:$_cse_kept in $_cse_out"
+	if [ -n "$_cse_edited" ]; then
+		cat > "$_cse_out/WHAT-HAPPENED.txt" <<EOT
+NebulaOS was updated and replaced its own settings in config/nebulaos/.
+You had changed these files there:$_cse_edited
+Your versions are in this folder. To keep a change, copy the section or
+option into printer.cfg (or a file in macros/) - settings there override
+NebulaOS's and survive every update.
+EOT
+		mkdir -p "$NOTICES_DIR" 2>/dev/null
+		printf 'Your changes to%s were replaced by the update. Your versions are in config/backups/%s.\n' \
+			"$_cse_edited" "$(basename "$_cse_out")" > "$NOTICES_DIR/config-edits.txt"
+	fi
+	return 0
+}
+
 # Backs up the current $PRINTER_DATA_CONFIG/nebulaos/ (if present) to
 # $BACKUP_ROOT/config-materialization/<timestamp>/, atomically replaces it
 # with a fresh copy of $NEBULAOS_KLIPPER_CFG_DIR's own current content
@@ -120,7 +165,21 @@ materialize_config_tree() {
 		fi
 	done
 
+	# G63: what this folder is, for anyone browsing it in Mainsail. Written into
+	# the staged tree, since the whole folder is replaced at every generation.
+	cat > "$tmp/README.txt" <<'README'
+NebulaOS's own Klipper settings - please do not edit these files.
+
+They are replaced every time NebulaOS is updated. To change a setting, put
+the section or option in printer.cfg (or a file in macros/): a setting
+there overrides the one here and survives every update.
+
+If you did edit a file here, the update keeps your version in
+config/backups/nebulaos-changes-<date>/ and the screen tells you.
+README
+
 	dest="$PRINTER_DATA_CONFIG/nebulaos"
+	_cm_save_user_edits "$dest"
 	if [ -d "$dest" ]; then
 		ts=$(date -u +%Y%m%dT%H%M%SZ)
 		backup_dir="$BACKUP_ROOT/config-materialization/$ts"
@@ -139,14 +198,17 @@ materialize_config_tree() {
 	fi
 
 	mkdir -p "$(dirname "$CONFIG_GENERATION_FILE")"
-	cat > "$CONFIG_GENERATION_FILE" <<EOF
-{
-  "schema_version": 1,
-  "generation": "$image_generation",
-  "materialized_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "source": "$source_label"
-}
-EOF
+	# G65: written atomically; flat per-file keys (the manifest's own sha256,
+	# never a nested "generation") so the next materialization can tell a
+	# user's edit from the shipped file.
+	{
+		printf '{\n  "schema_version": 1,\n  "generation": "%s",\n' "$image_generation"
+		printf '  "materialized_at": "%s",\n  "source": "%s"' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$source_label"
+		for f in $cfg_files; do
+			printf ',\n  "file_sha256.%s": "%s"' "$f" "$(_cm_json_get "$manifest" "$f")"
+		done
+		printf '\n}\n'
+	} > "$CONFIG_GENERATION_FILE.tmp" && mv -f "$CONFIG_GENERATION_FILE.tmp" "$CONFIG_GENERATION_FILE"
 	log "materialize_config_tree: materialized $dest at generation $image_generation (source: $source_label)"
 	return 0
 }

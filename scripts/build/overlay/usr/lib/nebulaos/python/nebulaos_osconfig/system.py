@@ -2,6 +2,7 @@
 # (GUI/service readiness mission, 2026-10-09).
 import json
 import os
+import re
 import time
 
 from . import common
@@ -24,6 +25,11 @@ SLOT_SWAP = os.environ.get("NEBULAOS_SLOT_SWAP", "/usr/libexec/nebulaos/nebulaos
 # docs/A_B_SLOT_MODEL.md: slot 1 (A) = kernel/rootfs p5/p7, slot 2 (B) =
 # p6/p8. NebulaOS may run from either since 2026-10-14 (image updates).
 ROOT_SLOTS = {"/dev/mmcblk0p7": "A", "/dev/mmcblk0p8": "B"}
+# G65 (2026-10-16): one-line messages for the screen, one file each (e.g.
+# config-edits.txt from config materialization), shown until acknowledged.
+NOTICES_DIR = os.environ.get("NEBULAOS_NOTICES_DIR",
+                             os.path.join(common.NEBULAOS_ROOT, "system", "notices"))
+_NOTICE_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,40}$")
 
 
 def _read(path):
@@ -86,7 +92,33 @@ def info():
             "kernel": {"release": uname.release, "version": uname.version},
             "hostname": _read("/proc/sys/kernel/hostname"),
             "storage": storage_info(),
-            "sftp": {"available": os.access(SFTP_SERVER, os.X_OK)}}
+            "sftp": {"available": os.access(SFTP_SERVER, os.X_OK)},
+            "notices": notices()}
+
+
+def notices():
+    out = []
+    try:
+        names = sorted(os.listdir(NOTICES_DIR))
+    except OSError:
+        return out
+    for name in names:
+        nid = name[:-4] if name.endswith(".txt") else ""
+        if _NOTICE_RE.match(nid):
+            text = _read(os.path.join(NOTICES_DIR, name))
+            if text:
+                out.append({"id": nid, "text": text[:600]})
+    return out
+
+
+def ack_notice(nid):
+    if not isinstance(nid, str) or not _NOTICE_RE.match(nid):
+        raise common.invalid("INVALID_NOTICE", "unknown notice")
+    try:
+        os.unlink(os.path.join(NOTICES_DIR, nid + ".txt"))
+    except FileNotFoundError:
+        pass
+    return {"result": "ACKNOWLEDGED", "id": nid}
 
 
 # -- clean reset and boot slot (S2/S3, 2026-10-11) -----------------------------

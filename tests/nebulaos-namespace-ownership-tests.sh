@@ -45,7 +45,7 @@ pass() { echo "PASS: $1"; PASS=$((PASS + 1)); }
 #     the old paths in prose. A comment cannot execute, so it cannot
 #     reintroduce the namespace-ownership bug - only a live path literal
 #     in real code can.
-#   - S04nebulaos-migrate's migrate_static_ip_state() (audit F-11): a
+#   - (retired G63, 2026-10-16) S04nebulaos-migrate's migrate_static_ip_state() (audit F-11): a
 #     migration that moves state OUT of the retired alias has to name the
 #     alias it is moving out of. It only ever reads and `mv`s away from
 #     that path and never writes into it, which is the opposite of the

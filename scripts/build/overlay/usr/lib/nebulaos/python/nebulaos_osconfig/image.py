@@ -42,7 +42,7 @@ SEVENZA = os.environ.get("NEBULAOS_7ZA", "/usr/bin/7za")
 # The published F005 envelope password (mkpasswd -m md5 "F005C3_7e_bz" -S
 # cxswfile, see scripts/package/build-img.py): a format detail, not a secret.
 ENVELOPE_PASSWORD = "$1$cxswfile$ZFd0RWFYkJQugbtKVGL9y0"
-UPLOAD_DIR = os.environ.get("NEBULAOS_IMAGE_UPLOAD_DIR", "/opt/printer_data/uploads/system-image")  # G62
+UPLOAD_DIR = os.environ.get("NEBULAOS_IMAGE_UPLOAD_DIR", "/opt/printer_data/config/uploads/system-image")  # G62/G63
 USB_DIR = os.environ.get("NEBULAOS_MCU_USB_DIR", "/opt/printer_data/gcodes/USB")
 USB_DEPTH = 2
 MAX_ENTRIES = 2000

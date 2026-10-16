@@ -4,6 +4,7 @@
 #   nebulaos-osconfig system info
 #   nebulaos-osconfig system clean-reset|cancel-clean-reset|ack-clean-reset
 #   nebulaos-osconfig system swap-slot|keep-slot
+#   nebulaos-osconfig system ack-notice --id ID
 #   nebulaos-osconfig image list|status|ack
 #   nebulaos-osconfig image check --file ID
 #   nebulaos-osconfig image install --file ID --sha256 HEX   (starts "image worker")
@@ -17,6 +18,9 @@
 #   nebulaos-osconfig boot-display set-mode --mode logo
 #   nebulaos-osconfig logs status | set-level --level info|warning|debug | write-state | save
 #   nebulaos-osconfig logs expire-debug        (housekeeping: Debug ends after 24 h)
+#   nebulaos-osconfig settings status
+#   nebulaos-osconfig settings snapshot --reason new-system|changed|manual
+#                                       [--db api|file|none] [--if-changed]
 #   nebulaos-osconfig boot-display restore-original-logo
 #   nebulaos-osconfig boot-display list-images | preview [--file NAME]
 #   nebulaos-osconfig boot-display import-usb --file usb/<dev>/<path> | delete-image --file NAME
@@ -33,7 +37,7 @@
 import json
 import sys
 
-from . import bootdisplay, common, display, image, logs, mcu, network, system, wifi
+from . import bootdisplay, common, display, image, logs, mcu, network, snapshot, system, wifi
 
 
 def _opts(args, allowed):
@@ -57,7 +61,8 @@ READ_ONLY = {("system", "info"), ("network", "status"),
              ("boot-display", "status"), ("display", "status"),
              ("boot-display", "list-images"), ("boot-display", "preview"),
              ("wifi", "status"), ("mcu", "status"), ("mcu", "list"),
-             ("image", "list"), ("image", "status"), ("logs", "status")}
+             ("image", "list"), ("image", "status"), ("logs", "status"),
+             ("settings", "status")}
 
 # G27 (2026-10-12): every change is one line in the system log (persistent
 # system.log), success or failure. Read-only verbs are not logged (the screen
@@ -65,15 +70,19 @@ READ_ONLY = {("system", "info"), ("network", "status"),
 # Display sleep/wake run at every screen timeout, so only failures of those.
 _QUIET_OK = {("display", "sleep"), ("display", "wake"), ("boot-display", "render"),
              ("logs", "write-state"), ("logs", "expire-debug")}
-_LOGGED_ARGS = ("--hostname", "--ssid", "--mode", "--file", "--level", "--sha256")
+# A snapshot is logged when one is taken, not when nothing changed.
+_QUIET_RESULTS = ("UNCHANGED",)
+_LOGGED_ARGS = ("--hostname", "--ssid", "--mode", "--file", "--level", "--sha256", "--reason")
 _LOGGED_RESULT = ("result", "ssid", "address", "address_mode", "address_note",
-                  "next_boot", "applies")
+                  "next_boot", "applies", "name", "database")
 
 
 def _audit(argv, out):
     if len(argv) < 2 or (argv[0], argv[1]) in READ_ONLY:
         return
     if out.get("ok") and (argv[0], argv[1]) in _QUIET_OK and out.get("result") != "EXPIRED":
+        return
+    if out.get("ok") and out.get("result") in _QUIET_RESULTS:
         return
     parts = [argv[0], argv[1]]
     for i, arg in enumerate(argv[2:-1], start=2):
@@ -114,7 +123,8 @@ def _dispatch(argv):
             return image.status() if verb == "status" else image.list_files()
         return {"system": system.info, "network": network.status,
                 "boot-display": bootdisplay.status, "display": display.status,
-                "wifi": wifi.status, "logs": logs.status}[domain]()
+                "wifi": wifi.status, "logs": logs.status,
+                "settings": snapshot.status}[domain]()
     if (domain, verb) == ("mcu", "flash"):
         # Its own non-blocking lock: a second flash is refused, never queued.
         opts = _opts(rest, {"file": True, "sha256": True})
@@ -164,6 +174,8 @@ def _dispatch(argv):
             if verb in verbs:
                 _opts(rest, {})
                 return verbs[verb]()
+            if verb == "ack-notice":
+                return system.ack_notice(_opts(rest, {"id": True}).get("id"))
         elif domain == "logs":
             if verb == "status":
                 _opts(rest, {})
@@ -179,6 +191,11 @@ def _dispatch(argv):
             if verb == "expire-debug":
                 _opts(rest, {})
                 return logs.expire_debug()
+        elif domain == "settings":
+            if verb == "snapshot":
+                o = _opts(rest, {"reason": True, "db": True, "if-changed": False})
+                return snapshot.take(o.get("reason"), db=o.get("db", "api"),
+                                     if_changed=bool(o.get("if-changed")))
         elif domain == "image":
             if verb == "check":
                 return image.check(_opts(rest, {"file": True}).get("file"))

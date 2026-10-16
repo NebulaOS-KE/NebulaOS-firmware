@@ -214,7 +214,7 @@ def _files():
     for root, _, names in os.walk(CONFIG_DIR):
         rel = os.path.relpath(root, CONFIG_DIR)
         top = rel.split(os.sep)[0]
-        if rel != "." and (top == "backups" or top.startswith(".")):
+        if rel != "." and (top in ("backups", "uploads") or top.startswith(".")):
             continue
         for name in sorted(names):
             if name.endswith((".cfg", ".conf", ".json")) and not name.startswith("."):

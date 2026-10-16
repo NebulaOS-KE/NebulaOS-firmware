@@ -26,7 +26,7 @@ from . import common
 from .common import invalid, OsConfigError
 
 UPLOAD_DIR = os.environ.get("NEBULAOS_MCU_UPLOAD_DIR",
-                            "/opt/printer_data/uploads/mainboard-firmware")  # G62
+                            "/opt/printer_data/config/uploads/mainboard-firmware")  # G62
 USB_DIR = os.environ.get("NEBULAOS_MCU_USB_DIR", "/opt/printer_data/gcodes/USB")
 BUILTIN = os.environ.get("NEBULAOS_MCU_BUILTIN",
                          "/opt/nebulaos/mcu-candidates/candidate-001.bin")

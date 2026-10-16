@@ -29,12 +29,12 @@ if TYPE_CHECKING:
     from ..common import WebRequest
 
 DEFAULT_HELPER = "/usr/libexec/nebulaos/nebulaos-osconfig"
-# G62 (2026-10-16): the Moonraker file root "uploads" - files handed to
-# NebulaOS: boot-logo/, mainboard-firmware/, system-image/. Replaces the old
-# "nebulaos_boot" root. S01persistent-datastore creates it before Moonraker
-# starts. Not overlapping any other root (no symlinks into it).
-UPLOADS_ROOT = "uploads"
-DEFAULT_UPLOADS_DIR = "/opt/printer_data/uploads"
+# G63 (2026-10-16): files handed to NebulaOS - boot-logo/, mainboard-firmware/,
+# system-image/ - live in config/uploads, inside the "config" root: Mainsail's
+# upload button only uploads into config, so G62's own root "uploads" could
+# not receive files. No root is registered for it (a root under config would
+# overlap). S01persistent-datastore creates the folders before Moonraker.
+DEFAULT_UPLOADS_DIR = "/opt/printer_data/config/uploads"
 READ_TIMEOUT = 20.
 # A network change waits for DHCP/ARP verification and a possible revert.
 WRITE_TIMEOUT = 150.
@@ -60,10 +60,6 @@ class NebulaOS:
                 os.makedirs(os.path.join(self.uploads_dir, sub), exist_ok=True)
             except OSError as exc:
                 logging.info(f"nebulaos: cannot create {self.uploads_dir}/{sub}: {exc}")
-        fm = self.server.lookup_component("file_manager", None)
-        if fm is None or not fm.register_directory(
-                UPLOADS_ROOT, self.uploads_dir, full_access=True):
-            logging.info("nebulaos: uploads root not registered")
         routes = [
             ("/machine/nebulaos/info", RequestType.GET, self._info),
             ("/machine/nebulaos/network/status", RequestType.GET, self._net_status),
@@ -98,6 +94,8 @@ class NebulaOS:
             ("/machine/nebulaos/system/swap_slot", RequestType.POST, self._swap_slot),
             ("/machine/nebulaos/system/ack_clean_reset", RequestType.POST,
              self._ack_clean_reset),
+            ("/machine/nebulaos/system/ack_notice", RequestType.POST,
+             self._ack_notice),
             ("/machine/nebulaos/image/list", RequestType.GET, self._image_list),
             ("/machine/nebulaos/image/status", RequestType.GET, self._image_status),
             ("/machine/nebulaos/image/check", RequestType.POST, self._image_check),
@@ -314,6 +312,10 @@ class NebulaOS:
     async def _ack_clean_reset(self, web_request: WebRequest) -> Dict[str, Any]:
         # The screen showed the after-reset notice (G2).
         return await self._write("system", "ack-clean-reset")
+
+    async def _ack_notice(self, web_request: WebRequest) -> Dict[str, Any]:
+        # G65: the screen showed a notice (e.g. replaced config/nebulaos edits).
+        return await self._write("system", "ack-notice", "--id", web_request.get_str("id"))
 
     async def _swap_slot(self, web_request: WebRequest) -> Dict[str, Any]:
         await self._refuse_while_printing()

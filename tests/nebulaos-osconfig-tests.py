@@ -1535,6 +1535,77 @@ class LogsTests(unittest.TestCase):
             self.assertIn(section, state)
 
 
+class SettingsSnapshotTests(unittest.TestCase):
+    """G65 (2026-10-16): copies of the user's settings in config/backups; the
+    Moonraker database copy never under config."""
+
+    def setUp(self):
+        self.e = Env()
+        self.s = importlib.import_module("nebulaos_osconfig.snapshot")
+        t = self.e.tmp
+        self.pdata = os.path.join(t, "pd")
+        self.s.CONFIG_DIR = os.path.join(self.pdata, "config")
+        self.s.BACKUPS_DIR = os.path.join(self.s.CONFIG_DIR, "backups")
+        self.s.CALIBRATION_DIR = os.path.join(self.pdata, "calibration")
+        self.s.DATABASE_DIR = os.path.join(self.pdata, "database")
+        self.s.API_BACKUP_DIR = os.path.join(self.pdata, "backup", "database")
+        self.s.DB_FILE_DIR = os.path.join(t, "data", "system", "settings-db")
+        self.s.GUPPY_CONFIG = os.path.join(t, "guppy.json")
+        self.s.MOONRAKER = "http://127.0.0.1:9"          # nothing listens
+        for d in ("config/macros", "calibration", "database"):
+            os.makedirs(os.path.join(self.pdata, d))
+        self.w("config/printer.cfg", "[printer]\n#*# [bed_mesh default]\n#*# points = 0.1\n")
+        self.w("config/moonraker.conf", "[server]\n")
+        self.w("config/macros/mine.cfg", "[gcode_macro HI]\n")
+        self.w("calibration/journal.json", "{}\n")
+        self.w("database/moonraker-sql.db", "SQLITE")
+        self.w("database/moonraker-sql.db-wal", "WAL")
+        with open(self.s.GUPPY_CONFIG, "w") as h:
+            h.write("{}")
+
+    def w(self, rel, text):
+        with open(os.path.join(self.pdata, rel), "w") as h:
+            h.write(text)
+
+    def tearDown(self):
+        self.e.cleanup()
+
+    def test_new_system_snapshot_with_database_file(self):
+        out = self.s.take("new-system", db="file", now=1792100000)
+        self.assertEqual(out["result"], "TAKEN")
+        snap = os.path.join(self.s.BACKUPS_DIR, out["name"])
+        for rel in ("printer.cfg", "moonraker.conf", "macros/mine.cfg", "calibration/journal.json",
+                    "guppyscreen/guppyconfig.json", "SNAPSHOT.txt"):
+            self.assertTrue(os.path.isfile(os.path.join(snap, rel)), rel)
+        self.assertIn("#*# points = 0.1", open(os.path.join(snap, "printer.cfg")).read())
+        # the database (login data, API keys) never goes under config
+        for root, _, names in os.walk(self.s.CONFIG_DIR):
+            self.assertFalse([n for n in names if "sql" in n], root)
+        db = os.path.join(self.s.DB_FILE_DIR, out["name"])
+        self.assertEqual(sorted(os.listdir(db)), ["moonraker-sql.db", "moonraker-sql.db-wal"])
+        self.assertIn("database: " + db, open(os.path.join(snap, "SNAPSHOT.txt")).read())
+
+    def test_if_changed_and_keep_newest(self):
+        first = self.s.take("changed", db="none", if_changed=True, now=1792100000)
+        self.assertEqual(first["result"], "TAKEN")
+        self.assertEqual(self.s.take("changed", db="none", if_changed=True, now=1792100100)["result"],
+                         "UNCHANGED")
+        for i in range(7):
+            self.w("config/printer.cfg", "[printer]\n# %d\n" % i)
+            self.s.take("changed", db="none", if_changed=True, now=1792100200 + i * 60)
+        names = self.s.snapshots()
+        self.assertEqual(len(names), self.s.KEEP)
+        self.assertNotIn(first["name"], names)
+        self.assertIn("# 6", open(os.path.join(self.s.BACKUPS_DIR, names[-1], "printer.cfg")).read())
+
+    def test_api_backup_unreachable_is_recorded(self):
+        out = self.s.take("manual", db="api", now=1792100000)
+        self.assertEqual(out["result"], "TAKEN")
+        self.assertTrue(out["database"].startswith("skipped"))
+        with self.assertRaises(self.e.common.OsConfigError):
+            self.s.take("whenever")
+
+
 class PowerOnLogoTests(unittest.TestCase):
     """G58/G40 (2026-10-15): the power-on logo in the running slot's RTOS -
     against fake rtos/rtos2 partitions holding a synthetic image (the real
@@ -2212,8 +2283,10 @@ class ComponentTests(unittest.TestCase):
         self.assertEqual(spec, {"mode": "static", "address": "10.0.0.5", "prefix": 24,
                                 "gateway": "10.0.0.1", "dns": ["10.0.0.1"]})
 
-    def test_boot_upload_root_registered(self):
-        self.assertEqual(self.registered, ("uploads", self.upload_dir, True))
+    def test_no_upload_root_registered(self):
+        # G63: uploads live inside the config root (Mainsail only uploads into
+        # config); a root of their own would overlap it.
+        self.assertFalse(hasattr(self, "registered"))
         for sub in ("boot-logo", "mainboard-firmware", "system-image"):
             self.assertTrue(os.path.isdir(os.path.join(self.upload_dir, sub)))
         self.call("/machine/nebulaos/boot_display/image", {"filename": "logo.png"})

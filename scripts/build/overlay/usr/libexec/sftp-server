@@ -1,6 +1,6 @@
 #!/bin/sh
 # G62 (2026-10-16): SFTP opens in the user's folder, /opt/printer_data
-# (config, gcodes, logs, uploads), not root's empty, read-only home. dropbear
+# (config, gcodes, logs), not root's empty, read-only home. dropbear
 # starts this path for its sftp subsystem. root's home itself stays /root:
 # Moonraker and others build paths from it (architecture review 2026-10-16).
 cd /opt/printer_data 2>/dev/null || cd /

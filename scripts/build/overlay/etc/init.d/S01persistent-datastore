@@ -113,13 +113,13 @@ start() {
 	# persistent directory, so thumbnail downloads work without touching any
 	# device's saved config (GUI readiness work, 2026-10-10).
 	mkdir -p "$GUPPY_STATE/thumbnails"
-	# G62 (2026-10-16): one place for files handed to NebulaOS - the Moonraker
-	# root "uploads" (registered by the [nebulaos] component, so it must
-	# exist before S56moonraker): boot logos, mainboard (MCU) firmware and
-	# system images. Created at every boot; S04 moves files from the old
-	# places (config/firmware/mcu, config/firmware/os, boot/uploads).
-	mkdir -p "$PDATA/uploads/boot-logo" "$PDATA/uploads/mainboard-firmware" \
-		"$PDATA/uploads/system-image"
+	# G63 (2026-10-16): one place for files handed to NebulaOS, inside the
+	# config root - Mainsail's upload button only ever uploads into "config"
+	# (the separate G62 root "uploads" could not receive files): boot logos,
+	# mainboard (MCU) firmware and system images. Created at every boot; S04
+	# moves files from the old places.
+	mkdir -p "$PDATA/config/uploads/boot-logo" "$PDATA/config/uploads/mainboard-firmware" \
+		"$PDATA/config/uploads/system-image"
 	# What is where, for SFTP users (the data path is not a Mainsail root).
 	cp -f /usr/share/nebulaos/printer_data-README.txt "$PDATA/README.txt" 2>/dev/null
 
@@ -154,6 +154,11 @@ start() {
 	mkdir -p "$PDATA/config/guppyscreen"
 	[ -e "$PDATA/config/guppyscreen/guppyconfig.json" ] || touch "$PDATA/config/guppyscreen/guppyconfig.json"
 	mount --bind "$GUPPY_STATE/guppyconfig.json" "$PDATA/config/guppyscreen/guppyconfig.json"
+	# G63 (2026-10-16): the /opt/printer_data bind above is not recursive and
+	# was made before this one, so Mainsail, SFTP and the log zip (all via
+	# /opt/printer_data) saw the empty placeholder - and an edit saved there
+	# went nowhere. Bind the same file there too.
+	mount --bind "$GUPPY_STATE/guppyconfig.json" /opt/printer_data/config/guppyscreen/guppyconfig.json
 
 	# Persistent root password (D7, 2026-10-10): seed /etc/shadow once into
 	# the data partition and bind it over the read-only image copy, so
