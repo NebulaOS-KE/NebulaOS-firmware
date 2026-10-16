@@ -56,6 +56,50 @@ config_materialization_needed() {
 	return 0
 }
 
+_cm_write_readme() {
+	cat > "$1/README.txt" <<'README'
+NebulaOS's own Klipper settings - please do not edit these files.
+
+They are replaced every time NebulaOS is updated. To change a setting, put
+the section or option in printer.cfg (or a file in macros/): a setting
+there overrides the one here and survives every update.
+
+If you did edit a file here, the update keeps your version in
+config/backups/nebulaos-changes-<date>/ and the screen tells you.
+README
+}
+
+# Writes config-generation.json atomically: generation, source and the
+# manifest's sha256 per file (flat keys, never a nested "generation").
+_cm_write_generation() { # GENERATION SOURCE MANIFEST
+	mkdir -p "$(dirname "$CONFIG_GENERATION_FILE")"
+	{
+		printf '{\n  "schema_version": 1,\n  "generation": "%s",\n' "$1"
+		printf '  "materialized_at": "%s",\n  "source": "%s"' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$2"
+		for _cwg_f in $(cd "$NEBULAOS_KLIPPER_CFG_DIR" 2>/dev/null && ls -1 *.cfg 2>/dev/null | sort); do
+			printf ',\n  "file_sha256.%s": "%s"' "$_cwg_f" "$(_cm_json_get "$3" "$_cwg_f")"
+		done
+		printf '\n}\n'
+	} > "$CONFIG_GENERATION_FILE.tmp" && mv -f "$CONFIG_GENERATION_FILE.tmp" "$CONFIG_GENERATION_FILE"
+}
+
+# S1 (2026-10-16): a tree materialized by an older image (no README, no
+# per-file hashes) gets both at the next boot without waiting for the next
+# generation change. Only when the recorded generation IS this image's - so
+# the manifest's sha256s are exactly what was shipped into the folder.
+config_tree_backfill() {
+	_ctb_dest="$PRINTER_DATA_CONFIG/nebulaos"
+	_ctb_manifest="$NEBULAOS_KLIPPER_CFG_DIR/.manifest.json"
+	[ -d "$_ctb_dest" ] && [ -f "$_ctb_manifest" ] && [ -f "$CONFIG_GENERATION_FILE" ] || return 0
+	_ctb_gen=$(_cm_json_get "$_ctb_manifest" generation)
+	[ -n "$_ctb_gen" ] && [ "$(_cm_json_get "$CONFIG_GENERATION_FILE" generation)" = "$_ctb_gen" ] || return 0
+	[ -f "$_ctb_dest/README.txt" ] || { _cm_write_readme "$_ctb_dest" && log "config tree: README.txt added to $_ctb_dest"; }
+	grep -q '"file_sha256\.' "$CONFIG_GENERATION_FILE" 2>/dev/null && return 0
+	_cm_write_generation "$_ctb_gen" "backfill" "$_ctb_manifest" \
+		&& log "config tree: per-file sha256s recorded for generation $_ctb_gen"
+	return 0
+}
+
 # G65 (2026-10-16): before config/nebulaos is replaced, keep any file the user
 # edited where they can see it - config/backups/nebulaos-changes-<UTC>/ - and
 # leave a notice for the screen. A file counts as edited when it differs from
@@ -167,16 +211,7 @@ materialize_config_tree() {
 
 	# G63: what this folder is, for anyone browsing it in Mainsail. Written into
 	# the staged tree, since the whole folder is replaced at every generation.
-	cat > "$tmp/README.txt" <<'README'
-NebulaOS's own Klipper settings - please do not edit these files.
-
-They are replaced every time NebulaOS is updated. To change a setting, put
-the section or option in printer.cfg (or a file in macros/): a setting
-there overrides the one here and survives every update.
-
-If you did edit a file here, the update keeps your version in
-config/backups/nebulaos-changes-<date>/ and the screen tells you.
-README
+	_cm_write_readme "$tmp"
 
 	dest="$PRINTER_DATA_CONFIG/nebulaos"
 	_cm_save_user_edits "$dest"
@@ -197,18 +232,10 @@ README
 		return 1
 	fi
 
-	mkdir -p "$(dirname "$CONFIG_GENERATION_FILE")"
 	# G65: written atomically; flat per-file keys (the manifest's own sha256,
 	# never a nested "generation") so the next materialization can tell a
 	# user's edit from the shipped file.
-	{
-		printf '{\n  "schema_version": 1,\n  "generation": "%s",\n' "$image_generation"
-		printf '  "materialized_at": "%s",\n  "source": "%s"' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$source_label"
-		for f in $cfg_files; do
-			printf ',\n  "file_sha256.%s": "%s"' "$f" "$(_cm_json_get "$manifest" "$f")"
-		done
-		printf '\n}\n'
-	} > "$CONFIG_GENERATION_FILE.tmp" && mv -f "$CONFIG_GENERATION_FILE.tmp" "$CONFIG_GENERATION_FILE"
+	_cm_write_generation "$image_generation" "$source_label" "$manifest"
 	log "materialize_config_tree: materialized $dest at generation $image_generation (source: $source_label)"
 	return 0
 }

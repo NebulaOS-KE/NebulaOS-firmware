@@ -314,6 +314,31 @@ kept8=$(ls -d "$t8"/printer_data/config/backups/nebulaos-changes-* 2>/dev/null |
 [ -n "$kept8" ] && [ -f "$kept8/machine.cfg" ] && [ ! -f "$kept8/WHAT-HAPPENED.txt" ] && [ ! -e "$t8/system/notices/config-edits.txt" ] \
 	&& pass "test 8: no hash record - differing files kept quietly, no notice" || fail "test 8: kept=$kept8"
 
+# --- S1: a tree materialized by an older image (no README, no per-file
+# hashes, same generation) gets both at the next boot, without a re-materialization.
+t10="$WORK/t10"; src10="$WORK/src10"
+make_immutable_source "$src10" "same"
+run_materialize "$t10" "$src10" "boot-materialization" >/dev/null
+rm -f "$t10/printer_data/config/nebulaos/README.txt"
+gen10=$(sed -n 's/.*"generation": "\([^"]*\)".*/\1/p' "$t10/system/config-generation.json")
+printf '{\n  "schema_version": 1,\n  "generation": "%s"\n}\n' "$gen10" > "$t10/system/config-generation.json"
+echo "# user edit" >> "$t10/printer_data/config/nebulaos/machine.cfg"
+backfill10() {
+	env NEBULAOS_KLIPPER_CFG_DIR="$src10" PRINTER_DATA_CONFIG="$t10/printer_data/config" SYSTEM="$t10/system" \
+	    BACKUP_ROOT="$t10/system/migration-backups" sh -c ". '$LIB'; log() { :; }; config_tree_backfill"
+}
+backfill10
+[ -f "$t10/printer_data/config/nebulaos/README.txt" ] && pass "test 10a: README backfilled" || fail "test 10a: no README"
+python3 -c "import json,sys; d=json.load(open(sys.argv[1])); assert d['generation']==sys.argv[2] and d['file_sha256.machine.cfg']" \
+	"$t10/system/config-generation.json" "$gen10" 2>/dev/null \
+	&& pass "test 10b: per-file hashes recorded, generation kept" || fail "test 10b: $(cat "$t10/system/config-generation.json")"
+grep -q "# user edit" "$t10/printer_data/config/nebulaos/machine.cfg" \
+	&& pass "test 10c: backfill never touches the files" || fail "test 10c"
+printf '{\n  "schema_version": 1,\n  "generation": "other"\n}\n' > "$t10/system/config-generation.json"
+rm -f "$t10/printer_data/config/nebulaos/README.txt"; backfill10
+[ ! -f "$t10/printer_data/config/nebulaos/README.txt" ] && ! grep -q file_sha256 "$t10/system/config-generation.json" \
+	&& pass "test 10d: a different generation is left to materialization" || fail "test 10d"
+
 echo ""
 echo "config-materialization-tests: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

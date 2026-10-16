@@ -1195,6 +1195,7 @@ materialize_active_config() {
 	NEBULAOS_KLIPPER_CFG_DIR="${NEBULAOS_KLIPPER_CFG_DIR:-/etc/nebulaos/klipper}" \
 		. "$CONFIG_MATERIALIZE_LIB"
 	if ! config_materialization_needed; then
+		config_tree_backfill          # S1: README + per-file hashes for an older tree
 		return 0
 	fi
 	if materialize_config_tree "boot-materialization"; then
