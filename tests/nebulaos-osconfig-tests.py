@@ -2370,6 +2370,9 @@ class ComponentTests(unittest.TestCase):
         def get_list(self, key, default=None):
             return self.args.get(key, default)
 
+        def get_boolean(self, key, default=None):
+            return bool(self.args.get(key, default))
+
     def calls(self):
         try:
             return open(self.log + ".all").read().splitlines()
@@ -2418,6 +2421,14 @@ class ComponentTests(unittest.TestCase):
             self.assertTrue(os.path.isdir(os.path.join(self.upload_dir, sub)))
         self.call("/machine/nebulaos/boot_display/image", {"filename": "logo.png"})
         self.assertEqual(self.argv()[:4], ["boot-display", "set-image", "--file", "logo.png"])
+
+    def test_hidden_and_cleanup_arguments(self):
+        self.call("/machine/nebulaos/wifi/connect", {"ssid": "Attic", "password": "x" * 8, "hidden": True})
+        self.call("/machine/nebulaos/cleanup/plan", {"videos": True})
+        self.assertEqual(self.argv()[:3], ["system", "cleanup-plan", "--videos"])
+        self.call("/machine/nebulaos/cleanup/plan", {})
+        self.assertEqual(self.argv()[:2], ["system", "cleanup-plan"])
+        self.assertNotIn("--videos", self.argv())
 
     def test_invalid_maps_to_400(self):
         with self.assertRaises(Exception) as cm:
