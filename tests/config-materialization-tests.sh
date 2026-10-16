@@ -283,6 +283,25 @@ grep -q "machine.cfg" "$t7/system/notices/config-edits.txt" 2>/dev/null \
 grep -q "# machine gen-b" "$cfg7/nebulaos/machine.cfg" && [ -f "$cfg7/nebulaos/README.txt" ] \
 	&& pass "test 7e: new generation in place, README kept" || fail "test 7e: new tree wrong"
 
+# --- G65: calibration (printer.cfg's SAVE_CONFIG block) survives an update
+# and a rollback: materializing a new generation and then the old one again
+# never touches printer.cfg.
+t9="$WORK/t9"; src9a="$WORK/src9a"; src9b="$WORK/src9b"
+make_immutable_source "$src9a" "v1"
+make_immutable_source "$src9b" "v2"
+mkdir -p "$t9/printer_data/config"
+printf '[include nebulaos/machine.cfg]\n\n#*# <---------------------- SAVE_CONFIG ---------------------->\n#*# [bltouch]\n#*# z_offset = 2.345\n#*#\n#*# [bed_mesh default]\n#*# points =\n#*# \t0.01, 0.02\n' > "$t9/printer_data/config/printer.cfg"
+before9=$(sha256sum "$t9/printer_data/config/printer.cfg" | cut -d' ' -f1)
+run_materialize "$t9" "$src9a" "boot-materialization" >/dev/null     # first install
+run_materialize "$t9" "$src9b" "boot-materialization" >/dev/null     # update
+run_materialize "$t9" "$src9a" "boot-materialization" >/dev/null     # rollback
+[ "$(sha256sum "$t9/printer_data/config/printer.cfg" | cut -d' ' -f1)" = "$before9" ] \
+	&& grep -q "z_offset = 2.345" "$t9/printer_data/config/printer.cfg" \
+	&& pass "test 9: calibration in printer.cfg unchanged across update and rollback" \
+	|| fail "test 9: printer.cfg changed"
+grep -q "# machine v1" "$t9/printer_data/config/nebulaos/machine.cfg" \
+	&& pass "test 9b: the rolled-back generation's own settings are in place" || fail "test 9b"
+
 # --- G65: a device materialized by an older image (no per-file hashes): a
 # file that differs from the new image is kept quietly - no notice.
 t8="$WORK/t8"; src8a="$WORK/src8a"; src8b="$WORK/src8b"
