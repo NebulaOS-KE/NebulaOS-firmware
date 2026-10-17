@@ -138,6 +138,26 @@ def status():
     return out
 
 
+def check_writable():
+    """Read-only: raises when the running slot's RTOS cannot take a logo -
+    checked before anything changes (Apply changes both logos or neither)."""
+    slot = system.boot_slot()
+    if slot not in RTOS_PARTS:
+        raise OsConfigError("SLOT_UNKNOWN", "cannot tell which slot is running; nothing was changed")
+    if classify(_read_image(slot)) == "unknown":
+        raise OsConfigError("RTOS_UNKNOWN", "the RTOS in slot %s is not the known one; "
+                            "nothing was changed" % slot)
+    return slot
+
+
+def nebulaos_slot_bytes():
+    return _nebulaos_slot()
+
+
+def write_slot(slot_bytes):
+    return _write(slot_bytes)
+
+
 def _write(slot_bytes):
     """Write a new logo slot into the running slot's RTOS, read back."""
     if len(slot_bytes) != SIZE:

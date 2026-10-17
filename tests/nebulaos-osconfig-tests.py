@@ -376,6 +376,12 @@ class BootDisplayTests(unittest.TestCase):
         self.b = self.e.bootdisplay
         from PIL import Image
         self.Image = Image
+        # The power-on logo (RTOS) side is PowerOnLogoTests' subject; here it
+        # always takes the logo.
+        p = importlib.import_module("nebulaos_osconfig.poweronlogo")
+        self.written = []
+        p.check_writable = lambda: "B"
+        p.write_slot = lambda data: self.written.append(data) or {"result": "WRITTEN", "slot": "B"}
 
     def tearDown(self):
         self.e.cleanup()
@@ -1869,9 +1875,31 @@ class PowerOnLogoTests(unittest.TestCase):
             self.p.set_nebulaos()
         self.assertEqual(cm.exception.code, "RTOS_UNKNOWN")
         self.assertEqual(self.part("mmcblk0p4"), bytes(bad))
-        # the boot screen change still applies; the power-on part reports the refusal
-        out = self.b.set_image(self.upload("x.png"))
-        self.assertEqual((out["result"], out["power_on"]["error"]), ("APPLIED", "RTOS_UNKNOWN"))
+        # Run 10 rule: Apply changes both logos or neither - the boot screen
+        # stays as it was when the power-on logo cannot be written.
+        before = self.b.load_config()[0]
+        with self.assertRaises(self.e.common.OsConfigError) as cm:
+            self.b.set_image(self.upload("x.png"))
+        self.assertEqual(cm.exception.code, "RTOS_UNKNOWN")
+        self.assertEqual(self.b.load_config()[0], before)
+        self.assertIsNone(self.b.custom_path())
+
+    def test_failed_power_on_write_restores_the_boot_screen(self):
+        """Both or neither: a write that fails after the boot screen changed
+        puts the boot screen back."""
+        self.b.set_image(self.upload("first.png"))
+        before = (self.b.load_config()[0], open(self.b.custom_path(), "rb").read())
+        real = self.p._write
+        def broken(data):
+            raise self.e.common.OsConfigError("WRITE_FAILED", "did not read back")
+        self.p.write_slot = broken
+        try:
+            with self.assertRaises(self.e.common.OsConfigError) as cm:
+                self.b.set_image(self.upload("second.png"))
+        finally:
+            self.p.write_slot = lambda data: real(data)
+        self.assertIn("nothing was changed", cm.exception.message)
+        self.assertEqual((self.b.load_config()[0], open(self.b.custom_path(), "rb").read()), before)
 
     def test_restore_from_the_other_slot(self):
         # no backup on this printer, but slot A's RTOS still has the original

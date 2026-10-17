@@ -392,40 +392,89 @@ def resolve_upload(filename):
     return full
 
 
+# Run 10 test (2026-10-17): Apply changes the boot screen AND the power-on
+# logo, or neither. The power-on logo is converted and the RTOS checked first;
+# if writing it still fails, the boot screen goes back to what it was.
+def _boot_snapshot():
+    snap = {}
+    for path in [CONFIG, ENV] + [os.path.join(BOOT_DIR, "custom." + e) for e in ("png", "bmp", "jpg")]:
+        try:
+            with open(path, "rb") as handle:
+                snap[path] = handle.read()
+        except OSError:
+            snap[path] = None
+    return snap
+
+
+def _boot_restore(snap):
+    for path, data in snap.items():
+        if data is None:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+        else:
+            common.atomic_write(path, data)
+
+
+def _apply_both(change_boot, slot_bytes):
+    from . import poweronlogo
+    poweronlogo.check_writable()
+    before = _boot_snapshot()
+    cfg = change_boot()
+    try:
+        power = poweronlogo.write_slot(slot_bytes)
+    except Exception as exc:
+        _boot_restore(before)
+        _render_now()
+        code = exc.code if isinstance(exc, OsConfigError) else "POWER_ON_FAILED"
+        raise OsConfigError(code, "the power-on logo could not be written (%s); nothing was "
+                            "changed" % str(exc)[:160])
+    return cfg, power
+
+
 def set_image(filename):
     src = resolve_upload(filename)
     fmt, width, height = validate_image_file(src)
     with open(src, "rb") as handle:
         data = handle.read(MAX_FILE_BYTES + 1)
     ext = {"PNG": "png", "BMP": "bmp", "JPEG": "jpg"}[fmt]
-    common.atomic_write(os.path.join(BOOT_DIR, "custom." + ext), data)
-    for other_ext in ("png", "bmp", "jpg"):
-        other = os.path.join(BOOT_DIR, "custom." + other_ext)
-        if other_ext != ext and os.path.exists(other):
-            os.unlink(other)
-    cfg, _ = load_config()
-    cfg = dict(cfg, mode="logo", image="custom", source=filename)
-    _persist(cfg)
-    rendered = _render_now()
     from . import poweronlogo
+    slot_bytes, quality = poweronlogo.convert(src)          # before anything changes
+
+    def change_boot():
+        common.atomic_write(os.path.join(BOOT_DIR, "custom." + ext), data)
+        for other_ext in ("png", "bmp", "jpg"):
+            other = os.path.join(BOOT_DIR, "custom." + other_ext)
+            if other_ext != ext and os.path.exists(other):
+                os.unlink(other)
+        cfg, _ = load_config()
+        cfg = dict(cfg, mode="logo", image="custom", source=filename)
+        _persist(cfg)
+        return cfg
+    cfg, power = _apply_both(change_boot, slot_bytes)
+    power["quality"] = quality
     return {"result": "APPLIED", "config": cfg, "image": {"format": fmt,
-            "width": width, "height": height}, "render": rendered,
-            "power_on": _power_on(poweronlogo.set_custom, src)}
+            "width": width, "height": height}, "render": _render_now(),
+            "power_on": power}
 
 
 def reset_image():
-    for ext in ("png", "bmp", "jpg"):
-        path = os.path.join(BOOT_DIR, "custom." + ext)
-        if os.path.exists(path):
-            os.unlink(path)
-    cfg, _ = load_config()
-    cfg = dict(cfg, mode="logo", image="builtin")
-    cfg.pop("source", None)
-    _persist(cfg)
-    rendered = _render_now()
     from . import poweronlogo
-    return {"result": "APPLIED", "config": cfg, "render": rendered,
-            "power_on": _power_on(poweronlogo.set_nebulaos)}
+    slot_bytes = poweronlogo.nebulaos_slot_bytes()
+
+    def change_boot():
+        for ext in ("png", "bmp", "jpg"):
+            path = os.path.join(BOOT_DIR, "custom." + ext)
+            if os.path.exists(path):
+                os.unlink(path)
+        cfg, _ = load_config()
+        cfg = dict(cfg, mode="logo", image="builtin")
+        cfg.pop("source", None)
+        _persist(cfg)
+        return cfg
+    cfg, power = _apply_both(change_boot, slot_bytes)
+    return {"result": "APPLIED", "config": cfg, "render": _render_now(), "power_on": power}
 
 
 def restore_original_logo():
