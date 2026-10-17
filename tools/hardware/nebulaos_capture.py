@@ -300,7 +300,7 @@ CAPTURE_PROFILES = {
     "run10-checks": ("echo '== B2 memguard lines in system.log since boot (priority)'; "
                      "B=$(grep -n 'syslogd started' /opt/printer_data/logs/system.log | tail -1 | cut -d: -f1); "
                      "tail -n +${B:-1} /opt/printer_data/logs/system.log | grep 'memguard:' "
-                     "| sed -n 's/^.* nebulaos \([a-z]*\.[a-z]*\) memguard: \([a-z]*\).*/\1 \2/p' | sort | uniq -c; "
+                     "| sed -n 's/^.* nebulaos \\([a-z]*\\.[a-z]*\\) memguard: \\([a-z]*\\).*/\\1 \\2/p' | sort | uniq -c; "
                      "echo '== log level'; cat /usr/data/nebulaos/system/log-level 2>/dev/null; "
                      "echo; echo '== S1 config/nebulaos'; ls /opt/printer_data/config/nebulaos; "
                      "head -3 /opt/printer_data/config/nebulaos/README.txt 2>/dev/null; "
