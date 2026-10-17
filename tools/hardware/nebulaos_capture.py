@@ -295,6 +295,21 @@ CAPTURE_PROFILES = {
     "update-log": (_UPDATE_LOG, False, None, 60),
     # G50 (2026-10-17): what an app update did - pip's lines (index, packages,
     # errors), update_manager and the supervisor - without the debug noise.
+    # Run 10 checks (2026-10-17): B2 memguard priority, S1 config tree
+    # README/hashes, S2 database lookups - since the last boot.
+    "run10-checks": ("echo '== B2 memguard lines in system.log since boot (priority)'; "
+                     "B=$(grep -n 'syslogd started' /opt/printer_data/logs/system.log | tail -1 | cut -d: -f1); "
+                     "tail -n +${B:-1} /opt/printer_data/logs/system.log | grep 'memguard:' "
+                     "| sed -n 's/^.* nebulaos \([a-z]*\.[a-z]*\) memguard: \([a-z]*\).*/\1 \2/p' | sort | uniq -c; "
+                     "echo '== log level'; cat /usr/data/nebulaos/system/log-level 2>/dev/null; "
+                     "echo; echo '== S1 config/nebulaos'; ls /opt/printer_data/config/nebulaos; "
+                     "head -3 /opt/printer_data/config/nebulaos/README.txt 2>/dev/null; "
+                     "echo '== S1 config-generation.json'; cat /usr/data/nebulaos/system/config-generation.json 2>/dev/null; "
+                     "echo; echo '== S2 moonraker.log since its last start: missing namespace/key errors'; "
+                     "M=$(grep -n 'Starting Moonraker' /opt/printer_data/logs/moonraker.log | tail -1 | cut -d: -f1); "
+                     "tail -n +${M:-1} /opt/printer_data/logs/moonraker.log | grep -cE \"Namespace guppyscreen not found|Key 'console' in namespace 'fluidd'\"; "
+                     "echo '== moonraker starts in this log'; grep -c 'Starting Moonraker' /opt/printer_data/logs/moonraker.log",
+                     False, None, 60),
     "update-history": ("echo '== moonraker.log: update_manager / pip'; "
                        "grep -hE 'pip|update_manager|app_deploy|git_deploy|Updating|Update|requirements|"
                        "Successfully|No matching|ERROR|Traceback|Error' "
