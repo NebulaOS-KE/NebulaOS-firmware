@@ -1918,12 +1918,21 @@ class PowerOnLogoTests(unittest.TestCase):
         os.makedirs(self.b.UPLOAD_DIR, exist_ok=True)
         path = os.path.join(self.b.UPLOAD_DIR, "noise.png")
         self.Image.frombytes("RGB", (480, 272), os.urandom(480 * 272 * 3)).save(path, "PNG")
-        try:
-            data, quality = self.p.convert(path)
-            self.assertEqual(len(data), self.p.SIZE)
-            self.assertLess(quality, 90)
-        except self.e.common.OsConfigError as exc:
-            self.assertEqual(exc.code, "IMAGE_TOO_DETAILED")
+        # Run 11 test: every image must fit - pure noise (the worst case)
+        # at 480x272 and at 1024x1024 included; softened when it must be.
+        data, quality = self.p.convert(path)
+        self.assertEqual(len(data), self.p.SIZE)
+        self.assertIn("softened", str(quality))
+        big = os.path.join(self.b.UPLOAD_DIR, "noise-big.png")
+        self.Image.frombytes("RGB", (1024, 1024), os.urandom(1024 * 1024 * 3)).save(big, "PNG")
+        data, quality = self.p.convert(big)
+        self.assertEqual(len(data), self.p.SIZE)
+        photo = os.path.join(self.b.UPLOAD_DIR, "gradient.png")
+        img = self.Image.new("RGB", (480, 272))
+        img.putdata([(x % 256, (x * y) % 256, y % 256) for y in range(272) for x in range(480)])
+        img.save(photo, "PNG")
+        data, quality = self.p.convert(photo)
+        self.assertEqual(len(data), self.p.SIZE)
 
     def test_shipped_copies_match_the_packager(self):
         here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

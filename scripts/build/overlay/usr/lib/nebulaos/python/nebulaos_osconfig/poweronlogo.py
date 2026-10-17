@@ -39,6 +39,12 @@ BACKUP = os.environ.get("NEBULAOS_RTOS_LOGO_BACKUP",
 # it (make-rtos-logo.py; upright on ke-dev in R3, 2026-10-15).
 ROTATE = 180
 QUALITIES = (90, 80, 70, 60, 50, 40, 30)
+# Run 11 test (ke-dev, 2026-10-17): photos did not fit the 10899-byte slot
+# even at quality 30, and Apply refused. Below that, the logo is softened -
+# scaled down and back up (less detail, same size on screen) - with lower
+# qualities, so every image fits. The boot screen keeps the full image.
+SOFTEN = ((1.0, (20, 15, 10)), (0.75, (40, 30, 20, 10)), (0.5, (40, 30, 20, 10)),
+          (0.35, (30, 20, 10)), (0.25, (20, 10, 5)))
 
 
 def _dev(slot):
@@ -203,16 +209,23 @@ def convert(path):
     with Image.open(path) as src:
         img = bootdisplay._fit(src, rtos_logo.LOGO_WIDTH, rtos_logo.LOGO_HEIGHT)
     img = img.rotate(-ROTATE, expand=True)
-    for quality in QUALITIES:
+    steps = [(1.0, q) for q in QUALITIES] + [(f, q) for f, qs in SOFTEN for q in qs]
+    for factor, quality in steps:
+        candidate = img
+        if factor < 1.0:
+            w, h = img.size
+            small = img.resize((max(1, int(w * factor)), max(1, int(h * factor))), Image.BILINEAR)
+            candidate = small.resize((w, h), Image.BILINEAR)
         buf = io.BytesIO()
-        img.save(buf, "JPEG", quality=quality, subsampling=2, optimize=False, progressive=False)
+        candidate.save(buf, "JPEG", quality=quality, subsampling=2, optimize=False, progressive=False)
         data = buf.getvalue()
         if len(data) <= SIZE:
             info = rtos_logo.parse_jpeg(data)
             if ((info.width, info.height) != (rtos_logo.LOGO_WIDTH, rtos_logo.LOGO_HEIGHT)
                     or not info.baseline() or info.length != len(data)):
                 raise OsConfigError("CONVERT_FAILED", "the converted logo is not a plain JPEG")
-            return data + b"\0" * (SIZE - len(data)), quality
+            label = quality if factor == 1.0 else "%d, softened %d%%" % (quality, int(factor * 100))
+            return data + b"\0" * (SIZE - len(data)), label
     raise invalid("IMAGE_TOO_DETAILED", "this image does not fit the power-on logo's %d bytes "
                   "even at low quality; use a simpler image" % SIZE)
 
