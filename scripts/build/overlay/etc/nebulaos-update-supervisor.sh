@@ -104,6 +104,8 @@ STABILIZE_INTERVAL="${STABILIZE_INTERVAL:-10}"
 RESTART_GRACE_PERIOD="${RESTART_GRACE_PERIOD:-25}"
 READY_POLL_TRIES="${READY_POLL_TRIES:-18}"
 READY_POLL_INTERVAL="${READY_POLL_INTERVAL:-10}"
+UPDATE_SETTLE_TRIES="${UPDATE_SETTLE_TRIES:-120}"
+UPDATE_SETTLE_INTERVAL="${UPDATE_SETTLE_INTERVAL:-5}"
 
 # The two halves of the Klipper stack, and the one lock and one state record
 # that cover both. The lock name is shared with S05nebulaos-activate, which
@@ -992,6 +994,37 @@ poll_klipper_stack_once() {
 	validate_klipper_stack
 }
 
+# Run 10 test (2026-10-17, ke-dev): the supervisor saw Moonraker v0.11's new
+# commit as soon as git had pulled it, validated while the OLD Moonraker was
+# still installing the new requirements (about a minute with the NebulaOS
+# package index), and then took Moonraker's own restart onto the new code -
+# one klippy_state='startup' sample - for a failure and rolled back. Before
+# validating, wait until update_manager is no longer busy and, for Moonraker,
+# until the running Moonraker reports the new commit (it has restarted onto
+# it). Bounded; on timeout the validation runs anyway and judges.
+wait_for_update_manager_done() { # NAME NEW_COMMIT
+	_wum_short=$(printf '%.7s' "$2")
+	_wum_i=0
+	while [ "$_wum_i" -lt "$UPDATE_SETTLE_TRIES" ]; do
+		_wum_status=$(wget -q -O - --timeout=5 "$MOONRAKER_URL/machine/update/status" 2>/dev/null)
+		case "$_wum_status" in
+			*'"busy":false'*|*'"busy": false'*)
+				if [ "$1" != "moonraker" ]; then
+					return 0
+				fi
+				_wum_info=$(wget -q -O - --timeout=5 "$MOONRAKER_URL/server/info" 2>/dev/null)
+				case "$_wum_info" in
+					*'"moonraker_version"'*"g$_wum_short"*) return 0 ;;
+				esac
+				;;
+		esac
+		_wum_i=$((_wum_i + 1))
+		sleep "$UPDATE_SETTLE_INTERVAL"
+	done
+	log "$1: update manager did not settle on $_wum_short within $((UPDATE_SETTLE_TRIES * UPDATE_SETTLE_INTERVAL))s - validating anyway"
+	return 0
+}
+
 validate_component() {
 	# $1=component. Runs after a HEAD change was already detected.
 	name="$1"
@@ -1004,7 +1037,9 @@ validate_component() {
 	: > "$LOCKDIR/$name.lock"
 	write_state "$name" "$known_good" "$new_commit" "validating" ""
 
-	log "$name: new commit detected ($new_commit) - validating"
+	log "$name: new commit detected ($new_commit) - waiting for the update to finish"
+	wait_for_update_manager_done "$name" "$new_commit"
+	log "$name: validating $new_commit"
 
 	if ! "$HEALTHCHECK" stage1 "$name" "$path"; then
 		log "$name: stage1 FAILED on new commit $new_commit - reverting to $known_good"
