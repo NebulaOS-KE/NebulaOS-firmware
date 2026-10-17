@@ -148,6 +148,11 @@ mkdir -p "$BR2_EXT_BOARD"
 # BR2_TARGET_GENERIC_ROOT_PASSWD nor the overlay can do it.
 cp "$SCRIPT_DIR/nebulaos-post-build.sh" "$BR2_EXT_BOARD/post-build.sh"
 chmod 755 "$BR2_EXT_BOARD/post-build.sh"
+# G50: post-build derives the Python ABI fingerprint (lib/python-abi.sh, the
+# one place it is derived) and /etc/pip.conf from the manifest's index URL.
+cp "$SCRIPT_DIR/lib/python-abi.sh" "$BR2_EXT_BOARD/python-abi.sh"
+[ -n "${NEBULAOS_PACKAGE_INDEX_URL:-}" ] || { echo "FATAL: NEBULAOS_PACKAGE_INDEX_URL missing from $DEPS_MANIFEST" >&2; exit 1; }
+printf '%s\n' "$NEBULAOS_PACKAGE_INDEX_URL" > "$BR2_EXT_BOARD/package-index.url"
 cp "$ARTIFACTS/halley5-nebulaos-busybox-fragment.config" "$BR2_EXT_BOARD/halley5-nebulaos-busybox-fragment.config"
 # The kernel configuration is owned by NebulaOS-kernel
 # (arch/mips/configs/nebulaos_halley5_v30_defconfig, selected through

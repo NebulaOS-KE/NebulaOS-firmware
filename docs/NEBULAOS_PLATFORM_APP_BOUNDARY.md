@@ -117,7 +117,37 @@ The shape that fits this device:
    and rolling back one without the other reproduces exactly the
    interpreter/venv mismatch this migration fixed.
 
-A full package repository is explicitly out of scope.
+~~A full package repository is explicitly out of scope.~~ Superseded
+2026-10-17 (G50, decided with the user 2026-10-16, architecture review
+PASS_WITH_NOTES 2026-10-17): Moonraker's update_manager always runs
+`pip install -U -r <requirements>`, and PyPI has no wheels for this ABI, so
+every app update whose dependencies move needs a compiled wheel. The
+implementation:
+
+- **ABI fingerprint, derived once by the build** (`scripts/build/lib/python-abi.sh`,
+  written by post-build to `/usr/share/nebulaos/python-abi`): Python, SOABI,
+  platform tag (`linux_mips`), glibc, GCC, `mips32r2`/o32/FPXX/legacy-NaN,
+  endianness and the sonames a wheel may link; `id` = sha256 over them. The
+  wheel tag `cp312-cp312-linux_mips` encodes none of that, so the id is part
+  of the index path.
+- **`/etc/pip.conf`** (generated from `NEBULAOS_PACKAGE_INDEX_URL` in
+  `manifests/dependencies.conf` + the id): `index-url = <url>/<id>/`,
+  `only-binary = :all:`, no extra index. pip never consults PyPI and never
+  builds; a missing wheel fails before the venv is touched. Moonraker logs
+  that failure and finishes the source update; the supervisor rolls back only
+  if the new source then fails its health check.
+- **The index** (`coreflake1/nebulaos-packages`, GitHub Actions, GitHub Pages):
+  wheels cross-built with the SDK exported from an attested build (on a copy),
+  every `.so` checked before publishing (ELF little-endian MIPS, FPXX FP ABI,
+  no NaN2008, GLIBC symbol versions <= the fingerprint's glibc, DT_NEEDED only
+  glibc + the fingerprint's linkable sonames). Integrity is relative to the
+  index (sha256 per file over HTTPS) - not a signature.
+- **Venv ABI stamp** (`envs/<app>/.nebulaos-abi`, `nebulaos-venv-lib.sh`):
+  a venv stamped for another fingerprint is reprovisioned from the image seed,
+  since venvs outlive the image in both directions.
+- The firmware build and first boot never use the index.
+- Not yet: Klipper's `c_helper.so` per Klipper version; a pre-update
+  availability check.
 
 ## 5. Compatibility metadata (sketch)
 

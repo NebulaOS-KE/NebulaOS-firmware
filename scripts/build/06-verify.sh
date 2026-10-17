@@ -1636,6 +1636,25 @@ check /usr/lib/nebulaos/python/nebulaos_osconfig/poweronlogo.py
 check /usr/lib/nebulaos/python/nebulaos_osconfig/logs.py
 check /usr/lib/nebulaos/python/nebulaos_osconfig/snapshot.py
 check /usr/lib/nebulaos/python/nebulaos_osconfig/cleanup.py
+# G50 (2026-10-17): Python ABI fingerprint and pip.conf - pip on the printer
+# installs only ready-made packages from the NebulaOS index for this ABI.
+check /usr/share/nebulaos/python-abi
+PYTHON_ABI_CONTENT=$(debugfs -R "cat /usr/share/nebulaos/python-abi" ${IMAGES}/rootfs.ext2 2>/dev/null)
+PIP_CONF_CONTENT=$(debugfs -R "cat /etc/pip.conf" ${IMAGES}/rootfs.ext2 2>/dev/null)
+PYTHON_ABI_ID=$(echo "$PYTHON_ABI_CONTENT" | sed -n 's/^id=//p')
+if [ -n "$PYTHON_ABI_ID" ] && echo "$PYTHON_ABI_CONTENT" | grep -q '^platform_tag=linux_mips$' \
+	&& echo "$PYTHON_ABI_CONTENT" | grep -q '^fp32_mode=xx$' && echo "$PYTHON_ABI_CONTENT" | grep -q '^nan=legacy$'; then
+	echo "OK   python-abi: id $PYTHON_ABI_ID (linux_mips, FPXX, legacy NaN)"
+else
+	echo "MISS python-abi incomplete or not the expected ABI"
+fi
+if echo "$PIP_CONF_CONTENT" | grep -qxF "index-url = ${NEBULAOS_PACKAGE_INDEX_URL%/}/$PYTHON_ABI_ID/" \
+	&& echo "$PIP_CONF_CONTENT" | grep -qx 'only-binary = :all:' \
+	&& ! echo "$PIP_CONF_CONTENT" | grep -qi 'extra-index-url'; then
+	echo "OK   /etc/pip.conf: NebulaOS index for this ABI only, only-binary"
+else
+	echo "MISS /etc/pip.conf is not the NebulaOS index for this ABI with only-binary"
+fi
 check /etc/e2fsck.conf
 check /usr/libexec/sftp-server
 check /usr/share/nebulaos/printer_data-README.txt

@@ -61,6 +61,17 @@ command -v log >/dev/null 2>&1 || log() { echo "nebulaos-venv: $1"; }
 # comparing the venv's major.minor against the running /usr/bin/python3 here
 # is sufficient, and the staging/swap/recovery machinery below already
 # provides the safe replacement path it would need.
+# G50 (2026-10-17): the image's Python ABI fingerprint (written by
+# nebulaos-post-build.sh). Once update_manager installs ready-made packages
+# from the NebulaOS package index into a venv, that venv holds compiled code
+# for exactly this ABI - and the venv outlives the image (update AND
+# rollback). A venv stamped for a different fingerprint is reprovisioned from
+# the image seed; an unstamped one is stamped for the running image.
+VENV_PYTHON_ABI="${VENV_PYTHON_ABI:-/usr/share/nebulaos/python-abi}"
+venv_abi_id() {
+	sed -n 's/^id=//p' "$VENV_PYTHON_ABI" 2>/dev/null | head -1
+}
+
 venv_is_usable() {
 	_viu_dir="$1"; _viu_smoke="${2:-}"
 
@@ -79,11 +90,24 @@ venv_is_usable() {
 		return 1
 	}
 
+	_viu_abi=$(venv_abi_id)
+	if [ -n "$_viu_abi" ] && [ -f "$_viu_dir/.nebulaos-abi" ]; then
+		_viu_venv_abi=$(cat "$_viu_dir/.nebulaos-abi" 2>/dev/null)
+		[ "$_viu_venv_abi" = "$_viu_abi" ] || {
+			log "venv $_viu_dir was built for Python ABI '$_viu_venv_abi', this image is '$_viu_abi' - reprovisioning"
+			return 1
+		}
+	fi
+
 	if [ -n "$_viu_smoke" ]; then
 		"$_viu_dir/bin/python3" -c "$_viu_smoke" >/dev/null 2>&1 || {
 			log "venv $_viu_dir failed its import smoke test - reprovisioning"
 			return 1
 		}
+	fi
+	if [ -n "$_viu_abi" ] && [ ! -f "$_viu_dir/.nebulaos-abi" ]; then
+		printf '%s\n' "$_viu_abi" > "$_viu_dir/.nebulaos-abi" 2>/dev/null \
+			&& log "venv $_viu_dir stamped for Python ABI $_viu_abi"
 	fi
 	return 0
 }
@@ -230,6 +254,7 @@ venv_validation_key() {
 	echo "env=$_vvk_d"
 	echo "bin=$(ls -ln "$_vvk_d/bin/python3" 2>/dev/null)"
 	echo "cfg=$(cksum < "$_vvk_d/pyvenv.cfg" 2>/dev/null)"
+	echo "abi=$(venv_abi_id) venv=$(cat "$_vvk_d/.nebulaos-abi" 2>/dev/null)"
 	for _vvk_sp in "$_vvk_d"/lib/python*/site-packages; do
 		[ -d "$_vvk_sp" ] || continue
 		echo "sp=$_vvk_sp $(ls -lna "$_vvk_sp" 2>/dev/null | cksum)"

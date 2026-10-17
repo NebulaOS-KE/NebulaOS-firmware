@@ -159,6 +159,27 @@ if venv_is_usable "$E" "$SMOKE" && [ ! -e "$E.old" ]; then
 	ok "leftover .old beside a good env is cleaned up"
 else bad "leftover .old beside a good env was mishandled"; fi
 
+# ---- G50: Python ABI stamp --------------------------------------------------
+# Once venvs hold compiled packages from the NebulaOS package index, a venv is
+# tied to one image ABI fingerprint; it outlives the image (update/rollback).
+printf 'scheme=1\nid=abc123\n' > "$W/python-abi"
+VENV_PYTHON_ABI=$W/python-abi
+E=$W/abi1; make_venv "$E" "$SYS_MM" yes
+if venv_is_usable "$E" "$SMOKE" && [ "$(cat "$E/.nebulaos-abi" 2>/dev/null)" = abc123 ]; then
+	ok "an unstamped venv is accepted and stamped for the running image"
+else bad "unstamped venv not stamped"; fi
+if venv_is_usable "$E" "$SMOKE"; then ok "a venv stamped for this image is accepted"; else bad "matching stamp rejected"; fi
+printf 'scheme=1\nid=def456\n' > "$W/python-abi"
+if venv_is_usable "$E" "$SMOKE"; then bad "a venv built for another ABI was accepted"
+else ok "a venv built for another ABI is reprovisioned"; fi
+k1=$(venv_validation_key "$E" "$SMOKE"); printf 'scheme=1\nid=abc123\n' > "$W/python-abi"; k2=$(venv_validation_key "$E" "$SMOKE")
+[ "$k1" != "$k2" ] && ok "the ABI is part of the validation key" || bad "ABI not in validation key"
+E=$W/abi2; make_venv "$E" "$SYS_MM" no
+if venv_is_usable "$E" "$SMOKE" || [ -f "$E/.nebulaos-abi" ]; then bad "a broken venv was stamped"; else ok "a broken venv is not stamped"; fi
+VENV_PYTHON_ABI=$W/none
+E=$W/abi3; make_venv "$E" "$SYS_MM" yes
+if venv_is_usable "$E" "$SMOKE" && [ ! -f "$E/.nebulaos-abi" ]; then ok "no image fingerprint: behaviour unchanged"; else bad "stamp without fingerprint"; fi
+
 printf '\nVENV_TESTS_PASS=%s\nVENV_TESTS_FAIL=%s\n' "$PASS" "$FAIL"
 if [ "$FAIL" -eq 0 ]; then printf 'VENV_PLATFORM_MIGRATION=PASS\n'; exit 0; fi
 printf 'VENV_PLATFORM_MIGRATION=FAIL\n'; exit 1

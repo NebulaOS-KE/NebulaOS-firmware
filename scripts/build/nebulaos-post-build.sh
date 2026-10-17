@@ -113,3 +113,23 @@ for PIP_DIR in "$TARGET_DIR"/usr/lib/python3*/site-packages/pip; do
 	}
 	echo "== post-build: pip .py source shipped in ${PIP_DIR#$TARGET_DIR} =="
 done
+
+# G50 (2026-10-17): the image's Python ABI fingerprint and /etc/pip.conf.
+# Derived ONCE, here, from this build's .config, sysroot and libc (see
+# python-abi.sh); the SDK export and the package index CI copy the file.
+POST_BUILD_DIR=$(cd "$(dirname "$0")" && pwd)
+. "$POST_BUILD_DIR/python-abi.sh"
+ABI_FILE="$TARGET_DIR/usr/share/nebulaos/python-abi"
+mkdir -p "$(dirname "$ABI_FILE")"
+python_abi_fingerprint "${BR2_CONFIG:?}" "$TARGET_DIR" "${STAGING_DIR:?}" > "$ABI_FILE.tmp" || {
+	echo "FATAL: post-build: Python ABI fingerprint could not be derived" >&2
+	exit 1
+}
+mv -f "$ABI_FILE.tmp" "$ABI_FILE"
+chmod 644 "$ABI_FILE"
+ABI_ID=$(sed -n 's/^id=//p' "$ABI_FILE")
+INDEX_URL=$(cat "$POST_BUILD_DIR/package-index.url")
+[ -n "$ABI_ID" ] && [ -n "$INDEX_URL" ] || { echo "FATAL: post-build: no ABI id or index URL" >&2; exit 1; }
+python_abi_pip_conf "$INDEX_URL" "$ABI_ID" > "$TARGET_DIR/etc/pip.conf"
+chmod 644 "$TARGET_DIR/etc/pip.conf"
+echo "== post-build: Python ABI $ABI_ID; pip.conf -> $INDEX_URL/$ABI_ID/ (only-binary) =="
