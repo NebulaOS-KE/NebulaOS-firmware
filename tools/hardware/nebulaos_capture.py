@@ -293,6 +293,20 @@ CAPTURE_PROFILES = {
         False, None, 180),
     "versions": (_VERSIONS, False, None, 90),
     "update-log": (_UPDATE_LOG, False, None, 60),
+    # G50 (2026-10-17): what an app update did - pip's lines (index, packages,
+    # errors), update_manager and the supervisor - without the debug noise.
+    "update-history": ("echo '== moonraker.log: update_manager / pip'; "
+                       "grep -hE 'pip|update_manager|app_deploy|git_deploy|Updating|Update|requirements|"
+                       "Successfully|No matching|ERROR|Traceback|Error' "
+                       "/opt/printer_data/logs/moonraker.log.* /opt/printer_data/logs/moonraker.log 2>/dev/null "
+                       "| grep -vE 'GET /machine/update/status|_log_debug|log_request' | tail -250; "
+                       "echo; echo '== update-supervisor.log'; "
+                       "tail -120 /usr/data/nebulaos/maintenance/logs/update-supervisor.log 2>/dev/null; "
+                       "echo; echo '== pip.conf'; cat /etc/pip.conf 2>/dev/null; "
+                       "echo; echo '== moonraker venv site-packages'; "
+                       "ls /usr/data/nebulaos/envs/moonraker/lib/python3*/site-packages 2>/dev/null | head -60; "
+                       "cat /usr/data/nebulaos/envs/moonraker/.nebulaos-abi 2>/dev/null",
+                       False, None, 60),
     # RTOS logo (G7): what is on rtos/rtos2 before anything writes rtos2.
     "rtos-hashes": (_rtos_hashes(), False, None, 120),
     # --- TOOL-01 base list ---------------------------------------------------
