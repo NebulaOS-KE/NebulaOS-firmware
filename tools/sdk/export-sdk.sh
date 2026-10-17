@@ -55,7 +55,13 @@ rm -rf "$SDK/share/doc" "$SDK/share/man" "$SDK/share/info" "$SDK/share/gtk-doc"
 cp "$BR/support/misc/relocate-sdk.sh" "$SDK/relocate-sdk.sh"
 chmod 755 "$SDK/relocate-sdk.sh"
 mkdir -p "$SDK/share/buildroot"
+# The list of text files carrying the old path - Buildroot's prepare-sdk logic
+# (Makefile: grep -lr HOST_DIR, text files only, relative to the SDK).
+( cd "$SDK" && grep -lr "$CONTAINER_HOST" . 2>/dev/null | while read -r F; do
+	file -b --mime-type "$F" | grep -q '^text/' && echo "$F"
+done ) > "$SDK/share/buildroot/sdk-relocs"
 printf '%s\n' "$CONTAINER_HOST" > "$SDK/share/buildroot/sdk-location"
+echo "== $(wc -l < "$SDK/share/buildroot/sdk-relocs") files to relocate"
 
 cp "$ABI" "$SDK/python-abi"
 {
