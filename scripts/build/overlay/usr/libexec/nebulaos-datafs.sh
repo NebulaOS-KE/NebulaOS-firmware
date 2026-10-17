@@ -11,14 +11,26 @@
 #                                     the automatic safe repairs)
 #       exit 0                     -> mount rw                         CHECKED_OK
 #       exit 1|2 (corrected)       -> mount rw                         REPAIRED
-#       exit has 4 (uncorrected)   -> mount READ-ONLY, data untouched  UNREPAIRED
-#       exit has 8|16|32|128       -> mount READ-ONLY                  CHECK_FAILED
+#       exit has 4 or 8            -> bounded FULL repair `e2fsck -fy`:
+#           no error left          -> mount rw                         AUTO_REPAIRED
+#           exit has 4 again       -> mount READ-ONLY                  UNREPAIRED
+#           exit has 8|16|32|128   -> mount READ-ONLY                  CHECK_FAILED
 #       still running at the bound -> stopped, mount READ-ONLY         TIMEOUT
 #   e2fsck/dumpe2fs missing        -> mount rw as before               TOOL_MISSING
-# Never `-y`, never `-f`, never mkfs, never a journal change. A read-only
-# /usr/data keeps the printer's data exactly as found for a supervised repair;
-# the result is in $NDF_STATE (tmpfs), on the console and in syslog, and - for
-# writable mounts - appended to the persistent diagnostics log.
+# Never mkfs, never a journal change.
+#
+# Run 11 (2026-10-17, ke-dev): a power cut left one unattached inode that the
+# preen pass may not fix ("RUN fsck MANUALLY"). The old policy then mounted
+# /usr/data read-only and waited for a supervised repair - which a printer
+# owner has no way to run, so the printer did not come up. The printer must
+# always boot: the full repair (`-fy`) is what a supervised repair would do
+# (orphans go to lost+found, bitmaps and counts are corrected). The preen
+# output stays in $NDF_CHECK_OUT, the repair's in $NDF_CHECK_OUT.repair.
+# Read-only remains only for what even the full repair cannot fix; the boot
+# then still continues (rcS gives every script stdin from /dev/null, so
+# nothing waits for a console answer). The result is in $NDF_STATE (tmpfs),
+# on the console and in syslog, and - for writable mounts - appended to the
+# persistent diagnostics log.
 #
 # Shutdown (ndf_shutdown, last in rcK): leftover users of the filesystem
 # (services are already stopped in reverse order by rcK) get TERM, a bounded
@@ -67,12 +79,17 @@ ndf_fs_state() {
 	"$NDF_DUMPE2FS" -h "$NDF_DEV" 2>/dev/null | sed -n 's/^Filesystem state:[[:space:]]*//p' | head -1
 }
 
-# Runs `e2fsck -p` with a watchdog. Sets NDF_RC (124 = stopped at the bound)
-# and leaves the checker's output in NDF_CHECK_OUT.
+# Runs `e2fsck -p` (or, with $1 = repair, `e2fsck -fy`) with a watchdog. Sets
+# NDF_RC (124 = stopped at the bound) and leaves the checker's output in
+# NDF_CHECK_OUT (the repair's in NDF_CHECK_OUT.repair).
 ndf_run_check() {
 	NDF_CHECK_OUT="${NDF_CHECK_OUT:-/run/nebulaos/data-fs.e2fsck.log}"
 	mkdir -p "$(dirname "$NDF_CHECK_OUT")" 2>/dev/null
-	"$NDF_E2FSCK" -p "$NDF_DEV" > "$NDF_CHECK_OUT" 2>&1 &
+	if [ "${1:-}" = repair ]; then
+		"$NDF_E2FSCK" -fy "$NDF_DEV" > "$NDF_CHECK_OUT.repair" 2>&1 < /dev/null &
+	else
+		"$NDF_E2FSCK" -p "$NDF_DEV" > "$NDF_CHECK_OUT" 2>&1 < /dev/null &
+	fi
 	_pid=$!
 	_i=0
 	while kill -0 "$_pid" 2>/dev/null && [ "$_i" -lt "$NDF_CHECK_TIMEOUT" ]; do
@@ -92,9 +109,10 @@ ndf_run_check() {
 }
 
 # Decides how to mount. Sets NDF_RESULT and NDF_MOUNT_OPTS (rw|ro) and writes
-# $NDF_STATE. Never modifies the filesystem except through `e2fsck -p`.
+# $NDF_STATE. Never modifies the filesystem except through e2fsck.
 ndf_precheck() {
 	NDF_RC=
+	NDF_PREEN_RC=
 	NDF_T0=$(ndf_now)
 	NDF_FS_STATE_BEFORE=
 	if [ -z "$NDF_E2FSCK" ] || [ -z "$NDF_DUMPE2FS" ] || [ ! -x "$NDF_E2FSCK" ] || [ ! -x "$NDF_DUMPE2FS" ]; then
@@ -106,12 +124,19 @@ ndf_precheck() {
 		else
 			ndf_log "filesystem state '${NDF_FS_STATE_BEFORE:-unreadable}' on $NDF_DEV - running e2fsck -p (bound ${NDF_CHECK_TIMEOUT}s)"
 			ndf_run_check
+			if [ "$NDF_RC" != 124 ] && [ $((NDF_RC & 12)) -ne 0 ]; then
+				NDF_PREEN_RC=$NDF_RC
+				ndf_log "e2fsck -p could not repair $NDF_DEV (rc=$NDF_RC) - running the full repair e2fsck -fy (bound ${NDF_CHECK_TIMEOUT}s)"
+				ndf_run_check repair
+			fi
 			if [ "$NDF_RC" = 124 ]; then
 				NDF_RESULT=TIMEOUT NDF_MOUNT_OPTS=ro
 			elif [ $((NDF_RC & 4)) -ne 0 ]; then
 				NDF_RESULT=UNREPAIRED NDF_MOUNT_OPTS=ro
 			elif [ $((NDF_RC & 248)) -ne 0 ]; then
 				NDF_RESULT=CHECK_FAILED NDF_MOUNT_OPTS=ro
+			elif [ -n "$NDF_PREEN_RC" ]; then
+				NDF_RESULT=AUTO_REPAIRED NDF_MOUNT_OPTS=rw
 			elif [ $((NDF_RC & 3)) -ne 0 ]; then
 				NDF_RESULT=REPAIRED NDF_MOUNT_OPTS=rw
 			else
@@ -126,10 +151,11 @@ ndf_precheck() {
 		echo "DATAFS_MOUNT=$NDF_MOUNT_OPTS"
 		echo "DATAFS_STATE_BEFORE='${NDF_FS_STATE_BEFORE}'"
 		echo "DATAFS_E2FSCK_RC=${NDF_RC}"
+		[ -n "$NDF_PREEN_RC" ] && echo "DATAFS_PREEN_RC=$NDF_PREEN_RC"
 		echo "DATAFS_CHECK_SECONDS=$(awk -v a="$NDF_T0" -v b="$NDF_T1" 'BEGIN{printf "%.2f", b-a}')"
 	} > "$NDF_STATE" 2>/dev/null
 	if [ "$NDF_MOUNT_OPTS" = ro ]; then
-		ndf_log "RECOVERY REQUIRED: $NDF_DEV $NDF_RESULT (e2fsck rc=$NDF_RC) - mounting $NDF_MNT READ-ONLY to preserve the data; a supervised repair is needed (see $NDF_STATE)"
+		ndf_log "RECOVERY REQUIRED: $NDF_DEV $NDF_RESULT (e2fsck rc=$NDF_RC${NDF_PREEN_RC:+, after the full repair}) - mounting $NDF_MNT READ-ONLY to preserve the data (see $NDF_STATE)"
 	else
 		ndf_log "$NDF_DEV $NDF_RESULT (state before '${NDF_FS_STATE_BEFORE}', e2fsck rc=${NDF_RC:-none}) - mounting read-write"
 	fi

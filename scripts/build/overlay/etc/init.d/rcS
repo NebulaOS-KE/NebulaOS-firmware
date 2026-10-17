@@ -19,6 +19,10 @@
 # no process per script. Scripts run
 # strictly one after another; work a script leaves in the background ends
 # after its END line and is visible in S02nebulaos-boot-timing's milestones.
+# Run 11 (2026-10-17): every script gets stdin from /dev/null. On ke-dev a
+# read-only /usr/data made BusyBox `mv` (S04) ask "overwrite?" on the
+# console and wait forever - the boot stopped before the screen started. No
+# boot script may wait for an answer nobody can give.
 # Logging can never fail the boot: every write is guarded, a missing
 # or malformed /proc/uptime gives T=? (never shell arithmetic on it), and
 # the log stops growing at the line cap.
@@ -86,11 +90,11 @@ for i in "$INIT_DIR"/S??*; do
 				set start
 				# shellcheck source=/dev/null
 				. "$i"
-			)
+			) < /dev/null
 			;;
 		*)
 			# No sh extension, so fork subprocess.
-			"$i" start
+			"$i" start < /dev/null
 			;;
 	esac
 	_bt_end "$i" $?

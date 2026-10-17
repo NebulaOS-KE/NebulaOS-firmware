@@ -37,7 +37,9 @@ pass() { PASS=$((PASS + 1)); }
 grep -q 'ndf_precheck' "$S01" && grep -q 'ndf_mount' "$S01" && grep -q 'ndf_record' "$S01" && pass || fail "S01 start does not use the boot policy"
 sed -n '/^case "\$1" in/,/^esac/p' "$S01" | grep -q 'ndf_shutdown' && pass || fail "S01 stop does not run the clean shutdown"
 grep -q 'mount -t ext4 /dev/mmcblk0p10 /usr/data' "$S01" && pass || fail "S01 lost its library-less fallback mount"
-grep -v '^[[:space:]]*#' "$LIB" | grep -qE '(^|[^-])-y|-fy|e2fsck" -f|mkfs|tune2fs|has_journal' && fail "policy uses -y/-f/mkfs/tune2fs/journal" || pass
+grep -v '^[[:space:]]*#' "$LIB" | grep -qE 'mkfs|tune2fs|has_journal' && fail "policy uses mkfs/tune2fs/journal" || pass
+[ "$(grep -v '^[[:space:]]*#' "$LIB" | grep -c -- 'E2FSCK" -fy')" -eq 1 ] && pass || fail "the full repair -fy must appear exactly once (ndf_run_check repair)"
+grep -q '< /dev/null$' "$ROOT/scripts/build/overlay/etc/init.d/rcS" && grep -q '"\$i" start < /dev/null' "$ROOT/scripts/build/overlay/etc/init.d/rcS" && pass || fail "rcS does not give boot scripts stdin from /dev/null"
 grep -qx 'BR2_PACKAGE_E2FSPROGS=y' "$ROOT/br2-external/configs/nebulaos_x2000_defconfig" && pass || fail "defconfig does not ship e2fsprogs"
 grep -q 'G9: e2fsck' "$ROOT/scripts/build/06-verify.sh" && pass || fail "06-verify has no G9 check"
 
@@ -82,6 +84,7 @@ EOF
 cat > "$B/rc-e2fsck" <<'EOF'
 #!/bin/sh
 echo "e2fsck $*" >> "$CALLS"
+case "$1" in -fy) exit "${FAKE_RC_FULL:-$FAKE_RC}" ;; esac
 exit "$FAKE_RC"
 EOF
 chmod +x "$B"/*
@@ -152,13 +155,13 @@ if command -v mkfs.ext4 >/dev/null && command -v debugfs >/dev/null && command -
 	blk=$(debugfs -R "blocks nebulaos/printer.cfg" "$I" 2>/dev/null | tr -d ' \n')
 	debugfs -w -R "sif nebulaos/data.db block[0] $blk" "$I" > /dev/null 2>&1; debugfs -w -R "ssv state 0" "$I" > /dev/null 2>&1
 	cp "$I" "$W/broken.before"
+	: > "$W/calls"
 	r=$(policy "$I" NDF_E2FSCK="$B/rec-e2fsck" NDF_DUMPE2FS="$D2")
-	case "$r" in "UNREPAIRED ro "*) pass ;; *) fail "unrepairable image: got '$r' ($(cat "$W/e2fsck.out" 2>/dev/null | tail -2))" ;; esac
-	grep -q '^DATAFS_MOUNT=ro$' "$W/state" && pass || fail "unrepairable: state does not say ro"
-	grep -q 'RECOVERY REQUIRED' "$W/log" && pass || fail "unrepairable: no recovery message"
-	files_ok "$I" && pass || fail "unrepairable path lost the surviving file"
-	(NDF_DEV=$I NDF_MNT="$W/mnt" NDF_MOUNT="$B/fmount" CALLS="$W/calls" NDF_MOUNT_OPTS=ro; export CALLS; : > "$W/calls"; . "$LIB"; ndf_mount)
-	grep -q "mount -t ext4 -o ro $I" "$W/calls" && pass || fail "unrepairable: not mounted read-only"
+	case "$r" in "AUTO_REPAIRED rw "*) pass ;; *) fail "preen-unrepairable image: got '$r' ($(tail -2 "$W/e2fsck.out.repair" 2>/dev/null))" ;; esac
+	grep -q "e2fsck -p $I" "$W/calls" && grep -q "e2fsck -fy $I" "$W/calls" && pass || fail "full repair not run after the preen pass"
+	grep -q '^DATAFS_MOUNT=rw$' "$W/state" && grep -q '^DATAFS_PREEN_RC=4$' "$W/state" && pass || fail "auto-repair state: $(cat "$W/state")"
+	"$E2" -fn "$I" > /dev/null 2>&1 && pass || fail "image still inconsistent after the full repair"
+	files_ok "$I" && pass || fail "full repair lost the surviving file"
 else
 	echo "NOTE: host e2fsprogs missing - disposable image tests skipped"
 fi
@@ -170,6 +173,12 @@ for c in "0 CHECKED_OK rw" "1 REPAIRED rw" "2 REPAIRED rw" "3 REPAIRED rw" "4 UN
 	set -- $c
 	r=$(policy /dev/fake NDF_E2FSCK="$B/rc-e2fsck" NDF_DUMPE2FS="$DUMP_NC" FAKE_RC="$1")
 	[ "$r" = "$2 $3 $1" ] && pass || fail "e2fsck rc=$1: got '$r', expected '$2 $3 $1'"
+done
+# preen fails, the full repair fixes it -> rw; the full repair fails too -> ro
+for c in "4 1 AUTO_REPAIRED rw" "4 0 AUTO_REPAIRED rw" "8 1 AUTO_REPAIRED rw" "4 4 UNREPAIRED ro" "4 8 CHECK_FAILED ro" "12 12 UNREPAIRED ro"; do
+	set -- $c
+	r=$(policy /dev/fake NDF_E2FSCK="$B/rc-e2fsck" NDF_DUMPE2FS="$DUMP_NC" FAKE_RC="$1" FAKE_RC_FULL="$2")
+	[ "$r" = "$3 $4 $2" ] && pass || fail "preen rc=$1, full rc=$2: got '$r', expected '$3 $4 $2'"
 done
 r=$(policy /dev/fake NDF_E2FSCK="$W/no-such-e2fsck" NDF_DUMPE2FS="$DUMP_NC")
 [ "$r" = "TOOL_MISSING rw none" ] && pass || fail "missing e2fsck: got '$r'"

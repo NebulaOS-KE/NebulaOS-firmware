@@ -7,14 +7,15 @@
 # tools/hardware/nebulaos_control.py at control commit C.
 
 b4c9c7fd797d6ce98e328e7723187ec490a6fdbfc291a03d99d2cb2c5a402e9f  on-device  scripts/flash-spare-slot.sh
+7d34a66fd1362b9c0aa095aab142d6b0b6d990e8fcc4bfcd8b1ffb4352055af2  on-device  scripts/build/overlay/usr/libexec/nebulaos-datafs.sh
 78341088f844990e0efd1ae2efa1dae618516c1639a48381ac270b1c8c671096  host  scripts/package/assets/nebulaos-rtos-logo.jpg
 5301e36b74f2592a2f9ffd86e199538280f212d6852348d6d960ea45b287a091  host  scripts/package/rtos_logo.py
 9690c4b144d80abb028a8f4e45db8fbf6527590c23a54a23aee714d8a81a13e5  host  tools/attest/nebulaos-attest.py
 f2e1c2a7cca56006ae760a0ebe000aacb20869f5ddc44c17c71ad967e11cf8cb  host  tools/emmc/nebulaos_layout.py
-2456197bf66c73f6276be15a016a6f9a991f01931d37b9f5ca6bc6b19e3739c8  host  tools/hardware/nebulaos_agent.py
+87602c4d4b9027232671a8e6303d7ac415dcd58586824a4906c2a7872f07d67b  host  tools/hardware/nebulaos_agent.py
 611790c7fcece164e57354d804ac3dfa84f9fe6b56079c5bb5b54140d45709a7  host  tools/hardware/nebulaos_capture.py
 6c22308c8d8e04d1b4cafdfb4a35085be137eff980f92a4f34aa72f820d22dcc  host  tools/hardware/nebulaos_control.py
-bceeaf2e75ad767e31f9dc501c7cbc56cb47fe6b9eca3fc1df552aafe2c69a30  host  tools/hardware/nebulaos_device.py
+c02d8c278f908b22dc6a146ad8fede14cec8a3ff1bc271162d302d258293a8c1  host  tools/hardware/nebulaos_device.py
 aef1b5fc8cf52522b29a583c6453a75b15d54e5381e2e402c9cc9e4ccee9e273  host  tools/hardware/nebulaos_evidence.py
 7654b6daa897e631ad8c2b79a3861624b27abf76b16eb43c32c2655d09daffd4  host  tools/hardware/nebulaos_install.py
 def272efdc0a7760e1917809905ebc834d615391340716ff6fa8e00f820ec630  host  tools/hardware/nebulaos_journal.py

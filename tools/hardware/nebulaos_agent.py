@@ -661,6 +661,37 @@ def op_purge_dev_leftovers(args):
             session.close()
 
 
+DATAFS_REPAIR_CONFIRM_WORD = "DATAFS_REPAIR_CONFIRM=DATA-PARTITION"
+
+
+def op_datafs_repair(args):
+    """Run 11 (2026-10-17): the full e2fsck repair of the data partition, only
+    when the boot left it READ-ONLY because the preen pass could not repair
+    it. Unmounts with the image's own shutdown routine, runs the control
+    commit's ndf_run_check repair (the code the next image runs at boot),
+    verifies with e2fsck -fn and reboots only when the check is clean."""
+    import hashlib
+    if args.confirm != DATAFS_REPAIR_CONFIRM_WORD:
+        raise AgentRefusal("datafs-repair not confirmed (expected %s)" % DATAFS_REPAIR_CONFIRM_WORD)
+    profile, control_set, _ = prove_preconditions(
+        args.device, None, None, None, args.control_commit, destructive=False)
+    lib = control_set.helper(device.DATAFS_LIB)
+    with journal.HostLock(args.device):
+        txn = journal.Transaction.open(args.device)
+        if txn is not None and txn.state not in journal.TERMINAL_STATES:
+            raise AgentRefusal("an install transaction is open (state %s)" % txn.state)
+        session, which, address = _connect_matching(profile, (device.OS_NEBULAOS,))
+        try:
+            say("DATAFS_REPAIR_TARGET=%s@%s" % (which, address))
+            rc, out = session.datafs_repair(lib.decode("utf-8"), hashlib.sha256(lib).hexdigest())
+            say(out.rstrip())
+        finally:
+            session.close()
+    ok = "DATAFS_REPAIR=REPAIRED_REBOOTING" in out
+    say("RUN_NEBULAOS_HARDWARE=%s" % ("DATAFS_REPAIR_COMPLETE" if ok else "DATAFS_REPAIR_FAILED"))
+    return 0 if ok else 1
+
+
 def op_rtos_logo(args):
     """Write the pinned NebulaOS RTOS image (stock zero.bin + the NebulaOS boot
     logo) to rtos2, after a verified host backup of the whole partition. Never
@@ -917,6 +948,7 @@ def main(argv):
     sub.add_parser("reboot").add_argument("confirm", nargs="?", default=None)
     sub.add_parser("rtos-logo").add_argument("confirm", nargs="?", default=None)
     sub.add_parser("purge-dev-leftovers").add_argument("confirm", nargs="?", default=None)
+    sub.add_parser("datafs-repair").add_argument("confirm", nargs="?", default=None)
     p = sub.add_parser("rtos-logo-restore")
     p.add_argument("backup_sha")
     p.add_argument("confirm", nargs="?", default=None)
@@ -932,6 +964,7 @@ def main(argv):
                "restart": op_restart, "reboot": op_reboot,
                "rtos-logo": op_rtos_logo, "rtos-logo-restore": op_rtos_logo_restore,
                "purge-dev-leftovers": op_purge_dev_leftovers,
+               "datafs-repair": op_datafs_repair,
                "verify": op_verify, "install": op_install}[args.op]
     try:
         return handler(args)

@@ -684,6 +684,14 @@ class SshDeviceSession(DeviceSession):
             raise DeviceError("purge failed: %s" % (err.strip() or out.strip())[-300:])
         return out
 
+    def datafs_repair(self, lib_text, lib_sha256):
+        """-> (rc, output) of the supervised data-partition repair (Run 11).
+        Refused on the printer unless the boot left /usr/data READ-ONLY. Uses
+        the control commit's own nebulaos-datafs.sh (sent inline - the staging
+        directory lives on the read-only partition), checked by sha256."""
+        rc, out, err = self._run(datafs_repair_script(lib_text, lib_sha256), timeout=1200)
+        return rc, (out + err)
+
     def boot_progress(self):
         rc, out, _ = self._run(
             "L=/run/nebulaos-boot-scripts.log; if [ -e $L ]; then "
@@ -1097,3 +1105,37 @@ def purge_script(paths):
     if len(body) > PURGE_SCRIPT_MAX:
         raise DeviceError("purge script is %d bytes, above the SSH command limit" % len(body))
     return body
+
+
+DATAFS_LIB = "scripts/build/overlay/usr/libexec/nebulaos-datafs.sh"
+
+
+def datafs_repair_script(lib_text, lib_sha256):
+    """The fixed repair script. Nothing from the caller but the library bytes
+    (from the control commit's git objects) and their sha256."""
+    if "NEBULAOS_DATAFS_EOF" in lib_text:
+        raise DeviceError("the datafs library contains the heredoc terminator")
+    if not (len(lib_sha256) == 64 and all(c in "0123456789abcdef" for c in lib_sha256)):
+        raise DeviceError("bad library sha256")
+    return (
+        "T=/tmp/nebulaos-datafs-repair.$$; rm -rf \"$T\"; mkdir -p \"$T\" || exit 9; cd /tmp; "
+        "cat > \"$T/lib.sh\" <<'NEBULAOS_DATAFS_EOF'\n" + lib_text +
+        ("" if lib_text.endswith("\n") else "\n") + "NEBULAOS_DATAFS_EOF\n"
+        "[ \"$(sha256sum \"$T/lib.sh\" | cut -d' ' -f1)\" = %s ] || { echo DATAFS_REPAIR=REFUSED_LIB_SHA; exit 3; }; "
+        "echo '== boot result'; cat /run/nebulaos/data-fs.state 2>&1; "
+        "grep -qx 'DATAFS_MOUNT=ro' /run/nebulaos/data-fs.state 2>/dev/null "
+        "|| { echo DATAFS_REPAIR=REFUSED_NOT_READONLY; exit 4; }; "
+        "awk '$1==\"/dev/mmcblk0p10\" && $4 ~ /^rw/ {f=1} END {exit !f}' /proc/mounts "
+        "&& { echo DATAFS_REPAIR=REFUSED_MOUNTED_RW; exit 4; }; "
+        ". \"$T/lib.sh\"; NDF_CHECK_OUT=\"$T/e2fsck.log\"; "
+        "echo '== unmount (the image shutdown routine)'; ndf_shutdown; echo \"shutdown=$NDF_SHUTDOWN_RESULT\"; "
+        "if grep -q '^/dev/mmcblk0p10 ' /proc/mounts; then "
+        "echo DATAFS_REPAIR=REFUSED_STILL_MOUNTED; grep mmcblk0p10 /proc/mounts; exit 5; fi; "
+        "echo '== e2fsck -fy (ndf_run_check repair)'; ndf_run_check repair; "
+        "cat \"$T/e2fsck.log.repair\"; echo \"repair_rc=$NDF_RC\"; "
+        "echo '== verify e2fsck -fn'; \"$NDF_E2FSCK\" -fn \"$NDF_DEV\" > \"$T/verify\" 2>&1; V=$?; "
+        "tail -n 4 \"$T/verify\"; echo \"verify_rc=$V\"; "
+        "if [ \"$V\" = 0 ] && [ $((NDF_RC & 252)) -eq 0 ]; then "
+        "echo DATAFS_REPAIR=REPAIRED_REBOOTING; sync; (sleep 3; reboot) > /dev/null 2>&1 & exit 0; "
+        "else echo DATAFS_REPAIR=STILL_INCONSISTENT; exit 6; fi"
+        % lib_sha256)

@@ -20,6 +20,7 @@ cd "$(dirname "$0")/../.."
 
 ON_DEVICE=(
   scripts/flash-spare-slot.sh
+  scripts/build/overlay/usr/libexec/nebulaos-datafs.sh
 )
 
 HOST=(
