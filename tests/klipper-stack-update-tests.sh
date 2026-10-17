@@ -161,7 +161,7 @@ sup() {
 		KLIPPER_FIXTURE="$KDIR" EXTENSIONS_FIXTURE="$EDIR" \
 		MOONRAKER_URL="http://127.0.0.1:9" \
 		RESTART_GRACE_PERIOD=0 STABILIZE_SAMPLES=1 STABILIZE_INTERVAL=0 \
-		READY_POLL_TRIES=1 READY_POLL_INTERVAL=0 PAIR_SETTLE_SECONDS=0 \
+		READY_POLL_TRIES=1 READY_POLL_INTERVAL=0 PAIR_SETTLE_SECONDS=0 UPDATE_SETTLE_TRIES=1 UPDATE_SETTLE_INTERVAL=0 \
 		sh -c "PATH=\"$WORK:\$PATH\"; . '$SUPERVISOR'; \
 			component_info() { \
 				case \"\$1\" in \
@@ -347,7 +347,7 @@ env NEBULAOS_UPDATE_SUPERVISOR_NO_AUTORUN=1 NEBULAOS_ROOT="$ROOT" LOCKDIR="$LOCK
 	HEALTH_DIR="$HEALTH_DIR" KLIPPER_FIXTURE="$KDIR" EXTENSIONS_FIXTURE="$EDIR" \
 	MOONRAKER_URL="http://127.0.0.1:9" \
 	RESTART_GRACE_PERIOD=0 STABILIZE_SAMPLES=1 STABILIZE_INTERVAL=0 \
-	READY_POLL_TRIES=1 READY_POLL_INTERVAL=0 PAIR_SETTLE_SECONDS=3 \
+	READY_POLL_TRIES=1 READY_POLL_INTERVAL=0 PAIR_SETTLE_SECONDS=3 UPDATE_SETTLE_TRIES=1 UPDATE_SETTLE_INTERVAL=0 \
 	sh -c ". '$SUPERVISOR'; \
 		component_info() { case \"\$1\" in klipper) echo '$KDIR|$WORK/init.d/S55klipper|$WORK/optklipper|' ;; nebulaos-klipper-extensions) echo '$EDIR|$WORK/init.d/S55klipper|$WORK/optklipper|' ;; esac; }; \
 		poll_klipper_stack_once" > "$WORK/s3b.log" 2>&1
@@ -518,7 +518,7 @@ sup_gen() {
 		KLIPPER_FIXTURE="$KDIR" EXTENSIONS_FIXTURE="$EDIR" \
 		MOONRAKER_URL="http://127.0.0.1:9" \
 		RESTART_GRACE_PERIOD=0 STABILIZE_SAMPLES=1 STABILIZE_INTERVAL=0 \
-		READY_POLL_TRIES=1 READY_POLL_INTERVAL=0 PAIR_SETTLE_SECONDS=0 \
+		READY_POLL_TRIES=1 READY_POLL_INTERVAL=0 PAIR_SETTLE_SECONDS=0 UPDATE_SETTLE_TRIES=1 UPDATE_SETTLE_INTERVAL=0 \
 		sh -c "PATH=\"$WORK:\$PATH\"; . '$SUPERVISOR'; \
 			component_info() { \
 				case \"\$1\" in \
@@ -551,6 +551,113 @@ if grep -q 'cross-generation state detected' "$WORK/gen.log"; then
 else
 	fail "cross-generation: no cross-generation log message"; cat "$WORK/gen.log"
 fi
+
+# --- G72: a matching c_helper.so from the cache or the package index --------
+#
+# The update changes an EXISTING chelper source (the case `git reset --hard`
+# turns into a stale tree on rollback). A stub fetcher serves a fake index
+# site from $WORK/site; $WORK/net-down simulates no network.
+
+cat > "$WORK/fakefetch" <<FAKE
+#!/bin/sh
+[ -e "$WORK/net-down" ] && exit 1
+echo "\$2" >> "$WORK/fetches.log"
+p=\${2#https://idx.invalid/chelper/}
+[ -f "$WORK/site/\$p" ] || exit 22
+cp "$WORK/site/\$p" "\$1"
+FAKE
+chmod 755 "$WORK/fakefetch"
+printf 'id=testabi\n' > "$WORK/python-abi"
+printf 'https://idx.invalid/chelper\n' > "$WORK/chelper-url"
+export NEBULAOS_PYTHON_ABI_FILE="$WORK/python-abi" NEBULAOS_CHELPER_URL_FILE="$WORK/chelper-url" \
+	NEBULAOS_CHELPER_FETCH="$WORK/fakefetch" NEBULAOS_CHELPER_IMAGE_RECORD="$WORK/no-image-record"
+khash() { ( . "$CHELPER_LIB"; chelper_source_hash "$KDIR" ); }
+sha() { sha256sum "$1" | cut -d' ' -f1; }
+
+g72_update() { # $1 = what the index serves: ok | badsha | none | down
+	setup_stack
+	g_kg_k=$(khead)
+	rm -rf "$WORK/site" "$WORK/net-down"; : > "$WORK/fetches.log"
+	sleep 1
+	printf 'int main(void){return 2;}\n' > "$KDIR/klippy/chelper/pyhelper.c"
+	git -C "$KDIR" commit -qam "klipper changes a chelper source"
+	g_new_k=$(khead); g_h=$(khash)
+	mkdir -p "$WORK/site/testabi/$g_h"
+	printf 'built for v2\n' > "$WORK/site/testabi/$g_h/c_helper.so"
+	g_sum=$(sha "$WORK/site/testabi/$g_h/c_helper.so")
+	case "$1" in
+		ok) echo "$g_h $g_sum 13" > "$WORK/site/testabi/index" ;;
+		badsha) echo "$g_h 0000000000000000000000000000000000000000000000000000000000000000 13" > "$WORK/site/testabi/index" ;;
+		none) echo "ffff $g_sum 13" > "$WORK/site/testabi/index" ;;
+		down) : > "$WORK/net-down" ;;
+	esac
+	reset_logs; set_health ok ok
+	sup poll_klipper_stack_once > "$WORK/g72-$1.log" 2>&1
+}
+
+setup_stack
+if [ -f "$ROOT/cache/chelper/testabi/$(khash)/c_helper.so" ]; then
+	pass "G72: the known-good pair's library is cached under its source hash"
+else
+	fail "G72: the known-good pair's library was not cached"; ls -R "$ROOT/cache" 2>&1 | head
+fi
+
+g72_update ok
+if [ "$(stack_field state)" = "healthy" ] && [ "$(stack_field known_good_klipper_commit)" = "$g_new_k" ] && \
+   [ "$(cat "$KDIR/klippy/chelper/c_helper.so")" = "built for v2" ]; then
+	pass "G72: an update that changes a chelper source gets the matching library from the index and is promoted"
+else
+	fail "G72: index library not installed (state=$(stack_field state))"; cat "$WORK/g72-ok.log"
+fi
+if grep -q '"library_from": "index"' "$KDIR/.nebulaos-chelper-verdict.json" && \
+   grep -q "\"source_hash\": \"$g_h\"" "$KDIR/.nebulaos-chelper-verdict.json"; then
+	pass "G72: the verdict names the library's origin and source hash"
+else
+	fail "G72: verdict lacks library_from/source_hash"; cat "$KDIR/.nebulaos-chelper-verdict.json"
+fi
+if [ -f "$ROOT/cache/chelper/testabi/$g_h/c_helper.so" ] && [ -z "$(git -C "$KDIR" status --porcelain)" ]; then
+	pass "G72: the download is cached, and the Klipper tree stays clean (only the ignored *.so changed)"
+else
+	fail "G72: download not cached or Klipper tree dirty"; git -C "$KDIR" status --porcelain
+fi
+if grep -q "update manager did not settle" "$WORK/g72-ok.log"; then
+	pass "G72: the stack path waits for update_manager to finish (pip) before validating"
+else
+	fail "G72: the stack path did not wait for update_manager"; cat "$WORK/g72-ok.log"
+fi
+
+for mode in badsha none down; do
+	g72_update "$mode"
+	if [ "$(khead)" = "$g_kg_k" ] && [ "$(stack_field state)" = "rolled-back" ] && \
+	   [ "$(cat "$KDIR/klippy/chelper/c_helper.so")" = "prebuilt" ] && \
+	   ! grep -q "klipper=$g_new_k" "$HEALTH_DIR/restarts.log" 2>/dev/null; then
+		pass "G72 ($mode): no matching library - refused before restart, rolled back, and the restored pair gets its library from the cache (no factory fallback)"
+	else
+		fail "G72 ($mode): state=$(stack_field state) so=$(cat "$KDIR/klippy/chelper/c_helper.so")"; cat "$WORK/g72-$mode.log"
+	fi
+	if [ -z "$(find "$KDIR/klippy/chelper" -name '.nebulaos-install.*')" ] && \
+	   [ -z "$(find "$ROOT/cache/chelper/testabi" -name '.dl.*' -o -name '.put.*')" ]; then
+		pass "G72 ($mode): no temporary files left behind"
+	else
+		fail "G72 ($mode): temporary files left behind"
+	fi
+done
+if grep -q "refusing" "$WORK/g72-badsha.log"; then
+	pass "G72 (badsha): a library whose sha256 does not match the index is refused by name"
+else
+	fail "G72 (badsha): no refusal message"; cat "$WORK/g72-badsha.log"
+fi
+
+# S05 runs before Wi-Fi/DNS/NTP: it must never reach the index.
+S05="$REPO_ROOT/scripts/build/overlay/etc/init.d/S05nebulaos-activate"
+if ! grep -q 'chelper_fetch_index\|chelper_make_ready "$kdir" network\|NEBULAOS_CHELPER_FETCH' "$S05" && \
+   grep -q 'chelper_make_ready "$kdir" cache' "$S05"; then
+	pass "G72: S05 installs from the local cache only - never the network"
+else
+	fail "G72: S05 may reach the network for c_helper.so"
+fi
+
+unset NEBULAOS_PYTHON_ABI_FILE NEBULAOS_CHELPER_URL_FILE NEBULAOS_CHELPER_FETCH NEBULAOS_CHELPER_IMAGE_RECORD
 
 # --- summary --------------------------------------------------------------
 

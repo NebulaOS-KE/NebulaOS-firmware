@@ -64,6 +64,19 @@ printf '%s\n' "$CONTAINER_HOST" > "$SDK/share/buildroot/sdk-location"
 echo "== $(wc -l < "$SDK/share/buildroot/sdk-relocs") files to relocate"
 
 cp "$ABI" "$SDK/python-abi"
+# G72: the ONE chelper recipe and source-hash definition, from the source
+# this build used (the run's own checkout), so the index CI builds Klipper's
+# helper exactly like the image did; plus the image library's record (the
+# CI's reproducibility check for the pinned Klipper).
+if [ -f "$RUN/scripts/build/lib/build-chelper.sh" ]; then
+	mkdir -p "$SDK/nebulaos"
+	cp "$RUN/scripts/build/lib/build-chelper.sh" "$SDK/nebulaos/build-chelper.sh"
+	cp "$RUN/scripts/build/overlay/etc/nebulaos-chelper-preflight.sh" "$SDK/nebulaos/nebulaos-chelper-preflight.sh"
+	[ -f "$BR/output/target/usr/share/nebulaos/chelper" ] && cp "$BR/output/target/usr/share/nebulaos/chelper" "$SDK/nebulaos/image-chelper"
+	echo "== chelper recipe included"
+else
+	echo "== this build predates the shared chelper recipe - the SDK builds wheels only"
+fi
 {
 	echo "sdk=$NAME"
 	echo "python_abi_id=$ABI_ID"

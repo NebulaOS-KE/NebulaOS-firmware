@@ -32,6 +32,8 @@
 #   nebulaos-osconfig display set-brightness --level 25|50|75|100
 #   nebulaos-osconfig mcu status|list
 #   nebulaos-osconfig mcu flash --file ID --sha256 HEX   (ID and HEX from `list`)
+#   nebulaos-osconfig updates readiness                  (the last check, read-only)
+#   nebulaos-osconfig updates check-readiness [--if-changed]
 #
 # stdout: exactly one JSON object, {"ok": true, ...} or
 # {"ok": false, "error": CODE, "message": ...}. exit 0 ok, 1 invalid input
@@ -40,7 +42,7 @@ import json
 import sys
 
 from . import (bootdisplay, cleanup, common, display, image, logs, mcu, network, snapshot,
-               system, wifi)
+               system, updates, wifi)
 
 
 def _opts(args, allowed):
@@ -65,14 +67,16 @@ READ_ONLY = {("system", "info"), ("network", "status"),
              ("boot-display", "list-images"), ("boot-display", "preview"),
              ("wifi", "status"), ("mcu", "status"), ("mcu", "list"),
              ("image", "list"), ("image", "status"), ("logs", "status"),
-             ("settings", "status"), ("system", "storage"), ("system", "cleanup-plan")}
+             ("settings", "status"), ("system", "storage"), ("system", "cleanup-plan"),
+             ("updates", "readiness")}
 
 # G27 (2026-10-12): every change is one line in the system log (persistent
 # system.log), success or failure. Read-only verbs are not logged (the screen
 # polls them), nor is anything from stdin (the Wi-Fi password arrives there).
 # Display sleep/wake run at every screen timeout, so only failures of those.
 _QUIET_OK = {("display", "sleep"), ("display", "wake"), ("boot-display", "render"),
-             ("logs", "write-state"), ("logs", "expire-debug")}
+             ("logs", "write-state"), ("logs", "expire-debug"),
+             ("updates", "check-readiness")}
 # Read-only verbs that ARE the domain's status/info function.
 _STATUS_ALIASES = {("system", "info"), ("mcu", "list"), ("image", "list")}
 # A snapshot is logged when one is taken, not when nothing changed.
@@ -144,6 +148,9 @@ def _dispatch(argv):
         return bootdisplay.list_images()
     if (domain, verb) == ("boot-display", "preview"):
         return bootdisplay.preview(_opts(rest, {"file": True}).get("file") or "")
+    if (domain, verb) == ("updates", "readiness"):
+        _opts(rest, {})
+        return updates.readiness()
     if (domain, verb) in READ_ONLY:
         _opts(rest, {})
         if verb != "status" and (domain, verb) not in _STATUS_ALIASES:
@@ -249,6 +256,10 @@ def _dispatch(argv):
                 return wifi.connect(wifi.read_stdin_spec(sys.stdin))
             if verb == "forget":
                 return wifi.forget(_opts(rest, {"ssid": True}).get("ssid"))
+        elif domain == "updates":
+            if verb == "check-readiness":
+                o = _opts(rest, {"if-changed": False})
+                return updates.check(if_changed=bool(o.get("if-changed")))
         elif domain == "display":
             if verb == "set-brightness":
                 return display.set_brightness(_opts(rest, {"level": True}).get("level"))

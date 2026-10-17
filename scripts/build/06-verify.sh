@@ -1636,6 +1636,8 @@ check /usr/lib/nebulaos/python/nebulaos_osconfig/poweronlogo.py
 check /usr/lib/nebulaos/python/nebulaos_osconfig/logs.py
 check /usr/lib/nebulaos/python/nebulaos_osconfig/snapshot.py
 check /usr/lib/nebulaos/python/nebulaos_osconfig/cleanup.py
+check /usr/lib/nebulaos/python/nebulaos_osconfig/updates.py
+
 # G50 (2026-10-17): Python ABI fingerprint and pip.conf - pip on the printer
 # installs only ready-made packages from the NebulaOS index for this ABI.
 check /usr/share/nebulaos/python-abi
@@ -1654,6 +1656,21 @@ if echo "$PIP_CONF_CONTENT" | grep -qxF "index-url = ${NEBULAOS_PACKAGE_INDEX_UR
 	echo "OK   /etc/pip.conf: NebulaOS index for this ABI only, only-binary"
 else
 	echo "MISS /etc/pip.conf is not the NebulaOS index for this ABI with only-binary"
+fi
+# G72: the c_helper.so index URL and the image library's source hash record.
+check /usr/share/nebulaos/chelper-index.url
+check /usr/share/nebulaos/chelper
+if [ "$(debugfs -R "cat /usr/share/nebulaos/chelper-index.url" ${IMAGES}/rootfs.ext2 2>/dev/null)" = "$NEBULAOS_CHELPER_INDEX_URL" ]; then
+	echo "OK   chelper-index.url: $NEBULAOS_CHELPER_INDEX_URL"
+else
+	echo "MISS chelper-index.url is not the manifest's NEBULAOS_CHELPER_INDEX_URL"
+fi
+CHELPER_RECORD_SHA=$(debugfs -R "cat /usr/share/nebulaos/chelper" ${IMAGES}/rootfs.ext2 2>/dev/null | sed -n 's/^sha256=//p')
+CHELPER_IMAGE_SHA=$(debugfs -R "cat /opt/klipper/klippy/chelper/c_helper.so" ${IMAGES}/rootfs.ext2 2>/dev/null | sha256sum | cut -d" " -f1)
+if [ -n "$CHELPER_RECORD_SHA" ] && [ "$CHELPER_RECORD_SHA" = "$CHELPER_IMAGE_SHA" ]; then
+	echo "OK   /usr/share/nebulaos/chelper records the shipped c_helper.so ($CHELPER_RECORD_SHA)"
+else
+	echo "MISS /usr/share/nebulaos/chelper does not match the shipped c_helper.so"
 fi
 check /etc/e2fsck.conf
 check /usr/libexec/sftp-server

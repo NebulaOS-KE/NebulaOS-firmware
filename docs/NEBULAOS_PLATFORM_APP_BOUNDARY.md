@@ -146,8 +146,47 @@ implementation:
   a venv stamped for another fingerprint is reprovisioned from the image seed,
   since venvs outlive the image in both directions.
 - The firmware build and first boot never use the index.
-- Not yet: Klipper's `c_helper.so` per Klipper version; a pre-update
-  availability check.
+- **Klipper's `c_helper.so`** (G72, architecture review 2026-10-17). A
+  Klipper update that changes `klippy/chelper` needs the library built from
+  those sources. One recipe (`scripts/build/lib/build-chelper.sh`) and one
+  source hash (`chelper_source_hash` in `/etc/nebulaos-chelper-preflight.sh`:
+  sha256 over sorted `<name> <sha256 of content>` lines for every `*.c`,
+  `*.h`, `__init__.py` in `klippy/chelper`) - stage 04 and the index CI both
+  use them (they travel in the SDK). Index: `NEBULAOS_CHELPER_INDEX_URL` ->
+  `/usr/share/nebulaos/chelper-index.url`; `<url>/<id>/index` lines are
+  `<source hash> <sha256> <size>`, the file is `<url>/<id>/<hash>/c_helper.so`
+  - outside `simple/`. The CI publishes nothing for an ABI unless the
+  image's own Klipper rebuilds byte-identical to the shipped library. On the
+  printer: a cache `$NEBULAOS_ROOT/cache/chelper/<id>/<hash>/` (bounded, 8
+  per ABI), seeded with the image's library (`/usr/share/nebulaos/chelper`
+  records its hash and sha256), the library of every known-good pair, and
+  every verified download - so a rollback (`git reset --hard`) finds its
+  library offline. S05 installs from the cache only (no network before
+  Wi-Fi/DNS/NTP); the update supervisor also fetches from the index, inside
+  the pre-restart gate. A library is installed only when its source hash and
+  sha256 match: temp `*.so` next to it (git-ignored), mtime copied from the
+  newest source (`touch -r`, never "now" - the clock may be pre-NTP), atomic
+  rename, then the verdict. No match or any error leaves the tree unchanged
+  and the fail-closed verdict decides. Same trust as the wheels (HTTPS +
+  sha256 from the index, not a signature). Moonraker's own Klipper restart
+  after `git pull` still meets the stale library first; that error is
+  transient - the supervisor installs the helper and validates the pair.
+- **Readiness check** (G73, advisory): `nebulaos-osconfig updates
+  check-readiness` takes the target commits from Moonraker's own
+  `remote_hash`, runs the app venv's `pip install --dry-run` against the index
+  with the target's requirements (`git show`, never `git fetch`), and looks
+  the target's chelper source hash up in the cache/index. Refused while
+  update_manager is busy or a print runs. The result
+  (`$NEBULAOS_ROOT/updates/readiness.json`) shows on the screen's Updates page
+  ("waiting for packages") and as a Moonraker warning in Mainsail; the
+  supervisor asks for a check every 5 minutes when Moonraker's targets
+  changed. It never blocks an update.
+- **SDK publishing** (G71): `tools/sdk/publish-sdk.sh <run>` is a separate
+  host step after an attested build (never inside the build launcher or
+  container). Release `sdk-<id>` with both assets is the idempotency key
+  (completed when partial); only builds whose `SOURCE_HEAD` is on the firmware
+  repository's `origin/main` are published (releases are first-wins per id).
+  It starts the index workflow; it never changes a build's result.
 
 ## 5. Compatibility metadata (sketch)
 

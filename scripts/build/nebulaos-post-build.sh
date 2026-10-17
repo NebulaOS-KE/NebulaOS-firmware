@@ -133,3 +133,8 @@ INDEX_URL=$(cat "$POST_BUILD_DIR/package-index.url")
 python_abi_pip_conf "$INDEX_URL" "$ABI_ID" > "$TARGET_DIR/etc/pip.conf"
 chmod 644 "$TARGET_DIR/etc/pip.conf"
 echo "== post-build: Python ABI $ABI_ID; pip.conf -> $INDEX_URL/$ABI_ID/ (only-binary) =="
+# G72: where the update supervisor finds c_helper.so for a Klipper update.
+CHELPER_URL=$(cat "$POST_BUILD_DIR/chelper-index.url")
+[ -n "$CHELPER_URL" ] || { echo "FATAL: post-build: no chelper index URL" >&2; exit 1; }
+printf '%s\n' "$CHELPER_URL" > "$TARGET_DIR/usr/share/nebulaos/chelper-index.url"
+chmod 644 "$TARGET_DIR/usr/share/nebulaos/chelper-index.url"

@@ -108,6 +108,12 @@ is why the invariant is enforced in two places rather than assumed in one:
   later `git pull` or a rollback. The verdict is published where
   `nebulaos_compat.py` reads it, so a stale library surfaces as a named
   preflight refusal rather than a gcc crash part-way through boot.
+- **After a Klipper update** (G72, 2026-10-17): the library no longer comes
+  only from the image. Before the verdict, a library matching the tree's
+  chelper source hash is installed from the local cache (S05 and the
+  supervisor) or the NebulaOS package index (supervisor only) - see
+  `NEBULAOS_PLATFORM_APP_BOUNDARY.md`. Never a blind touch: only a library
+  built from exactly these sources.
 
 ## Failure behaviour
 

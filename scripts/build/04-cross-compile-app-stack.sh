@@ -98,76 +98,15 @@ mkdir -p "$WORK"
 # upstream therefore died here with "make: *** No rule to make target
 # 'clean'", after the entire kernel and rootfs had already been built.
 #
-# Upstream builds this library from klippy/chelper/__init__.py's own
-# check_build_c_library(), with a hardcoded gcc invocation. So do exactly
-# that, with the cross compiler substituted for `gcc` - and read SOURCE_FILES
-# and COMPILE_ARGS OUT OF THAT FILE rather than restating them here. That is
-# the whole point: a hardcoded list in the firmware would silently miss the
-# next file upstream adds, and upstream has already added one (steppersync.c,
-# flagged as unknown 5 in the analysis mission's section 27). If the list ever
-# stops parsing, the build fails loudly instead of linking a library with a
-# missing translation unit.
-#
-# SSE_FLAGS is deliberately not passed: upstream only adds it when
-# check_gcc_option() says the compiler accepts it, and a mipsel cross compiler
-# does not. Everything else - the -flto -fwhole-program link, -fPIC, -O2 - is
-# byte-for-byte upstream's own recipe.
+# The recipe (upstream's own SOURCE_FILES/COMPILE_ARGS read out of
+# klippy/chelper/__init__.py, the cross gcc, --strip-unneeded) lives in ONE
+# place, lib/build-chelper.sh: the SDK carries the same script and the
+# package index CI builds the helpers for Klipper updates with it (G72).
 echo "== cross-compiling Klipper's chelper C extension =="
-(
-	cd "$VENDOR/klipper/klippy/chelper"
-	export PATH="$BUILDROOT_DIR/output/host/bin:$PATH"
-	rm -f c_helper.so _temp_c_helper.so
-
-	gcc_args=$(python3 - <<'PYEOF'
-import ast, sys
-tree = ast.parse(open('__init__.py').read())
-found = {}
-for node in tree.body:
-    if (isinstance(node, ast.Assign) and len(node.targets) == 1
-            and isinstance(node.targets[0], ast.Name)
-            and node.targets[0].id in ('SOURCE_FILES', 'COMPILE_ARGS', 'DEST_LIB')):
-        found[node.targets[0].id] = ast.literal_eval(node.value)
-missing = {'SOURCE_FILES', 'COMPILE_ARGS', 'DEST_LIB'} - set(found)
-if missing:
-    sys.stderr.write("chelper/__init__.py no longer defines: %s\n"
-                     % (', '.join(sorted(missing)),))
-    raise SystemExit(1)
-sys.stderr.write("   recipe from upstream: %s <- %d source files\n"
-                 % (found['DEST_LIB'], len(found['SOURCE_FILES'])))
-print(found['COMPILE_ARGS'] % (found['DEST_LIB'], ' '.join(found['SOURCE_FILES'])))
-PYEOF
-	) || {
-		echo "FATAL: could not read the chelper build recipe out of official Klipper's own klippy/chelper/__init__.py - upstream changed its shape and this step must be re-derived, not guessed" >&2
-		exit 1
-	}
-
-	# shellcheck disable=SC2086  # gcc_args is upstream's own recipe, deliberately word-split
-	mipsel-buildroot-linux-gnu-gcc $gcc_args || {
-		echo "FATAL: cross-compiling c_helper.so failed" >&2
-		exit 1
-	}
-	[ -f c_helper.so ] || {
-		echo "FATAL: c_helper.so was not produced" >&2
-		exit 1
-	}
-) || exit 1
-
-# Production optimization mission, Phase 6 (2026-07-30): c_helper.so shipped
-# with full debug symbols in every rootfs.squashfs built so far - Buildroot's
-# own blanket TARGET_FINALIZE strip pass never reaches this file since it's
-# copied into the overlay directly by this script, after that pass runs, not
-# built as a real Buildroot package. Same class of gap as ustreamer/v4l2-ctl
-# below, which already strip explicitly for the same reason. Keep an
-# unstripped copy with symbols in the gitignored build-work tree (not the
-# production rootfs) before stripping, matching the ustreamer/v4l2-ctl
-# pattern's build-ID-preserving intent.
 mkdir -p "$WORK/debug-symbols"
-cp "$VENDOR/klipper/klippy/chelper/c_helper.so" "$WORK/debug-symbols/c_helper.so.debug"
-(
-	cd "$VENDOR/klipper/klippy/chelper"
-	export PATH="$BUILDROOT_DIR/output/host/bin:$PATH"
-	mipsel-buildroot-linux-gnu-strip --strip-unneeded c_helper.so
-)
+sh "$SCRIPT_DIR/lib/build-chelper.sh" "$VENDOR/klipper/klippy/chelper" \
+	"$BUILDROOT_DIR/output/host/bin/mipsel-buildroot-linux-gnu-" \
+	"$WORK/debug-symbols/c_helper.so.debug" || exit 1
 
 ### 1a. klipper_mcu: upstream Klipper's own MACH_LINUX build target, compiled
 ###    as a native MIPS Linux program (not cross-compiled embedded firmware
@@ -317,6 +256,21 @@ chelper_enforce_mtime "$OVERLAY/opt/klipper" || {
 # report.
 chelper_write_verdict "$OVERLAY/opt/klipper" || {
 	echo "FATAL: the immutable /opt/klipper copy failed its own chelper verdict immediately after enforcement" >&2
+	exit 1
+}
+
+# G72: the image's library under its source hash - the device seeds its
+# c_helper.so cache with it (chelper_cache_seed_image), so a rollback to the
+# shipped Klipper never needs the network.
+mkdir -p "$OVERLAY/usr/share/nebulaos"
+{
+	echo "source_hash=$(chelper_source_hash "$OVERLAY/opt/klipper")"
+	echo "sha256=$(chelper_sha256 "$OVERLAY/opt/klipper/klippy/chelper/c_helper.so")"
+	echo "klipper_commit=$(git -C "$VENDOR/klipper" rev-parse HEAD)"
+} > "$OVERLAY/usr/share/nebulaos/chelper"
+grep -qE '^source_hash=[0-9a-f]{64}$' "$OVERLAY/usr/share/nebulaos/chelper" && \
+grep -qE '^sha256=[0-9a-f]{64}$' "$OVERLAY/usr/share/nebulaos/chelper" || {
+	echo "FATAL: could not record the image's c_helper.so source hash" >&2
 	exit 1
 }
 

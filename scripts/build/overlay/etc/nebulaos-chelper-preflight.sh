@@ -129,7 +129,8 @@ chelper_check_mtime() {
 # Make the invariant true, deterministically, rather than hoping build order
 # produced it. Called at build time only - never on the device, where
 # touching the .so forward would paper over a real staleness problem that
-# the verdict file is meant to expose.
+# the verdict file is meant to expose. (The device installs a MATCHING
+# library instead - chelper_make_ready() below - never a blind touch.)
 # $1=klipper checkout
 chelper_enforce_mtime() {
 	kdir="$1"
@@ -183,6 +184,7 @@ chelper_write_verdict() {
 	esac
 
 	kc=$(git -C "$kdir" rev-parse HEAD 2>/dev/null || echo "nogit")
+	srch=$(chelper_source_hash "$kdir" 2>/dev/null || echo "unknown")
 	tmp="$out.tmp.$$"
 	cat > "$tmp" <<EOF
 {
@@ -193,6 +195,8 @@ chelper_write_verdict() {
   "target": "$NEBULAOS_CHELPER_TARGET",
   "source_dir": "$NEBULAOS_CHELPER_SUBDIR",
   "klipper_commit": "$kc",
+  "source_hash": "$srch",
+  "library_from": "${CHELPER_INSTALLED_FROM:-in_tree}",
   "checked_at": "$now",
   "checked_at_caveat": "may read as an early-epoch date if this boot occurred before NTP sync",
   "checked_by": "/etc/nebulaos-chelper-preflight.sh"
@@ -206,4 +210,209 @@ EOF
 	fi
 	chelper_err "verdict '$status' - wrote $out; Klipper must NOT be started against this tree"
 	return 1
+}
+
+# --- G72 (2026-10-17): a matching c_helper.so after a Klipper update -------
+#
+# A Klipper update that changes a chelper source needs a library built from
+# THOSE sources. The device has no compiler, so it uses one built elsewhere,
+# chosen by the source hash below - never by touching the old library:
+#
+#   1. the local cache   $NEBULAOS_ROOT/cache/chelper/<abi id>/<hash>/
+#      seeded with the image's own library (/usr/share/nebulaos/chelper
+#      records its hash and sha256), plus every library a known-good pair
+#      ran with, plus every verified download. This is also what makes a
+#      rollback work offline: `git reset --hard` brings back sources whose
+#      library is already here.
+#   2. the NebulaOS package index (supervisor only - never at boot, S05 runs
+#      before Wi-Fi/DNS/NTP): <chelper url>/<abi id>/index lists
+#      "<source hash> <sha256> <size>", the library is <hash>/c_helper.so,
+#      built by the index CI with the SDK's lib/build-chelper.sh.
+#
+# Same trust as the wheels: HTTPS + sha256 from the index, not a signature.
+# Nothing in the Klipper tree is written except c_helper.so (git-ignored by
+# upstream's *.so rule). Any mismatch or error leaves the tree unchanged, so
+# the fail-closed verdict above still decides.
+
+NEBULAOS_CHELPER_CACHE="${NEBULAOS_CHELPER_CACHE:-${NEBULAOS_ROOT:-/usr/data/nebulaos}/cache/chelper}"
+NEBULAOS_CHELPER_IMAGE_RECORD="${NEBULAOS_CHELPER_IMAGE_RECORD:-/usr/share/nebulaos/chelper}"
+NEBULAOS_CHELPER_IMAGE_SO="${NEBULAOS_CHELPER_IMAGE_SO:-/opt/klipper/klippy/chelper/c_helper.so}"
+NEBULAOS_CHELPER_URL_FILE="${NEBULAOS_CHELPER_URL_FILE:-/usr/share/nebulaos/chelper-index.url}"
+NEBULAOS_PYTHON_ABI_FILE="${NEBULAOS_PYTHON_ABI_FILE:-/usr/share/nebulaos/python-abi}"
+NEBULAOS_CHELPER_CACHE_KEEP="${NEBULAOS_CHELPER_CACHE_KEEP:-8}"
+
+chelper_sha256() {
+	sha256sum "$1" 2>/dev/null | cut -d' ' -f1
+}
+
+# The source hash: sha256 over "<name> <sha256 of content>\n" for every
+# *.c, *.h and __init__.py directly in klippy/chelper (the same set as the
+# mtime check), sorted by name in the C locale. Name and content are both
+# framed, so a rename or content moving between files changes it.
+# ONE definition: the device, the image build (04) and the index CI (via
+# the SDK's copy of this file) all use these two functions.
+# $1=klipper checkout (the files as they are on disk - also when dirty)
+chelper_source_hash() {
+	[ -d "$1/$NEBULAOS_CHELPER_SUBDIR" ] || return 1
+	(
+		cd "$1/$NEBULAOS_CHELPER_SUBDIR" || exit 1
+		find . -maxdepth 1 -type f \( -name '*.c' -o -name '*.h' -o -name '__init__.py' \) \
+			| sed 's#^\./##' | LC_ALL=C sort | while read -r n; do
+			printf '%s %s\n' "$n" "$(sha256sum < "$n" | cut -d' ' -f1)"
+		done
+	) | sha256sum | cut -d' ' -f1
+}
+
+# The same hash from git objects, without a checkout (G73: what an update
+# to <rev> would need). $1=git repo $2=rev
+chelper_source_hash_git() {
+	git -C "$1" rev-parse -q --verify "$2^{commit}" >/dev/null 2>&1 || return 1
+	git -C "$1" ls-tree "$2" "$NEBULAOS_CHELPER_SUBDIR/" 2>/dev/null \
+		| awk '$1 != "120000" && $2 == "blob" { sub(/^[^\t]*\t/, ""); print }' \
+		| sed 's#^.*/##' | grep -E '\.(c|h)$|^__init__\.py$' | LC_ALL=C sort \
+		| while read -r n; do
+			printf '%s %s\n' "$n" "$(git -C "$1" cat-file blob "$2:$NEBULAOS_CHELPER_SUBDIR/$n" | sha256sum | cut -d' ' -f1)"
+		done | sha256sum | cut -d' ' -f1
+}
+
+chelper_abi_id() {
+	sed -n 's/^id=//p' "$NEBULAOS_PYTHON_ABI_FILE" 2>/dev/null | head -1
+}
+
+# Put a library into the cache under <hash>, atomically. With $4 (expected
+# sha256) a mismatch is refused. $1=abi id $2=source hash $3=file [$4=sha256]
+chelper_cache_put() {
+	_cid="$1"; _ch="$2"; _cf="$3"; _cexp="${4:-}"
+	[ -n "$_cid" ] && [ -n "$_ch" ] && [ -f "$_cf" ] || return 1
+	_csum=$(chelper_sha256 "$_cf")
+	if [ -n "$_cexp" ] && [ "$_csum" != "$_cexp" ]; then
+		chelper_err "refusing $_cf for the cache: sha256 $_csum, expected $_cexp"
+		return 1
+	fi
+	_cdir="$NEBULAOS_CHELPER_CACHE/$_cid/$_ch"
+	if [ -f "$_cdir/c_helper.so" ] && [ "$(cat "$_cdir/sha256" 2>/dev/null)" = "$_csum" ]; then
+		touch "$_cdir" 2>/dev/null
+		return 0
+	fi
+	mkdir -p "$NEBULAOS_CHELPER_CACHE/$_cid" || return 1
+	_ctmp="$NEBULAOS_CHELPER_CACHE/$_cid/.put.$$"
+	rm -rf "$_ctmp"
+	mkdir -p "$_ctmp" && cp "$_cf" "$_ctmp/c_helper.so" && echo "$_csum" > "$_ctmp/sha256" || {
+		rm -rf "$_ctmp"; return 1
+	}
+	rm -rf "$_cdir"
+	mv "$_ctmp" "$_cdir" || { rm -rf "$_ctmp"; return 1; }
+	# Bounded: keep the most recently used entries for this ABI.
+	ls -1dt "$NEBULAOS_CHELPER_CACHE/$_cid"/* 2>/dev/null \
+		| tail -n +"$((NEBULAOS_CHELPER_CACHE_KEEP + 1))" | while read -r _old; do
+		rm -rf "$_old"
+	done
+	chelper_log "cached c_helper.so for source hash $_ch"
+	return 0
+}
+
+# The image's own library, under the hash recorded at build time. Only when
+# the file still has the recorded sha256 (after activation /opt/klipper is
+# the persistent checkout, whose library may be another one).
+chelper_cache_seed_image() {
+	[ -f "$NEBULAOS_CHELPER_IMAGE_RECORD" ] || return 0
+	_sh=$(sed -n 's/^source_hash=//p' "$NEBULAOS_CHELPER_IMAGE_RECORD")
+	_ss=$(sed -n 's/^sha256=//p' "$NEBULAOS_CHELPER_IMAGE_RECORD")
+	_sid=$(chelper_abi_id)
+	[ -n "$_sh" ] && [ -n "$_ss" ] && [ -n "$_sid" ] || return 0
+	[ -f "$NEBULAOS_CHELPER_CACHE/$_sid/$_sh/c_helper.so" ] && return 0
+	[ "$(chelper_sha256 "$NEBULAOS_CHELPER_IMAGE_SO")" = "$_ss" ] || return 0
+	chelper_cache_put "$_sid" "$_sh" "$NEBULAOS_CHELPER_IMAGE_SO" "$_ss"
+}
+
+# The library a tree runs with right now, when it satisfies the invariant
+# (called once a pair is known-good, and after an ok boot verdict).
+# $1=klipper checkout
+chelper_cache_current() {
+	chelper_check_mtime "$1" 2>/dev/null || return 0
+	_kh=$(chelper_source_hash "$1") || return 0
+	chelper_cache_put "$(chelper_abi_id)" "$_kh" "$1/$NEBULAOS_CHELPER_TARGET"
+}
+
+# Install a library as the tree's c_helper.so: a temporary *.so next to it
+# (git-ignored), mtime copied from the newest source (never "now" - the
+# clock may be before NTP), atomic rename, then the invariant re-checked.
+# $1=klipper checkout $2=library
+chelper_install_file() {
+	_kd="$1"; _src="$2"
+	_newest=$(ls -1t $(chelper_sources "$_kd") 2>/dev/null | head -1)
+	[ -n "$_newest" ] || return 1
+	_tmp="$_kd/$NEBULAOS_CHELPER_SUBDIR/.nebulaos-install.$$.so"
+	cp "$_src" "$_tmp" && touch -r "$_newest" "$_tmp" && mv "$_tmp" "$_kd/$NEBULAOS_CHELPER_TARGET" || {
+		rm -f "$_tmp"; return 1
+	}
+	chelper_check_mtime "$_kd"
+}
+
+# From the cache only (no network - safe at boot). $1=klipper checkout
+chelper_install_matching() {
+	_kd="$1"
+	_mh=$(chelper_source_hash "$_kd") || return 1
+	_mid=$(chelper_abi_id)
+	_md="$NEBULAOS_CHELPER_CACHE/$_mid/$_mh"
+	[ -n "$_mid" ] && [ -f "$_md/c_helper.so" ] || return 1
+	if [ "$(chelper_sha256 "$_md/c_helper.so")" != "$(cat "$_md/sha256" 2>/dev/null)" ]; then
+		chelper_err "cached library for $_mh is damaged - removing it"
+		rm -rf "$_md"
+		return 1
+	fi
+	chelper_install_file "$_kd" "$_md/c_helper.so" || return 1
+	touch "$_md" 2>/dev/null
+	CHELPER_INSTALLED_FROM=cache
+	chelper_log "installed the cached c_helper.so for source hash $_mh"
+	return 0
+}
+
+chelper_curl() {
+	# $1=output $2=url
+	curl -fsSL --max-time 120 --retry 2 --retry-delay 5 -o "$1" "$2"
+}
+
+# From the package index into the cache, then installed. Supervisor only.
+# $1=klipper checkout
+chelper_fetch_index() {
+	_kd="$1"
+	_fh=$(chelper_source_hash "$_kd") || return 1
+	_fid=$(chelper_abi_id)
+	_furl=$(cat "$NEBULAOS_CHELPER_URL_FILE" 2>/dev/null)
+	[ -n "$_fid" ] && [ -n "$_furl" ] || { chelper_err "no package index configured for c_helper.so"; return 1; }
+	_fetch="${NEBULAOS_CHELPER_FETCH:-chelper_curl}"
+	mkdir -p "$NEBULAOS_CHELPER_CACHE/$_fid" || return 1
+	_fw="$NEBULAOS_CHELPER_CACHE/$_fid/.dl.$$"
+	rm -rf "$_fw"; mkdir -p "$_fw" || return 1
+	_ok=1
+	if ! "$_fetch" "$_fw/index" "${_furl%/}/$_fid/index"; then
+		chelper_err "could not read the c_helper.so index ${_furl%/}/$_fid/index"
+	else
+		_fsum=$(awk -v h="$_fh" '$1 == h { print $2; exit }' "$_fw/index")
+		if [ -z "$_fsum" ]; then
+			chelper_err "the package index has no c_helper.so for source hash $_fh (yet - the index builds daily)"
+		elif ! "$_fetch" "$_fw/c_helper.so" "${_furl%/}/$_fid/$_fh/c_helper.so"; then
+			chelper_err "downloading c_helper.so for $_fh failed"
+		elif chelper_cache_put "$_fid" "$_fh" "$_fw/c_helper.so" "$_fsum"; then
+			_ok=0
+		fi
+	fi
+	rm -rf "$_fw"
+	[ "$_ok" = 0 ] || return 1
+	chelper_install_matching "$_kd" || return 1
+	CHELPER_INSTALLED_FROM=index
+	return 0
+}
+
+# Make the tree's library match its sources, if it does not already.
+# $1=klipper checkout $2=cache|network ("network" only from the supervisor)
+chelper_make_ready() {
+	CHELPER_INSTALLED_FROM=
+	chelper_check_mtime "$1" 2>/dev/null && return 0
+	[ -d "$1/$NEBULAOS_CHELPER_SUBDIR" ] || return 1
+	chelper_cache_seed_image
+	chelper_install_matching "$1" && return 0
+	[ "${2:-cache}" = network ] || return 1
+	chelper_fetch_index "$1"
 }

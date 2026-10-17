@@ -46,6 +46,10 @@ LOGS_SAVE_TIMEOUT = 300.
 # Walking the data drive (thousands of files) on the MIPS board.
 STORAGE_TIMEOUT = 120.
 CLEANUP_TIMEOUT = 600.
+# G73: pip --dry-run of a pending update against the package index (it
+# downloads the wheels to resolve them) on the MIPS board.
+READINESS_TIMEOUT = 960.
+READINESS_WARNING = "nebulaos_update_readiness"
 
 
 class NebulaOS:
@@ -110,6 +114,10 @@ class NebulaOS:
             ("/machine/nebulaos/mcu/status", RequestType.GET, self._mcu_status),
             ("/machine/nebulaos/mcu/files", RequestType.GET, self._mcu_files),
             ("/machine/nebulaos/mcu/flash", RequestType.POST, self._mcu_flash),
+            ("/machine/nebulaos/updates/readiness", RequestType.GET,
+             self._upd_readiness),
+            ("/machine/nebulaos/updates/check_readiness", RequestType.POST,
+             self._upd_check_readiness),
         ]
         for path, rtype, callback in routes:
             self.server.register_endpoint(path, rtype, callback)
@@ -367,6 +375,44 @@ class NebulaOS:
         await self._refuse_while_printing()
         return await self._write("mcu", "flash", "--file", file_id, "--sha256", sha,
                                  timeout=MCU_FLASH_TIMEOUT)
+
+
+    # G73: is a pending Klipper/Moonraker update installable from the
+    # package index? Advisory: shown on the screen's Updates page and as a
+    # Moonraker warning in Mainsail; never blocks the update. The update
+    # supervisor asks for a check (if_changed) when Moonraker sees a new
+    # version; the screen can ask too.
+    def _sync_readiness_warning(self, result: Dict[str, Any]) -> None:
+        if result.get("result") == "NOT_READY":
+            self.server.add_warning(
+                "NebulaOS: " + str(result.get("message", "")), READINESS_WARNING,
+                log=False)
+        elif result.get("result") in ("READY", "NO_UPDATES", "UNKNOWN"):
+            self.server.remove_warning(READINESS_WARNING)
+
+    async def component_init(self) -> None:
+        try:
+            self._sync_readiness_warning(await self._read("updates", "readiness"))
+        except Exception as exc:
+            logging.info(f"nebulaos: update readiness not read: {exc}")
+
+    async def _upd_readiness(self, web_request: WebRequest) -> Dict[str, Any]:
+        return await self._read("updates", "readiness")
+
+    async def _upd_check_readiness(self, web_request: WebRequest) -> Dict[str, Any]:
+        args = ["check-readiness"]
+        if web_request.get_boolean("if_changed", False):
+            args.append("--if-changed")
+        lock = self.write_locks.setdefault("updates", asyncio.Lock())
+        if lock.locked():
+            return {"result": "RUNNING", "message": "A check is already running."}
+        async with lock:
+            result = await self._exec(["updates"] + args, READINESS_TIMEOUT)
+        self._sync_readiness_warning(result)
+        if result.get("result") not in ("UNCHANGED", "BUSY", "PRINTING", "UNAVAILABLE"):
+            self.server.send_event("nebulaos:settings_changed",
+                                   {"domain": "updates", "result": result.get("result")})
+        return result
 
 
 def load_component(config: ConfigHelper) -> NebulaOS:

@@ -730,11 +730,26 @@ recompose_klipper_stack() {
 		log "$STACK_NAME: $CHELPER_LIB is not available - cannot verify the c_helper.so mtime invariant, refusing"
 		return 1
 	fi
+	# G72: a Klipper update that changed a chelper source needs the library
+	# built from those sources - from the local cache (also what makes a
+	# rollback work offline) or the NebulaOS package index. Only a library
+	# whose source hash and sha256 match is installed; otherwise the tree is
+	# left alone and the verdict below refuses the pair, as before.
+	if command -v chelper_make_ready >/dev/null 2>&1; then
+		chelper_make_ready "$kdir" network || log "$STACK_NAME: no matching c_helper.so for this Klipper in the cache or the package index"
+	fi
 	if ! chelper_write_verdict "$kdir"; then
 		log "$STACK_NAME: the c_helper.so mtime invariant does NOT hold for this pair. This is the classic new-Klipper/old-prebuilt-library failure: Klippy would shell out to gcc, which this device does not have, and would not start. Refusing to restart into it."
 		return 1
 	fi
 	return 0
+}
+
+# G72: keep the library a known-good pair runs with, so a later rollback to
+# this pair finds it in the cache without the network.
+stack_cache_chelper() {
+	command -v chelper_cache_current >/dev/null 2>&1 || return 0
+	chelper_cache_current "$NEBULAOS_ROOT/apps/$KLIPPER_APP" >/dev/null 2>&1 || true
 }
 
 # Put both halves back on the last validated pair, recompose, and prove it.
@@ -777,6 +792,9 @@ validate_klipper_stack() {
 	write_stack_state "$kg_k" "$kg_e" "$new_k" "$new_e" "validating" ""
 
 	log "$STACK_NAME: new pair detected (klipper $new_k, extensions $new_e) - validating as one unit"
+	# A Klipper update also runs pip for klippy-requirements after the git
+	# pull: validate only once update_manager is done (as validate_component).
+	wait_for_update_manager_done "$KLIPPER_APP" "$new_k"
 
 	# Pre-restart gates. These run BEFORE Klippy is touched, which is what
 	# turns "Klippy crashed on boot" into "the pair was refused and rolled
@@ -803,6 +821,7 @@ validate_klipper_stack() {
 			# recorded as known-good.
 			log "$STACK_NAME: the new pair (klipper $new_k, extensions $new_e) passed full validation - recording as the known-good pair"
 			write_stack_state "$new_k" "$new_e" "$new_k" "$new_e" "healthy" ""
+			stack_cache_chelper
 			rm -f "$LOCKDIR/$STACK_NAME.lock"
 			return
 		fi
@@ -963,6 +982,7 @@ poll_klipper_stack_once() {
 		# a validation cycle, exactly as the per-component bootstrap below
 		# does.
 		write_stack_state "$cur_k" "$cur_e" "$cur_k" "$cur_e" "healthy" ""
+		stack_cache_chelper
 		log "$STACK_NAME: bootstrapped pair state at klipper $cur_k, extensions $cur_e"
 		return 0
 	fi
@@ -1223,6 +1243,34 @@ poll_once() {
 	done
 
 	poll_mainsail_once
+	poll_readiness_once
+}
+
+# G73 (2026-10-17): when Moonraker has seen a new Klipper/Moonraker version,
+# check whether it is installable from the package index (pip --dry-run +
+# the c_helper.so lookup) - through the [nebulaos] component, which also
+# raises or clears the warning Mainsail shows. Every READINESS_EVERY polls
+# (5 min), in the background, one at a time; the check itself refuses while
+# update_manager is busy or a print runs, and does nothing when Moonraker's
+# targets did not change. Advisory only.
+READINESS_EVERY="${READINESS_EVERY:-15}"
+READINESS_TICK=0
+poll_readiness_once() {
+	READINESS_TICK=$((READINESS_TICK + 1))
+	[ "$READINESS_TICK" -ge "$READINESS_EVERY" ] || return 0
+	READINESS_TICK=0
+	print_is_active && return 0
+	_rpid="$NEBULAOS_RUN_DIR/update-readiness.pid"
+	if [ -f "$_rpid" ] && [ -d "/proc/$(cat "$_rpid" 2>/dev/null)" ]; then
+		return 0
+	fi
+	mkdir -p "$NEBULAOS_RUN_DIR" 2>/dev/null
+	(
+		wget -q -O /dev/null --timeout=1000 --post-data='' \
+			"$MOONRAKER_URL/machine/nebulaos/updates/check_readiness?if_changed=true" 2>/dev/null
+		rm -f "$_rpid"
+	) >/dev/null 2>&1 &
+	echo $! > "$_rpid"
 }
 
 loop() {

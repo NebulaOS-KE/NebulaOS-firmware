@@ -280,12 +280,21 @@ activate_klipper_stack() {
 		return 1
 	fi
 
+	# G72: a library matching the sources, from the local cache only - no
+	# network at this point of the boot (no Wi-Fi/DNS/NTP yet). The
+	# supervisor fetches from the package index later.
+	if command -v chelper_make_ready >/dev/null 2>&1; then
+		chelper_cache_seed_image
+		chelper_make_ready "$kdir" cache || log "klipper-stack: no matching c_helper.so in the local cache"
+	fi
+
 	if ! chelper_write_verdict "$kdir"; then
 		log "klipper-stack: the c_helper.so mtime invariant does NOT hold - Klipper would try to rebuild its C library with gcc, which this device does not have. The persistent Klipper is not activated."
 		record "klipper_stack" "immutable:chelper_stale"
 		return 1
 	fi
 
+	command -v chelper_cache_current >/dev/null 2>&1 && chelper_cache_current "$kdir" >/dev/null 2>&1
 	record "klipper_stack" "composed"
 	return 0
 }

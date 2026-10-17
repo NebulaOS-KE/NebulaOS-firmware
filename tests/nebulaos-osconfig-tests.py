@@ -2402,7 +2402,7 @@ class ComponentTests(unittest.TestCase):
 
         class Server(object):
             def __init__(self):
-                self.endpoints, self.events = {}, []
+                self.endpoints, self.events, self.warnings = {}, [], {}
 
             def register_endpoint(self, path, rtype, cb):
                 self.endpoints[path] = (rtype, cb)
@@ -2412,6 +2412,12 @@ class ComponentTests(unittest.TestCase):
 
             def send_event(self, name, data):
                 self.events.append((name, data))
+
+            def add_warning(self, msg, warn_id=None, log=True):
+                self.warnings[warn_id] = msg
+
+            def remove_warning(self, warn_id):
+                self.warnings.pop(warn_id, None)
 
             def lookup_component(self, name, default=None):
                 return {"file_manager": FM(), "machine": test.machine,
@@ -2616,6 +2622,170 @@ class ComponentTests(unittest.TestCase):
     def test_ok_result_strips_ok(self):
         out = self.call("/machine/nebulaos/info")
         self.assertEqual(out, {"result": "APPLIED"})
+
+
+class UpdateReadinessTests(unittest.TestCase):
+    """G73: is a pending Klipper/Moonraker update installable? Moonraker,
+    pip and the index are faked; git and the chelper library are real."""
+
+    def setUp(self):
+        self.e = Env()
+        self.u = importlib.import_module("nebulaos_osconfig.updates")
+        root = self.e.root
+        self.git_env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@l",
+                            GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@l")
+        self.mr = os.path.join(root, "apps", "moonraker")
+        self.kl = os.path.join(root, "apps", "klipper")
+        self.mr_cur, self.mr_new = self.make_repo(self.mr, "scripts/moonraker-requirements.txt",
+                                                  {}, {})
+        self.kl_cur, self.kl_new = self.make_repo(
+            self.kl, "scripts/klippy-requirements.txt",
+            {"klippy/chelper/__init__.py": "init", "klippy/chelper/a.c": "one"},
+            {"klippy/chelper/a.c": "two"})
+        # The venvs' python: records argv and env, answers per mode file.
+        self.pylog = os.path.join(self.e.tmp, "pip.log")
+        self.pymode = os.path.join(self.e.tmp, "pip.mode")
+        for env in ("moonraker", "klipper"):
+            d = os.path.join(root, "envs", env, "bin")
+            os.makedirs(d)
+            write_exe(os.path.join(d, "python"), """
+                echo "%(env)s TMPDIR=$TMPDIR $*" >> "%(log)s"
+                [ "$(cat "%(mode)s" 2>/dev/null)" = missing ] || exit 0
+                echo "ERROR: Could not find a version that satisfies the requirement foo" >&2
+                echo "ERROR: No matching distribution found for foo" >&2
+                exit 1
+            """ % {"env": env, "log": self.pylog, "mode": self.pymode})
+        pipconf = os.path.join(self.e.tmp, "pip.conf")
+        with open(pipconf, "w") as handle:
+            handle.write("[global]\nindex-url = https://idx.invalid/simple/abc/\nonly-binary = :all:\n")
+        self.u.PIP_CONF = pipconf
+        # c_helper.so: the real library, a file:// index.
+        self.site = os.path.join(self.e.tmp, "site")
+        os.makedirs(os.path.join(self.site, "abc"))
+        with open(os.path.join(self.e.tmp, "abi"), "w") as handle:
+            handle.write("id=abc\n")
+        with open(os.path.join(self.e.tmp, "chelper.url"), "w") as handle:
+            handle.write("file://%s\n" % self.site)
+        os.environ.update({"NEBULAOS_PYTHON_ABI_FILE": os.path.join(self.e.tmp, "abi")})
+        self.u.CHELPER_LIB = os.path.join(OVERLAY, "etc", "nebulaos-chelper-preflight.sh")
+        self.u.CHELPER_URL_FILE = os.path.join(self.e.tmp, "chelper.url")
+        self.busy, self.state = False, "standby"
+        self.remote = {"moonraker": self.mr_new, "klipper": None}
+
+        def fake_get(path, timeout=10):
+            if path.startswith("/printer/objects/query"):
+                return {"status": {"print_stats": {"state": self.state}}}
+            info = {}
+            for name, cur in (("moonraker", self.mr_cur), ("klipper", self.kl_cur)):
+                info[name] = {"current_hash": cur, "remote_hash": self.remote[name] or cur}
+            return {"busy": self.busy, "version_info": info}
+        self.u._get = fake_get
+
+    def tearDown(self):
+        os.environ.pop("NEBULAOS_PYTHON_ABI_FILE", None)
+        self.e.cleanup()
+
+    def git(self, repo, *args):
+        import subprocess
+        return subprocess.run(["git", "-C", repo] + list(args), check=True, env=self.git_env,
+                              capture_output=True, text=True).stdout.strip()
+
+    def make_repo(self, repo, req, files, changes):
+        os.makedirs(repo)
+        self.git(repo, "init", "-q")
+        for path, text in dict(files, **{req: "foo>=1\n--find-links=python_wheels\n"}).items():
+            os.makedirs(os.path.dirname(os.path.join(repo, path)), exist_ok=True)
+            with open(os.path.join(repo, path), "w") as handle:
+                handle.write(text)
+        self.git(repo, "add", "-A")
+        self.git(repo, "commit", "-qm", "current")
+        cur = self.git(repo, "rev-parse", "HEAD")
+        for path, text in dict(changes, **{req: "foo>=2\n"}).items():
+            with open(os.path.join(repo, path), "w") as handle:
+                handle.write(text)
+        self.git(repo, "commit", "-qam", "new")
+        new = self.git(repo, "rev-parse", "HEAD")
+        self.git(repo, "reset", "-q", "--hard", cur)
+        return cur, new
+
+    def pip_calls(self):
+        try:
+            return open(self.pylog).read().splitlines()
+        except OSError:
+            return []
+
+    def test_busy_or_printing_runs_nothing(self):
+        self.busy = True
+        self.assertEqual(self.u.check()["result"], "BUSY")
+        self.busy, self.state = False, "printing"
+        self.assertEqual(self.u.check()["result"], "PRINTING")
+        self.assertEqual(self.pip_calls(), [])
+        self.assertFalse(os.path.exists(self.u.STATE))
+
+    def test_ready_dry_run_as_moonraker_runs_it(self):
+        out = self.u.check()
+        self.assertEqual(out["result"], "READY", out)
+        self.assertEqual(out["apps"]["moonraker"]["target"], self.mr_new)
+        call, = self.pip_calls()
+        self.assertTrue(call.startswith("moonraker TMPDIR=%s/tmp/readiness-" % self.e.root), call)
+        for arg in ("-m pip install --dry-run", "--only-binary=:all:",
+                    "--index-url https://idx.invalid/simple/abc/", "-U -r"):
+            self.assertIn(arg, call)
+        self.assertEqual(self.u.readiness()["result"], "READY")
+        # Moonraker owns fetching: nothing written to the app repository.
+        self.assertEqual(self.git(self.mr, "rev-parse", "HEAD"), self.mr_cur)
+        self.assertFalse(os.path.exists(os.path.join(self.mr, ".git", "FETCH_HEAD")))
+        self.assertEqual(self.git(self.mr, "status", "--porcelain"), "")
+        self.assertEqual(os.listdir(os.path.join(self.e.root, "tmp")), [])
+
+    def test_missing_packages_not_ready(self):
+        with open(self.pymode, "w") as handle:
+            handle.write("missing")
+        out = self.u.check()
+        self.assertEqual(out["result"], "NOT_READY", out)
+        self.assertEqual(out["apps"]["moonraker"]["packages"], "missing")
+        self.assertIn("Moonraker update", out["message"])
+
+    def test_if_changed_skips_same_targets(self):
+        self.u.check()
+        self.assertEqual(self.u.check(if_changed=True)["result"], "UNCHANGED")
+        self.assertEqual(len(self.pip_calls()), 1)
+        self.remote["moonraker"] = None
+        self.assertEqual(self.u.check(if_changed=True)["result"], "NO_UPDATES")
+
+    def test_klipper_helper(self):
+        self.remote = {"moonraker": None, "klipper": self.kl_new}
+        out = self.u.check()
+        self.assertEqual(out["result"], "UNKNOWN", out)      # no index file yet
+        self.assertEqual(out["apps"]["klipper"]["helper"], "unknown")
+        with open(os.path.join(self.site, "abc", "index"), "w") as handle:
+            handle.write("0000 1111 5\n")
+        out = self.u.check()
+        self.assertEqual((out["result"], out["apps"]["klipper"]["helper"]), ("NOT_READY", "missing"), out)
+        self.assertIn("Klipper update", out["message"])
+        want = out["apps"]["klipper"]["helper_source_hash"]
+        with open(os.path.join(self.site, "abc", "index"), "a") as handle:
+            handle.write("%s 2222 5\n" % want)
+        out = self.u.check()
+        self.assertEqual((out["result"], out["apps"]["klipper"]["helper"]), ("READY", "available"), out)
+        self.assertEqual(self.git(self.kl, "rev-parse", "HEAD"), self.kl_cur)
+
+    def test_component_warning(self):
+        comp_tests = ComponentTests("test_ok_result_strips_ok")
+        comp_tests.setUp()
+        try:
+            comp = comp_tests.comp
+            comp._sync_readiness_warning({"result": "NOT_READY", "message": "m"})
+            self.assertEqual(comp_tests.server.warnings, {"nebulaos_update_readiness": "NebulaOS: m"})
+            comp._sync_readiness_warning({"result": "BUSY"})
+            self.assertIn("nebulaos_update_readiness", comp_tests.server.warnings)
+            comp._sync_readiness_warning({"result": "READY"})
+            self.assertEqual(comp_tests.server.warnings, {})
+            out = comp_tests.call("/machine/nebulaos/updates/check_readiness", {"if_changed": True})
+            self.assertEqual(out, {"result": "APPLIED"})
+            self.assertEqual(comp_tests.argv()[:3], ["updates", "check-readiness", "--if-changed"])
+        finally:
+            comp_tests.tearDown()
 
 
 if __name__ == "__main__":

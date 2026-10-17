@@ -51,7 +51,10 @@ degradations:
 Both are caught *before* Klippy is restarted, not after: the supervisor
 recomposes, re-runs the collision guard, and re-checks the `c_helper.so`
 mtime invariant as part of the transaction, while the printer is still
-running the old pair.
+running the old pair. Since G72 (2026-10-17) the first case is usually
+repaired rather than refused: the supervisor installs the `c_helper.so`
+built for the new sources from its cache or the NebulaOS package index, and
+a rollback finds the old pair's library in the cache.
 
 ### Moving the qualified pin
 
