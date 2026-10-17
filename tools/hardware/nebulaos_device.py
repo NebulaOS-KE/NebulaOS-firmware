@@ -1160,7 +1160,10 @@ def datafs_repair_script(lib_sha256):
         "echo '== verify e2fsck -fn'; \"$NDF_E2FSCK\" -fn \"$NDF_DEV\" > \"$T/verify\" 2>&1; V=$?; "
         "tail -n 4 \"$T/verify\"; echo \"verify_rc=$V\"; "
         "if [ \"$V\" = 0 ] && [ $((NDF_RC & 252)) -eq 0 ]; then "
-        "echo DATAFS_REPAIR=REPAIRED_REBOOTING; sync; (sleep 3; reboot) > /dev/null 2>&1 & exit 0; "
+        "echo DATAFS_REPAIR=REPAIRED_REBOOTING; sync; "
+        # Detached from this SSH session (setsid + nohup): a plain background
+        # job died with the session on ke-dev and the printer never rebooted.
+        "setsid nohup sh -c 'sleep 3; reboot' < /dev/null > /dev/null 2>&1 & exit 0; "
         "else echo DATAFS_REPAIR=STILL_INCONSISTENT; exit 6; fi"
     ) % {"lib": DATAFS_REPAIR_LIB, "sha": lib_sha256}
     if len(s) > 8800:
