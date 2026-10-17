@@ -687,9 +687,22 @@ class SshDeviceSession(DeviceSession):
     def datafs_repair(self, lib_text, lib_sha256):
         """-> (rc, output) of the supervised data-partition repair (Run 11).
         Refused on the printer unless the boot left /usr/data READ-ONLY. Uses
-        the control commit's own nebulaos-datafs.sh (sent inline - the staging
-        directory lives on the read-only partition), checked by sha256."""
-        rc, out, err = self._run(datafs_repair_script(lib_text, lib_sha256), timeout=1200)
+        the control commit's own nebulaos-datafs.sh, sent first to /tmp in
+        base64 chunks (the staging directory is on the read-only partition,
+        and dropbear refuses a command over 9000 bytes) and checked there by
+        sha256 before anything runs."""
+        import base64
+        b64 = base64.b64encode(lib_text.encode("utf-8")).decode("ascii")
+        rc, _, err = self._run("rm -f %s && : > %s" % (DATAFS_REPAIR_LIB, DATAFS_REPAIR_LIB), timeout=30)
+        if rc != 0:
+            raise DeviceError("cannot prepare %s: %s" % (DATAFS_REPAIR_LIB, err.strip()[:200]))
+        for i in range(0, len(b64), 6000):
+            chunk = b64[i:i + 6000]
+            rc, _, err = self._run("echo %s >> %s.b64" % (chunk, DATAFS_REPAIR_LIB) if i else
+                                   "echo %s > %s.b64" % (chunk, DATAFS_REPAIR_LIB), timeout=60)
+            if rc != 0:
+                raise DeviceError("sending the repair library failed: %s" % err.strip()[:200])
+        rc, out, err = self._run(datafs_repair_script(lib_sha256), timeout=1200)
         return rc, (out + err)
 
     def boot_progress(self):
@@ -1110,24 +1123,35 @@ def purge_script(paths):
 DATAFS_LIB = "scripts/build/overlay/usr/libexec/nebulaos-datafs.sh"
 
 
-def datafs_repair_script(lib_text, lib_sha256):
-    """The fixed repair script. Nothing from the caller but the library bytes
-    (from the control commit's git objects) and their sha256."""
-    if "NEBULAOS_DATAFS_EOF" in lib_text:
-        raise DeviceError("the datafs library contains the heredoc terminator")
+DATAFS_REPAIR_LIB = "/tmp/nebulaos-datafs-repair.lib.sh"
+
+
+def datafs_repair_script(lib_sha256):
+    """The fixed repair script. Nothing from the caller but the sha256 the
+    library sent to DATAFS_REPAIR_LIB(.b64) must have (from the control
+    commit's git objects)."""
     if not (len(lib_sha256) == 64 and all(c in "0123456789abcdef" for c in lib_sha256)):
         raise DeviceError("bad library sha256")
-    return (
-        "T=/tmp/nebulaos-datafs-repair.$$; rm -rf \"$T\"; mkdir -p \"$T\" || exit 9; cd /tmp; "
-        "cat > \"$T/lib.sh\" <<'NEBULAOS_DATAFS_EOF'\n" + lib_text +
-        ("" if lib_text.endswith("\n") else "\n") + "NEBULAOS_DATAFS_EOF\n"
-        "[ \"$(sha256sum \"$T/lib.sh\" | cut -d' ' -f1)\" = %s ] || { echo DATAFS_REPAIR=REFUSED_LIB_SHA; exit 3; }; "
+    s = (
+        "L=%(lib)s; T=/tmp/nebulaos-datafs-repair.$$; rm -rf \"$T\"; mkdir -p \"$T\" || exit 9; cd /tmp; "
+        "tr -d '\\n' < \"$L.b64\" | base64 -d > \"$L\" 2>/dev/null; rm -f \"$L.b64\"; "
+        "[ \"$(sha256sum \"$L\" | cut -d' ' -f1)\" = %(sha)s ] || { echo DATAFS_REPAIR=REFUSED_LIB_SHA; exit 3; }; "
         "echo '== boot result'; cat /run/nebulaos/data-fs.state 2>&1; "
         "grep -qx 'DATAFS_MOUNT=ro' /run/nebulaos/data-fs.state 2>/dev/null "
         "|| { echo DATAFS_REPAIR=REFUSED_NOT_READONLY; exit 4; }; "
         "awk '$1==\"/dev/mmcblk0p10\" && $4 ~ /^rw/ {f=1} END {exit !f}' /proc/mounts "
         "&& { echo DATAFS_REPAIR=REFUSED_MOUNTED_RW; exit 4; }; "
-        ". \"$T/lib.sh\"; NDF_CHECK_OUT=\"$T/e2fsck.log\"; "
+        ". \"$L\"; NDF_CHECK_OUT=\"$T/e2fsck.log\"; "
+        # Never this session: not dropbear (the SSH server), not this shell or
+        # its parent. If they hold the partition the unmount fails and the
+        # repair is refused - safe, never a half-done repair.
+        "nr_kill() { _s=$1; shift; for _p in \"$@\"; do "
+        "[ \"$_p\" = $$ ] || [ \"$_p\" = $PPID ] && continue; "
+        "[ \"$(cat /proc/$_p/comm 2>/dev/null)\" = dropbear ] && continue; kill $_s $_p 2>/dev/null; done; }; "
+        "NDF_KILL=nr_kill; "
+        # The interrupted boot must not carry on against an unmounted
+        # partition: freeze rcS (the reboot at the end clears it).
+        "for _p in $(pidof rcS); do kill -STOP $_p; echo \"froze rcS $_p\"; done; "
         "echo '== unmount (the image shutdown routine)'; ndf_shutdown; echo \"shutdown=$NDF_SHUTDOWN_RESULT\"; "
         "if grep -q '^/dev/mmcblk0p10 ' /proc/mounts; then "
         "echo DATAFS_REPAIR=REFUSED_STILL_MOUNTED; grep mmcblk0p10 /proc/mounts; exit 5; fi; "
@@ -1138,4 +1162,7 @@ def datafs_repair_script(lib_text, lib_sha256):
         "if [ \"$V\" = 0 ] && [ $((NDF_RC & 252)) -eq 0 ]; then "
         "echo DATAFS_REPAIR=REPAIRED_REBOOTING; sync; (sleep 3; reboot) > /dev/null 2>&1 & exit 0; "
         "else echo DATAFS_REPAIR=STILL_INCONSISTENT; exit 6; fi"
-        % lib_sha256)
+    ) % {"lib": DATAFS_REPAIR_LIB, "sha": lib_sha256}
+    if len(s) > 8800:
+        raise DeviceError("repair script is %d bytes, over dropbear's command limit" % len(s))
+    return s
