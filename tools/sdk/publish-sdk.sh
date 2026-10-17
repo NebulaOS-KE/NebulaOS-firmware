@@ -21,7 +21,7 @@
 #    the PC's own GitHub login (gh).
 #
 # Output, always exit 0:
-#   SDK_PUBLISH=PRESENT|PUBLISHED|REPAIRED|SKIPPED_UNPUBLISHED_SOURCE|FAILED (reason)
+#   SDK_PUBLISH=PRESENT|PUBLISHED|REPAIRED|TOOLS_ADDED|SKIPPED_UNPUBLISHED_SOURCE|FAILED (reason)
 #   SDK_INDEX_READY=YES|NO   (the index already serves this ABI)
 set -u
 RUN=${1:?usage: publish-sdk.sh <build run dir>}
@@ -55,10 +55,16 @@ command -v "$GH" >/dev/null 2>&1 || result FAILED "gh is not installed"
 
 # Which assets release sdk-<id> already has (empty: no release).
 ASSETS=$("$GH" release view "sdk-$ID" --repo "$INDEX_REPO" --json assets -q '.assets[].name' 2>/dev/null)
-HAVE_TAR=no; HAVE_SUM=no
+HAVE_TAR=no; HAVE_SUM=no; HAVE_TOOLS=no
+TOOLS_NAME="nebulaos-chelper-tools-$ID.tar.gz"
 echo "$ASSETS" | grep -qxF "nebulaos-sdk-$ID.tar.xz" && HAVE_TAR=yes
 echo "$ASSETS" | grep -qxF "nebulaos-sdk-$ID.tar.xz.sha256" && HAVE_SUM=yes
-[ "$HAVE_TAR" = yes ] && [ "$HAVE_SUM" = yes ] && result PRESENT "release sdk-$ID is complete"
+echo "$ASSETS" | grep -qxF "$TOOLS_NAME" && HAVE_TOOLS=yes
+[ "$HAVE_TAR" = yes ] && [ "$HAVE_SUM" = yes ] && [ "$HAVE_TOOLS" = yes ] && result PRESENT "release sdk-$ID is complete"
+# The .tar.xz is first-wins: never replaced to add a missing .sha256 (that
+# would swap the SDK every wheel of this ABI was built with).
+[ "$HAVE_TAR" = yes ] && [ "$HAVE_SUM" = no ] && \
+	result FAILED "release sdk-$ID has the SDK but no .sha256 - add it by hand or delete the release to republish"
 
 SOURCE_HEAD=$(sed -n 's/^SOURCE_HEAD=//p' "$ATTEST")
 [ -n "$SOURCE_HEAD" ] || result FAILED "the attestation names no SOURCE_HEAD"
@@ -69,25 +75,41 @@ git -C "$SRC_REPO" merge-base --is-ancestor "$SOURCE_HEAD" "$GIT_REMOTE/main" 2>
 OUT=$(mktemp -d "${TMPDIR:-/tmp}/publish-sdk.XXXXXX") || result FAILED "mktemp failed"
 [ -n "$OUT" ] && [ -d "$OUT" ] || result FAILED "mktemp failed"
 trap 'rm -rf "$OUT"' EXIT
-sh "$EXPORT_SDK" "$RUN" "$OUT" > "$OUT/export.log" 2>&1 || { tail -5 "$OUT/export.log" >&2; result FAILED "export-sdk.sh failed"; }
-SDK="$OUT/nebulaos-sdk-$ID.tar.xz"
-[ -f "$SDK" ] && [ -f "$SDK.sha256" ] || result FAILED "export produced no $SDK"
 
-if [ -n "$ASSETS" ] || "$GH" release view "sdk-$ID" --repo "$INDEX_REPO" >/dev/null 2>&1; then
-	# A partial release (an upload that died): complete it. --clobber keeps
-	# the pair consistent - a .sha256 always describes the uploaded .tar.xz.
-	"$GH" release upload "sdk-$ID" --repo "$INDEX_REPO" --clobber "$SDK" "$SDK.sha256" >/dev/null 2>&1 \
-		|| result FAILED "completing release sdk-$ID failed"
-	STATE=REPAIRED
+# G72: the chelper recipe, source hash and the image library's record as a
+# small asset of its own, so an ABI whose SDK was published before the
+# recipe travelled in the SDK still gets Klipper helpers (ci-all.sh uses it
+# when the SDK has no nebulaos/ directory).
+mkdir -p "$OUT/tools/nebulaos"
+cp "$RUN/scripts/build/lib/build-chelper.sh" "$RUN/scripts/build/overlay/etc/nebulaos-chelper-preflight.sh" \
+	"$OUT/tools/nebulaos/" 2>/dev/null || result FAILED "the run has no chelper recipe (built before G72)"
+cp "$RUN/vendor/buildroot-x2000/output/target/usr/share/nebulaos/chelper" "$OUT/tools/nebulaos/image-chelper" 2>/dev/null \
+	|| result FAILED "the image has no chelper record"
+tar -C "$OUT/tools" -czf "$OUT/$TOOLS_NAME" nebulaos || result FAILED "packing $TOOLS_NAME failed"
+
+if [ "$HAVE_TAR" = yes ]; then
+	"$GH" release upload "sdk-$ID" --repo "$INDEX_REPO" "$OUT/$TOOLS_NAME" >/dev/null 2>&1 \
+		|| result FAILED "adding $TOOLS_NAME to release sdk-$ID failed"
+	STATE=TOOLS_ADDED
 else
-	NOTES=$(printf 'Cross-compilation SDK for Python ABI %s, exported automatically from an attested NebulaOS firmware build (tools/sdk/publish-sdk.sh).\n\n```\n%s\n```\n' \
-		"$ID" "$(tar -xJOf "$SDK" "nebulaos-sdk-$ID/sdk-info" 2>/dev/null)")
-	if ! "$GH" release create "sdk-$ID" --repo "$INDEX_REPO" --title "SDK for Python ABI $ID" --notes "$NOTES" \
-		"$SDK" "$SDK.sha256" >/dev/null 2>&1; then
-		# Created concurrently by another run: that one is as good.
-		"$GH" release view "sdk-$ID" --repo "$INDEX_REPO" >/dev/null 2>&1 || result FAILED "creating release sdk-$ID failed"
+	sh "$EXPORT_SDK" "$RUN" "$OUT" > "$OUT/export.log" 2>&1 || { tail -5 "$OUT/export.log" >&2; result FAILED "export-sdk.sh failed"; }
+	SDK="$OUT/nebulaos-sdk-$ID.tar.xz"
+	[ -f "$SDK" ] && [ -f "$SDK.sha256" ] || result FAILED "export produced no $SDK"
+	if [ -n "$ASSETS" ] || "$GH" release view "sdk-$ID" --repo "$INDEX_REPO" >/dev/null 2>&1; then
+		# A partial release without the SDK (an upload that died): complete it.
+		"$GH" release upload "sdk-$ID" --repo "$INDEX_REPO" --clobber "$SDK" "$SDK.sha256" "$OUT/$TOOLS_NAME" >/dev/null 2>&1 \
+			|| result FAILED "completing release sdk-$ID failed"
+		STATE=REPAIRED
+	else
+		NOTES=$(printf 'Cross-compilation SDK for Python ABI %s, exported automatically from an attested NebulaOS firmware build (tools/sdk/publish-sdk.sh).\n\n```\n%s\n```\n' \
+			"$ID" "$(tar -xJOf "$SDK" "nebulaos-sdk-$ID/sdk-info" 2>/dev/null)")
+		if ! "$GH" release create "sdk-$ID" --repo "$INDEX_REPO" --title "SDK for Python ABI $ID" --notes "$NOTES" \
+			"$SDK" "$SDK.sha256" "$OUT/$TOOLS_NAME" >/dev/null 2>&1; then
+			# Created concurrently by another run: that one is as good.
+			"$GH" release view "sdk-$ID" --repo "$INDEX_REPO" >/dev/null 2>&1 || result FAILED "creating release sdk-$ID failed"
+		fi
+		STATE=PUBLISHED
 	fi
-	STATE=PUBLISHED
 fi
 "$GH" workflow run index.yml --repo "$INDEX_REPO" >/dev/null 2>&1 || result "$STATE" "release sdk-$ID ready; starting the index workflow failed - the daily run will pick it up"
 result "$STATE" "release sdk-$ID ready; index workflow started"

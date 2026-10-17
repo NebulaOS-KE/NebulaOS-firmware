@@ -58,15 +58,16 @@
 # crash part way through boot, or worse, a slow successful on-device
 # compile that masks a real packaging bug.
 #
-# WHY find -newer AND NOT stat
-# ----------------------------
-# BusyBox on this device has no `stat` applet at all (confirmed live
-# elsewhere in this project - see S05nebulaos-activate's own `ls -ldn`
-# workaround). `find -newer` performs precisely the comparison Klipper's own
-# check performs, is present in BusyBox find, and needs no arithmetic on
-# timestamps. The glob below (*.c, *.h, __init__.py) is a strict SUPERSET of
-# SOURCE_FILES+OTHER_FILES+__file__, so this check can only ever be stricter
-# than Klipper's, never laxer.
+# WHY python3 (AND find -newer ONLY AS A FALLBACK)
+# ------------------------------------------------
+# Klipper compares float mtimes (os.path.getmtime), i.e. sub-second. BusyBox
+# `find -newer` and `ls -t` compare WHOLE seconds (verifier, 2026-10-17): a
+# source written a few milliseconds after the library in the same second
+# passed this check and then made Klipper run gcc. So the comparison is done
+# on st_mtime_ns with the system python3 (on the image; the build host has
+# one too), which is at least as strict as Klipper's. Without python3 the
+# old whole-second `find -newer` remains as a fallback. The glob (*.c, *.h,
+# __init__.py) is a SUPERSET of SOURCE_FILES+OTHER_FILES+__file__.
 #
 # POSIX sh only - BusyBox ash. Sourced by S05nebulaos-activate,
 # nebulaos-update-supervisor.sh, and 04-cross-compile-app-stack.sh.
@@ -83,6 +84,29 @@ NEBULAOS_CHELPER_TARGET="klippy/chelper/c_helper.so"
 # manifest and the migration_version hash derived from it. Found by
 # tests/klipper-stack-lifecycle-tests.sh, which compares migrated commits
 # against the values make_seed_archive reported.
+# Nanosecond mtime helpers (see WHY python3 above).
+#   chelper_py newer <chelper dir> <target>   sources newer than target, one per line
+#   chelper_py match <chelper dir> <file>     set file's mtime to the newest source's
+chelper_py() {
+	python3 - "$@" <<'PYEOF'
+import os, sys
+mode, d, target = sys.argv[1:4]
+srcs = [os.path.join(d, n) for n in sorted(os.listdir(d))
+        if (n.endswith((".c", ".h")) or n == "__init__.py") and os.path.isfile(os.path.join(d, n))
+        and not os.path.islink(os.path.join(d, n))]
+if mode == "newer":
+    t = os.stat(target).st_mtime_ns
+    for s in srcs:
+        if os.stat(s).st_mtime_ns > t:
+            print(s)
+else:
+    if not srcs:
+        sys.exit(1)
+    newest = max(os.stat(s).st_mtime_ns for s in srcs)
+    os.utime(target, ns=(newest, newest))
+PYEOF
+}
+
 chelper_log() {
 	echo "nebulaos-chelper-preflight: $1" >&2
 }
@@ -115,9 +139,13 @@ chelper_check_mtime() {
 		return 3
 	fi
 
-	newer=$(find "$srcdir" -maxdepth 1 -type f \
-		\( -name '*.c' -o -name '*.h' -o -name '__init__.py' \) \
-		-newer "$target" 2>/dev/null)
+	if command -v python3 >/dev/null 2>&1; then
+		newer=$(chelper_py newer "$srcdir" "$target")
+	else
+		newer=$(find "$srcdir" -maxdepth 1 -type f \
+			\( -name '*.c' -o -name '*.h' -o -name '__init__.py' \) \
+			-newer "$target" 2>/dev/null)
+	fi
 	if [ -n "$newer" ]; then
 		chelper_err "the following chelper source(s) are NEWER than $NEBULAOS_CHELPER_TARGET, so Klipper's check_build_code() would trigger a gcc rebuild:"
 		printf '%s\n' "$newer" >&2
@@ -231,8 +259,8 @@ EOF
 #
 # Same trust as the wheels: HTTPS + sha256 from the index, not a signature.
 # Nothing in the Klipper tree is written except c_helper.so (git-ignored by
-# upstream's *.so rule). Any mismatch or error leaves the tree unchanged, so
-# the fail-closed verdict above still decides.
+# upstream's *.so rule). A hash or sha256 mismatch, or a missing library,
+# leaves the tree unchanged, so the fail-closed verdict above still decides.
 
 NEBULAOS_CHELPER_CACHE="${NEBULAOS_CHELPER_CACHE:-${NEBULAOS_ROOT:-/usr/data/nebulaos}/cache/chelper}"
 NEBULAOS_CHELPER_IMAGE_RECORD="${NEBULAOS_CHELPER_IMAGE_RECORD:-/usr/share/nebulaos/chelper}"
@@ -335,15 +363,16 @@ chelper_cache_current() {
 }
 
 # Install a library as the tree's c_helper.so: a temporary *.so next to it
-# (git-ignored), mtime copied from the newest source (never "now" - the
-# clock may be before NTP), atomic rename, then the invariant re-checked.
+# (git-ignored), mtime set to the newest source's, to the nanosecond (never
+# "now" - the clock may be before NTP; never `touch -r` of `ls -t`'s pick -
+# whole seconds), atomic rename, then the invariant re-checked. The library
+# is already in place if that re-check fails; the verdict still refuses.
 # $1=klipper checkout $2=library
 chelper_install_file() {
 	_kd="$1"; _src="$2"
-	_newest=$(ls -1t $(chelper_sources "$_kd") 2>/dev/null | head -1)
-	[ -n "$_newest" ] || return 1
 	_tmp="$_kd/$NEBULAOS_CHELPER_SUBDIR/.nebulaos-install.$$.so"
-	cp "$_src" "$_tmp" && touch -r "$_newest" "$_tmp" && mv "$_tmp" "$_kd/$NEBULAOS_CHELPER_TARGET" || {
+	cp "$_src" "$_tmp" && chelper_py match "$_kd/$NEBULAOS_CHELPER_SUBDIR" "$_tmp" \
+		&& mv "$_tmp" "$_kd/$NEBULAOS_CHELPER_TARGET" || {
 		rm -f "$_tmp"; return 1
 	}
 	chelper_check_mtime "$_kd"

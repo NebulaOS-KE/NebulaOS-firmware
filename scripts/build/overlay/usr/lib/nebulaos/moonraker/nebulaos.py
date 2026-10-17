@@ -48,7 +48,7 @@ STORAGE_TIMEOUT = 120.
 CLEANUP_TIMEOUT = 600.
 # G73: pip --dry-run of a pending update against the package index (it
 # downloads the wheels to resolve them) on the MIPS board.
-READINESS_TIMEOUT = 960.
+READINESS_TIMEOUT = 1800.
 READINESS_WARNING = "nebulaos_update_readiness"
 
 

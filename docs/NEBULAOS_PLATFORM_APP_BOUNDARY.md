@@ -164,9 +164,11 @@ implementation:
   library offline. S05 installs from the cache only (no network before
   Wi-Fi/DNS/NTP); the update supervisor also fetches from the index, inside
   the pre-restart gate. A library is installed only when its source hash and
-  sha256 match: temp `*.so` next to it (git-ignored), mtime copied from the
-  newest source (`touch -r`, never "now" - the clock may be pre-NTP), atomic
-  rename, then the verdict. No match or any error leaves the tree unchanged
+  sha256 match: temp `*.so` next to it (git-ignored), mtime set to the
+  newest source's to the nanosecond (python3 `os.utime`; never "now" - the
+  clock may be pre-NTP; BusyBox `ls -t`/`find -newer` only see whole seconds
+  while Klipper compares float mtimes, so the check uses `st_mtime_ns` too),
+  atomic rename, then the verdict. No match or any error leaves the tree unchanged
   and the fail-closed verdict decides. Same trust as the wheels (HTTPS +
   sha256 from the index, not a signature). Moonraker's own Klipper restart
   after `git pull` still meets the stale library first; that error is
@@ -186,7 +188,10 @@ implementation:
   container). Release `sdk-<id>` with both assets is the idempotency key
   (completed when partial); only builds whose `SOURCE_HEAD` is on the firmware
   repository's `origin/main` are published (releases are first-wins per id).
-  It starts the index workflow; it never changes a build's result.
+  It starts the index workflow; it never changes a build's result. A release
+  published before the recipe travelled in the SDK gets the small asset
+  `nebulaos-chelper-tools-<id>.tar.gz` (recipe, source hash, image record)
+  instead; the SDK itself is never replaced.
 
 ## 5. Compatibility metadata (sketch)
 

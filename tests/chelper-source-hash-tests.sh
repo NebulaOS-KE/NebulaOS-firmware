@@ -73,6 +73,25 @@ for SH in $SHELLS; do
 	fi
 	[ -z "$(git -C "$K" status --porcelain)" ] && pass "$SH: the install leaves the Klipper tree clean" || fail "$SH: tree dirty after install"
 
+	# Same second, different nanoseconds (Klipper compares float mtimes;
+	# BusyBox ls -t / find -newer only whole seconds - verifier 2026-10-17).
+	setns() { python3 -c 'import os,sys; os.utime(sys.argv[1], ns=(int(sys.argv[2]),)*2)' "$1" "$2"; }
+	B=1900000000000000000
+	setns "$K/klippy/chelper/__init__.py" "$B"; setns "$K/klippy/chelper/a.c" "$((B + 700000000))"
+	setns "$K/klippy/chelper/b.c" "$B"; setns "$K/klippy/chelper/c.h" "$B"
+	run "$SH" "chelper_install_file '$K' '$WORK/lib.so'" 2>/dev/null
+	if python3 -c 'import os,sys; d=sys.argv[1]; so=os.path.getmtime(d+"/c_helper.so"); print("ok" if not max(os.path.getmtime(d+"/"+n) for n in ("__init__.py","a.c","b.c","c.h")) > so else "stale")' "$K/klippy/chelper" | grep -qx ok; then
+		pass "$SH: an install passes Klipper's own float check when sources differ by nanoseconds in one second"
+	else
+		fail "$SH: Klipper would rebuild after the install (sub-second mtimes)"
+	fi
+	setns "$K/klippy/chelper/c.h" "$((B + 900000000))"
+	if ! run "$SH" "chelper_check_mtime '$K'" 2>/dev/null; then
+		pass "$SH: a source newer by a fraction of a second is reported stale"
+	else
+		fail "$SH: the check missed a sub-second newer source"
+	fi
+
 	# Cache: damaged entries are removed, good ones installed.
 	printf 'id=t\n' > "$WORK/abi"
 	C="$WORK/cache"; rm -rf "$C"

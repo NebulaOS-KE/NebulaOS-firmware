@@ -2745,11 +2745,20 @@ class UpdateReadinessTests(unittest.TestCase):
         self.assertEqual(out["result"], "NOT_READY", out)
         self.assertEqual(out["apps"]["moonraker"]["packages"], "missing")
         self.assertIn("Moonraker update", out["message"])
+        # Not a clear yes: --if-changed checks again (the index may have caught up).
+        os.unlink(self.pymode)
+        self.assertEqual(self.u.check(if_changed=True)["result"], "READY")
 
     def test_if_changed_skips_same_targets(self):
         self.u.check()
         self.assertEqual(self.u.check(if_changed=True)["result"], "UNCHANGED")
         self.assertEqual(len(self.pip_calls()), 1)
+        # A result older than RECHECK_SECONDS is checked again.
+        state = json.load(open(self.u.STATE))
+        state["checked_epoch"] -= self.u.RECHECK_SECONDS + 1
+        self.e.common.atomic_write_json(self.u.STATE, state)
+        self.assertEqual(self.u.check(if_changed=True)["result"], "READY")
+        self.assertEqual(len(self.pip_calls()), 2)
         self.remote["moonraker"] = None
         self.assertEqual(self.u.check(if_changed=True)["result"], "NO_UPDATES")
 

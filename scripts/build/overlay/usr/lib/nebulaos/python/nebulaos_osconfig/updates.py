@@ -16,7 +16,10 @@
 #   - the target commit is Moonraker's own remote_hash; no ref guessing
 #   - no `git fetch` and no other write to the app repositories (Moonraker
 #     owns fetching) - only `git show <remote_hash>:<file>` / ls-tree
-#   - never while update_manager is busy (pip in the same venv) or printing
+#   - never started while update_manager is busy (pip in the same venv) or
+#     printing; an update started DURING a check overlaps it (pip --dry-run
+#     only reads the venv), which is accepted
+#   - read-only git: show, ls-tree, cat-file - never fetch
 #   - pip runs as Moonraker runs it: the app's own venv, `--dry-run`, the
 #     index from /etc/pip.conf, temporary files on /usr/data (not RAM)
 import json
@@ -34,7 +37,12 @@ STATE = os.path.join(common.NEBULAOS_ROOT, "updates", "readiness.json")
 PIP_CONF = os.environ.get("NEBULAOS_PIP_CONF", "/etc/pip.conf")
 CHELPER_LIB = os.environ.get("NEBULAOS_CHELPER_LIB", "/etc/nebulaos-chelper-preflight.sh")
 CHELPER_URL_FILE = os.environ.get("NEBULAOS_CHELPER_URL_FILE", "/usr/share/nebulaos/chelper-index.url")
-PIP_TIMEOUT = 900
+# Per app; with both pending plus the helper lookup the whole check stays
+# under the [nebulaos] component's READINESS_TIMEOUT (1800 s).
+PIP_TIMEOUT = 720
+# --if-changed still re-checks a result that was not a clear yes, or is old:
+# the index catches up daily and a network hiccup must not stick.
+RECHECK_SECONDS = 6 * 3600
 
 # The requirement files Moonraker's update_manager installs (its
 # update_manager/common.py), and the venv each app runs from.
@@ -178,7 +186,9 @@ def check(if_changed=False):
         if remote and current and remote != current:
             targets[name] = remote
     previous, _ = common.read_json(STATE)
-    if if_changed and previous and previous.get("targets") == targets:
+    if (if_changed and previous and previous.get("targets") == targets
+            and previous.get("result") in ("READY", "NO_UPDATES")
+            and time.time() - previous.get("checked_epoch", 0) < RECHECK_SECONDS):
         return {"result": "UNCHANGED", "message": previous.get("message", "")}
     index_url = _index_url()
     apps = {}
@@ -206,6 +216,7 @@ def check(if_changed=False):
     else:
         result = "UNKNOWN"
     out = {"result": result, "targets": targets, "apps": apps, "message": _message(apps),
-           "checked_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+           "checked_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+           "checked_epoch": int(time.time())}
     common.atomic_write_json(STATE, out)
     return out

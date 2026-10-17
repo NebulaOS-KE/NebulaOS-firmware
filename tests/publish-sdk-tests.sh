@@ -36,6 +36,10 @@ mkrun() { # $1=source head
 	mkdir -p "$WORK/run/vendor/buildroot-x2000/output/target/usr/share/nebulaos"
 	printf 'id=abc123\n' > "$WORK/run/vendor/buildroot-x2000/output/target/usr/share/nebulaos/python-abi"
 	printf 'BUILD_VERIFIED=YES\nSOURCE_HEAD=%s\n' "$1" > "$WORK/run/.nebulaos-build-verified"
+	printf 'source_hash=a\nsha256=b\n' > "$WORK/run/vendor/buildroot-x2000/output/target/usr/share/nebulaos/chelper"
+	mkdir -p "$WORK/run/scripts/build/lib" "$WORK/run/scripts/build/overlay/etc"
+	echo recipe > "$WORK/run/scripts/build/lib/build-chelper.sh"
+	echo lib > "$WORK/run/scripts/build/overlay/etc/nebulaos-chelper-preflight.sh"
 	( cd "$WORK/run" && find . -type f | sort | xargs sha256sum ) > "$WORK/run.sum"
 }
 
@@ -51,8 +55,8 @@ case "\$1 \$2" in
 		[ -f "$WORK/gh/assets" ] || exit 1
 		case "\$*" in *--json*) cat "$WORK/gh/assets" ;; esac
 		exit 0 ;;
-	"release create") for a in "\$@"; do case "\$a" in *.tar.xz|*.sha256) basename "\$a" >> "$WORK/gh/assets" ;; esac; done; exit 0 ;;
-	"release upload") for a in "\$@"; do case "\$a" in *.tar.xz|*.sha256) basename "\$a" >> "$WORK/gh/assets" ;; esac; done; exit 0 ;;
+	"release create") for a in "\$@"; do case "\$a" in *.tar.xz|*.sha256|*.tar.gz) basename "\$a" >> "$WORK/gh/assets" ;; esac; done; exit 0 ;;
+	"release upload") for a in "\$@"; do case "\$a" in *.tar.xz|*.sha256|*.tar.gz) basename "\$a" >> "$WORK/gh/assets" ;; esac; done; exit 0 ;;
 	"workflow run") exit 0 ;;
 esac
 exit 1
@@ -74,16 +78,27 @@ publish() {
 unchanged() { ( cd "$WORK/run" && find . -type f | sort | xargs sha256sum ) | cmp -s - "$WORK/run.sum"; }
 
 mkrun "$PUBLISHED"
-printf 'nebulaos-sdk-abc123.tar.xz\nnebulaos-sdk-abc123.tar.xz.sha256\n' > "$WORK/gh/assets"
+printf 'nebulaos-sdk-abc123.tar.xz\nnebulaos-sdk-abc123.tar.xz.sha256\nnebulaos-chelper-tools-abc123.tar.gz\n' > "$WORK/gh/assets"
 publish
 grep -q '^SDK_PUBLISH=PRESENT' "$WORK/out" && ! grep -q 'export\|upload\|create' "$WORK/gh/calls" \
 	&& pass "complete release: PRESENT, nothing exported or uploaded" || { fail "complete release"; cat "$WORK/out" "$WORK/gh/calls"; }
 grep -qx 'SDK_INDEX_READY=NO' "$WORK/out" && pass "index readiness is reported" || fail "no SDK_INDEX_READY line"
 
+printf 'nebulaos-sdk-abc123.tar.xz\nnebulaos-sdk-abc123.tar.xz.sha256\n' > "$WORK/gh/assets"
+publish
+grep -q '^SDK_PUBLISH=TOOLS_ADDED' "$WORK/out" && grep -q 'release upload.*chelper-tools' "$WORK/gh/calls" \
+	&& ! grep -q 'export\|nebulaos-sdk-abc123.tar.xz' "$WORK/gh/calls" \
+	&& pass "SDK published before G72: only the chelper tools are added, the SDK is not touched" || { fail "tools only"; cat "$WORK/out" "$WORK/gh/calls"; }
+
 printf 'nebulaos-sdk-abc123.tar.xz\n' > "$WORK/gh/assets"
 publish
+grep -q '^SDK_PUBLISH=FAILED (release sdk-abc123 has the SDK but no .sha256' "$WORK/out" && ! grep -q 'upload\|export' "$WORK/gh/calls" \
+	&& pass "SDK without .sha256: the published SDK is never replaced" || { fail "sha missing"; cat "$WORK/out" "$WORK/gh/calls"; }
+
+printf 'nebulaos-chelper-tools-abc123.tar.gz\n' > "$WORK/gh/assets"
+publish
 grep -q '^SDK_PUBLISH=REPAIRED' "$WORK/out" && grep -q 'release upload' "$WORK/gh/calls" \
-	&& pass "partial release: completed, not skipped" || { fail "partial release"; cat "$WORK/out" "$WORK/gh/calls"; }
+	&& pass "partial release without the SDK: completed, not skipped" || { fail "partial release"; cat "$WORK/out" "$WORK/gh/calls"; }
 
 rm -f "$WORK/gh/assets"
 publish

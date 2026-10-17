@@ -1266,7 +1266,7 @@ poll_readiness_once() {
 	fi
 	mkdir -p "$NEBULAOS_RUN_DIR" 2>/dev/null
 	(
-		wget -q -O /dev/null --timeout=1000 --post-data='' \
+		wget -q -O /dev/null --timeout=1900 --post-data='' \
 			"$MOONRAKER_URL/machine/nebulaos/updates/check_readiness?if_changed=true" 2>/dev/null
 		rm -f "$_rpid"
 	) >/dev/null 2>&1 &
