@@ -51,6 +51,9 @@ else
 fi
 
 if [ -f "$ARTIFACT_DIR/kernel.config" ] && [ -f "$ARTIFACT_DIR/halley5_v30.dts" ]; then
+    # Compared before/after, not against git: an unrelated uncommitted edit
+    # of the manifest (normal in DEV) is not a side effect of this tool.
+    DEPS_BEFORE=$(sha256sum "$REPO_ROOT/manifests/dependencies.conf" | cut -d' ' -f1)
     OUTPUT=$(sh "$ASSERT_SCRIPT" candidate-post-build 2>&1)
     RC=$?
 
@@ -82,7 +85,7 @@ if [ -f "$ARTIFACT_DIR/kernel.config" ] && [ -f "$ARTIFACT_DIR/halley5_v30.dts" 
     fi
 
     # Never touches the promotion value itself.
-    if git -C "$REPO_ROOT" diff --quiet -- manifests/dependencies.conf 2>/dev/null; then
+    if [ "$(sha256sum "$REPO_ROOT/manifests/dependencies.conf" | cut -d' ' -f1)" = "$DEPS_BEFORE" ]; then
         pass "manifests/dependencies.conf is unmodified by running candidate-post-build (QUALIFIED_BASELINE_TAG promotion stays a separate, deliberate action)"
     else
         fail "manifests/dependencies.conf changed as a side effect of running candidate-post-build - this must never happen automatically"

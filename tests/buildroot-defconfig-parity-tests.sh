@@ -43,6 +43,22 @@ skip() { printf 'SKIP: %s\n' "$1"; printf 'BUILDROOT_DEFCONFIG_PARITY=SKIP\n'; e
 
 [ -f "$DEFCONFIG" ] || skip "defconfig not found at $DEFCONFIG"
 [ -f "$PKGLIST" ]   || skip "package assertion list not found at $PKGLIST"
+# Run 12 (2026-10-18): the working tree's vendor/buildroot-x2000 can lag the
+# pin (a build fetches the pinned tree into its own run directory), and
+# resolving the defconfig against an older Buildroot reported gcc 12.3 /
+# lost host-python3 - a false FAIL. Use a tree at BUILDROOT_PIN: the local
+# one if it is at the pin, else the newest build run's.
+BR_PIN=$(sed -n 's/^BUILDROOT_PIN=//p' "$REPO_ROOT/manifests/dependencies.conf" | head -1)
+if [ -z "${NEBULAOS_BUILDROOT_DIR:-}" ] && [ -n "$BR_PIN" ] && \
+   [ "$(git -C "$BUILDROOT_DIR" rev-parse HEAD 2>/dev/null)" != "$BR_PIN" ]; then
+	_found=
+	for _d in $(ls -dt /var/tmp/nebulaos-build/*/run-*/vendor/buildroot-x2000 2>/dev/null); do
+		if [ "$(git -C "$_d" rev-parse HEAD 2>/dev/null)" = "$BR_PIN" ]; then _found=$_d; break; fi
+	done
+	[ -n "$_found" ] || skip "no Buildroot tree at the pinned $BR_PIN (local $BUILDROOT_DIR is at another commit; run a build or 00-fetch-vendor-sources.sh)"
+	BUILDROOT_DIR=$_found
+	printf 'NOTE: local Buildroot is not at the pin - using %s\n' "$BUILDROOT_DIR"
+fi
 [ -d "$BUILDROOT_DIR" ] || skip "Buildroot tree not present at $BUILDROOT_DIR (run scripts/build/00-fetch-vendor-sources.sh first)"
 [ -f "$BUILDROOT_DIR/Makefile" ] || skip "$BUILDROOT_DIR is not a Buildroot tree"
 
