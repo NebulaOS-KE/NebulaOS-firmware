@@ -1053,6 +1053,7 @@ firmware_head=$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo "unknown"
 cat > "$OVERLAY/opt/nebulaos-seeds/seed-manifest.json" <<EOF
 {
   "schema_version": 2,
+  "nebulaos_version": "${NEBULAOS_VERSION:?NEBULAOS_VERSION missing from manifests/dependencies.conf}",
   "build_date": "$build_date",
   "migration_version": "$migration_version",
   "firmware_head": "$firmware_head",
@@ -1131,6 +1132,7 @@ echo "== factory seeds created: $(ls -la "$OVERLAY/opt/nebulaos-seeds/") =="
 firmware_tag=$(git -C "$REPO_ROOT" describe --tags --match 'nebulaos-*' 2>/dev/null || echo "unknown")
 cat > "$OVERLAY/opt/nebulaos-version.json" <<EOF
 {
+  "version": "${NEBULAOS_VERSION:?NEBULAOS_VERSION missing from manifests/dependencies.conf}",
   "build_date": "$build_date",
   "firmware_tag": "$firmware_tag",
   "firmware_sha": "$firmware_head",

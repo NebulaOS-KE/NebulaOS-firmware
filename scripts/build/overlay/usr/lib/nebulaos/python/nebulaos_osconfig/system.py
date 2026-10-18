@@ -51,6 +51,7 @@ def build_info():
     def seed(name):
         return (seeds.get(name) or {}).get("seed_commit")
     return {"available": True,
+            "nebulaos_version": manifest.get("nebulaos_version"),
             "firmware_head": manifest.get("firmware_head"),
             "build_date": manifest.get("build_date"),
             "guppyscreen_pin": manifest.get("guppyscreen_pin"),

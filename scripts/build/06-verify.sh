@@ -683,6 +683,19 @@ check /opt/klipper/klippy/extras/nebulaos_version.py
 check /opt/nebulaos-version.json
 check /opt/moonraker/moonraker/server.py
 
+# G81: the image names itself NebulaOS <NEBULAOS_VERSION> (post-build), and
+# the version file carries the same number.
+OS_RELEASE_CONTENT=$(debugfs -R "cat /usr/lib/os-release" ${IMAGES}/rootfs.ext2 2>/dev/null)
+VERSION_JSON_CONTENT=$(debugfs -R "cat /opt/nebulaos-version.json" ${IMAGES}/rootfs.ext2 2>/dev/null)
+if printf '%s\n' "$OS_RELEASE_CONTENT" | grep -qx "NAME=NebulaOS" \
+	&& printf '%s\n' "$OS_RELEASE_CONTENT" | grep -qx "VERSION_ID=$NEBULAOS_VERSION" \
+	&& printf '%s\n' "$VERSION_JSON_CONTENT" | grep -q "\"version\": \"$NEBULAOS_VERSION\""; then
+	echo "OK   NebulaOS $NEBULAOS_VERSION in /etc/os-release and /opt/nebulaos-version.json"
+else
+	echo "FATAL: image is not NebulaOS $NEBULAOS_VERSION - os-release: $(printf '%s' "$OS_RELEASE_CONTENT" | tr '\n' ' ')" >&2
+	exit 1
+fi
+
 # Moonraker sqlite-nolock patch: SECOND-LAYER effect assertion, read out of
 # the ACTUAL shipped rootfs rather than the overlay staging tree. The
 # load-bearing gate is at the point of patching in

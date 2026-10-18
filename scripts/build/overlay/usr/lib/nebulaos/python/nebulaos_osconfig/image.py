@@ -126,7 +126,12 @@ def root_identity(root):
             man = json.load(handle)
         head = str(man.get("firmware_head") or "")
         if re.match(r"^[0-9a-f]{7,40}$", head):
-            return {"build": head[:7], "date": str(man.get("build_date") or "")[:10]}
+            ident = {"build": head[:7], "date": str(man.get("build_date") or "")[:10]}
+            # G81: the release version, on images from 0.9.0 on
+            version = str(man.get("nebulaos_version") or "")
+            if re.match(r"^[0-9]+\.[0-9]+\.[0-9]+$", version):
+                ident["nebulaos_version"] = version
+            return ident
     except (OSError, ValueError, AttributeError):
         pass
     try:

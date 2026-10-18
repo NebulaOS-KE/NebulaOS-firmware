@@ -138,3 +138,30 @@ CHELPER_URL=$(cat "$POST_BUILD_DIR/chelper-index.url")
 [ -n "$CHELPER_URL" ] || { echo "FATAL: post-build: no chelper index URL" >&2; exit 1; }
 printf '%s\n' "$CHELPER_URL" > "$TARGET_DIR/usr/share/nebulaos/chelper-index.url"
 chmod 644 "$TARGET_DIR/usr/share/nebulaos/chelper-index.url"
+
+# G81 (2026-10-18): /etc/os-release names NebulaOS and its version, so
+# Moonraker/Mainsail's system info shows "NebulaOS 0.9.0" instead of
+# "Buildroot 2025.02.18". The version comes from /opt/nebulaos-version.json
+# (written by 04 from NEBULAOS_VERSION in manifests/dependencies.conf), so
+# there is one source. Buildroot wrote usr/lib/os-release in target-finalize,
+# before this script; /etc/os-release is its symlink.
+VERSION_JSON="$TARGET_DIR/opt/nebulaos-version.json"
+NOS_VERSION=$(sed -n 's/^ *"version": *"\([^"]*\)".*/\1/p' "$VERSION_JSON" 2>/dev/null | head -1)
+NOS_SHA=$(sed -n 's/^ *"firmware_sha": *"\([0-9a-f]\{7\}\).*/\1/p' "$VERSION_JSON" 2>/dev/null | head -1)
+printf '%s' "$NOS_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || {
+	echo "FATAL: post-build: no semver \"version\" in $VERSION_JSON" >&2
+	exit 1
+}
+BR_VERSION=$(sed -n 's/^VERSION_ID=//p' "$TARGET_DIR/usr/lib/os-release" 2>/dev/null | head -1)
+{
+	echo "NAME=NebulaOS"
+	echo "VERSION=\"$NOS_VERSION${NOS_SHA:+ ($NOS_SHA)}\""
+	echo "ID=nebulaos"
+	echo "ID_LIKE=buildroot"
+	echo "VERSION_ID=$NOS_VERSION"
+	echo "PRETTY_NAME=\"NebulaOS $NOS_VERSION\""
+	[ -n "$BR_VERSION" ] && echo "BUILDROOT_VERSION=$BR_VERSION"
+} > "$TARGET_DIR/usr/lib/os-release"
+chmod 644 "$TARGET_DIR/usr/lib/os-release"
+ln -sf ../usr/lib/os-release "$TARGET_DIR/etc/os-release"
+echo "== post-build: /etc/os-release -> NebulaOS $NOS_VERSION =="

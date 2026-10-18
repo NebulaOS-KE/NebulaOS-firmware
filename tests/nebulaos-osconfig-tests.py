@@ -2065,10 +2065,12 @@ class ImageTests(unittest.TestCase):
         self.i.ROOT_DIR = os.path.join(self.e.tmp, "root")
         os.makedirs(os.path.join(self.i.ROOT_DIR, "opt", "nebulaos-seeds"))
         open(os.path.join(self.i.ROOT_DIR, "opt", "nebulaos-seeds", "seed-manifest.json"), "w").write(
-            json.dumps({"firmware_head": "14a9280" + "0" * 33, "build_date": "2026-10-15T08:00:00Z"}))
+            json.dumps({"firmware_head": "14a9280" + "0" * 33, "build_date": "2026-10-15T08:00:00Z",
+                        "nebulaos_version": "0.9.0"}))
         self.rootfs("mmcblk0p7", {"etc/ota_info": "board=F005\nota_version=1.1.0.12\n"})
         s = self.i.slots_info()
         self.assertEqual((s["B"]["build"], s["B"]["date"]), ("14a9280", "2026-10-15"))
+        self.assertEqual(s["B"]["nebulaos_version"], "0.9.0")
         self.assertNotIn("version", s["A"])                       # status never mounts
         self.assertFalse(os.path.exists(log))
         s = self.i.list_files()["slots"]
@@ -2345,7 +2347,7 @@ class CliContractTests(unittest.TestCase):
         self.assertEqual((rc, out["error"]), (2, "INTERNAL"))
 
     def test_system_info(self):
-        json.dump({"firmware_head": "f" * 40, "build_date": "x",
+        json.dump({"firmware_head": "f" * 40, "build_date": "x", "nebulaos_version": "0.9.0",
                    "seeds": {"klipper": {"seed_commit": "k"}}},
                   open(os.environ["NEBULAOS_SEED_MANIFEST"], "w"))
         open(os.environ["NEBULAOS_DATA_FS_STATE"], "w").write(
@@ -2353,6 +2355,7 @@ class CliContractTests(unittest.TestCase):
         rc, out = self.run_cli("system", "info")
         self.assertEqual(rc, 0)
         self.assertEqual(out["build"]["klipper"], "k")
+        self.assertEqual(out["build"]["nebulaos_version"], "0.9.0")
         self.assertEqual(out["storage"]["boot_check"]["result"], "CLEAN")
         self.assertEqual(out["storage"]["boot_check"]["state_before"], "clean")
         self.assertIn("free_bytes", out["storage"])
