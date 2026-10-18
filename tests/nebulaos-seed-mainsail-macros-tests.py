@@ -672,8 +672,8 @@ def test_rc3_calibration_migrated_to_final():
         check("rc3 cal migrated: rc==0", rc == 0)
         check("rc3 cal migrated: group now matches final",
               moon.store[group_key("nebulaos-calibration")] == final_cal)
-        check("rc3 cal migrated: final has 8 macros (including INPUT_SHAPER)",
-              len(final_cal["macros"]) == 8)
+        check("rc3 cal migrated: final has 9 macros (including INPUT_SHAPER, LOAD_CELL)",
+              len(final_cal["macros"]) == 9)
         with open(marker_path) as f:
             marker = json.load(f)
         check("rc3 cal migrated: marker records migrated",
@@ -854,12 +854,12 @@ def test_rc3_groups_has_six_groups():
           set(seed.RC3_GROUPS.keys()) == expected_ids)
 
 
-# --- Test 34: RC3 calibration has 7 macros, final has 8 ---
+# --- Test 34: RC3 calibration has 7 macros, final has 9 ---
 def test_rc3_vs_final_calibration_macro_counts():
     rc3_cal = seed.RC3_GROUPS["nebulaos-calibration"]
     final_cal = seed.DEFAULT_GROUPS["nebulaos-calibration"]
     check("RC3 calibration has 7 macros", len(rc3_cal["macros"]) == 7)
-    check("final calibration has 8 macros", len(final_cal["macros"]) == 8)
+    check("final calibration has 9 macros", len(final_cal["macros"]) == 9)
     rc3_names = {m["name"] for m in rc3_cal["macros"]}
     final_names = {m["name"] for m in final_cal["macros"]}
     check("INPUT_SHAPER_CALIBRATE added in final",
@@ -1196,6 +1196,34 @@ def test_snapshot_transport_makes_no_404s():
           "NamespaceSnapshot(real_http_get_status" in open(MODULE_PATH).read())
 
 
+
+# --- G83a: the load cell button reaches installs with the previous default ---
+def test_g83a_previous_calibration_group_gets_load_cell_button():
+    def body(marker_path):
+        prev = seed.PRE_G83A_GROUPS["nebulaos-calibration"]
+        final_cal = seed.DEFAULT_GROUPS["nebulaos-calibration"]
+        moon = FakeMoonrakerDb(existing={group_key("nebulaos-calibration"): prev})
+        rc, logs = run_seed(marker_path, moon, groups=seed.DEFAULT_GROUPS)
+        check("g83a: rc==0", rc == 0)
+        check("g83a: previous default upgraded to the new default",
+              moon.store[group_key("nebulaos-calibration")] == final_cal)
+        check("g83a: new default has the load cell button",
+              any(m["name"] == "NEBULAOS_LOAD_CELL_CALIBRATE"
+                  for m in final_cal["macros"]))
+    with_marker_dir(body)
+
+
+def test_g83a_user_modified_calibration_group_untouched():
+    def body(marker_path):
+        custom = json.loads(json.dumps(seed.PRE_G83A_GROUPS["nebulaos-calibration"]))
+        custom["name"] = "My calibration"
+        moon = FakeMoonrakerDb(existing={group_key("nebulaos-calibration"): custom})
+        rc, logs = run_seed(marker_path, moon, groups=seed.DEFAULT_GROUPS)
+        check("g83a user-modified: rc==0", rc == 0)
+        check("g83a user-modified: left untouched",
+              moon.store[group_key("nebulaos-calibration")] == custom)
+    with_marker_dir(body)
+
 def main():
     test_moonraker_unavailable()
     test_fresh_install_creates_both_groups()
@@ -1231,6 +1259,8 @@ def main():
     test_schema_version_in_marker()
     test_rc3_groups_has_six_groups()
     test_rc3_vs_final_calibration_macro_counts()
+    test_g83a_previous_calibration_group_gets_load_cell_button()
+    test_g83a_user_modified_calibration_group_untouched()
     test_rc3_vs_final_extruder_macro_counts()
 
     test_reset_six_group_custom_state_produces_exact_five()

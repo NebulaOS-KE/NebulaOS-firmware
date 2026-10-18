@@ -141,6 +141,7 @@ DEFAULT_GROUPS = {
         _macro(5, "PID_HOTEND"),
         _macro(6, "NEBULAOS_NOZZLE_CLEAN"),
         _macro(7, "NEBULAOS_INPUT_SHAPER_CALIBRATE"),
+        _macro(8, "NEBULAOS_LOAD_CELL_CALIBRATE"),
     ], show_in_printing=False, show_in_pause=False),
     "nebulaos-extruder": _group("Extruder", [
         _macro(0, "NEBULAOS_ESTEPS_CALIBRATE"),
@@ -177,6 +178,23 @@ LEGACY_GROUP_ID_MAP = {
 }
 
 SCHEMA_VERSION = 2
+
+# G83a (Run 13, 2026-10-18): the Calibration group before the load cell
+# button was added. An install whose group still matches this exactly gets
+# the new default (same exact-match rule as the RC3 migration below: a
+# group the user changed is never touched).
+PRE_G83A_GROUPS = {
+    "nebulaos-calibration": _group("Calibration", [
+        _macro(0, "NEBULAOS_AUTO_CALIBRATE"),
+        _macro(1, "NEBULAOS_Z_OFFSET_CALIBRATE"),
+        _macro(2, "AXIS_TWIST_X"),
+        _macro(3, "AXIS_TWIST_Y"),
+        _macro(4, "PID_BED"),
+        _macro(5, "PID_HOTEND"),
+        _macro(6, "NEBULAOS_NOZZLE_CLEAN"),
+        _macro(7, "NEBULAOS_INPUT_SHAPER_CALIBRATE"),
+    ], show_in_printing=False, show_in_pause=False),
+}
 
 # Frozen RC3 historical fixtures (commit e4e349a, 2026-09-07). These are
 # the exact group definitions that shipped in RC3 — used by the migration
@@ -816,6 +834,12 @@ def run(
     migration_results = migrate_legacy_group_ids(get_status, post, delete, log, legacy_map)
 
     rc3_results = migrate_rc3_to_final(get_status, post, delete, log, rc3_groups, groups)
+    if groups is DEFAULT_GROUPS:
+        # Later defaults (G83a): same exact-match upgrade, newest fixture last.
+        for group_id, result in migrate_rc3_to_final(
+                get_status, post, delete, log, PRE_G83A_GROUPS, groups).items():
+            if result in ("migrated", "failed", "already_final"):
+                rc3_results[group_id] = result
 
     created = []
     already_present = []
