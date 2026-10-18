@@ -2,6 +2,9 @@
 
 # Claude-specific notes
 
+**"continue" from Tim** means: read `CONTINUE.md` in the workspace root first (state, history,
+gap list and the next run's scope, written by the previous session), then resume from it.
+
 **Default mode is DEV.** Do not treat ordinary development as release work, and do not carry
 "we are in release mode" over from a previous session. Only the human's explicit words start
 RELEASE.
