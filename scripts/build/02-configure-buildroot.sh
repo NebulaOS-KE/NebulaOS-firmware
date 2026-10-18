@@ -155,6 +155,9 @@ cp "$SCRIPT_DIR/lib/python-abi.sh" "$BR2_EXT_BOARD/python-abi.sh"
 printf '%s\n' "$NEBULAOS_PACKAGE_INDEX_URL" > "$BR2_EXT_BOARD/package-index.url"
 [ -n "${NEBULAOS_CHELPER_INDEX_URL:-}" ] || { echo "FATAL: NEBULAOS_CHELPER_INDEX_URL missing from $DEPS_MANIFEST" >&2; exit 1; }
 printf '%s\n' "$NEBULAOS_CHELPER_INDEX_URL" > "$BR2_EXT_BOARD/chelper-index.url"
+# G81: the NebulaOS version post-build writes into /etc/os-release.
+printf '%s' "${NEBULAOS_VERSION:-}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo "FATAL: NEBULAOS_VERSION missing or not semver in $DEPS_MANIFEST" >&2; exit 1; }
+printf '%s\n' "$NEBULAOS_VERSION" > "$BR2_EXT_BOARD/nebulaos-version"
 cp "$ARTIFACTS/halley5-nebulaos-busybox-fragment.config" "$BR2_EXT_BOARD/halley5-nebulaos-busybox-fragment.config"
 # The kernel configuration is owned by NebulaOS-kernel
 # (arch/mips/configs/nebulaos_halley5_v30_defconfig, selected through

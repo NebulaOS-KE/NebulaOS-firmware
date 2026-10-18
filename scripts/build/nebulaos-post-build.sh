@@ -141,15 +141,20 @@ chmod 644 "$TARGET_DIR/usr/share/nebulaos/chelper-index.url"
 
 # G81 (2026-10-18): /etc/os-release names NebulaOS and its version, so
 # Moonraker/Mainsail's system info shows "NebulaOS 0.9.0" instead of
-# "Buildroot 2025.02.18". The version comes from /opt/nebulaos-version.json
-# (written by 04 from NEBULAOS_VERSION in manifests/dependencies.conf), so
-# there is one source. Buildroot wrote usr/lib/os-release in target-finalize,
-# before this script; /etc/os-release is its symlink.
+# "Buildroot 2025.02.18". The version is NEBULAOS_VERSION from
+# manifests/dependencies.conf, which 02-configure-buildroot.sh writes next to
+# this script (like package-index.url) - the same value 04 writes into
+# /opt/nebulaos-version.json. Not read from that file: the first Buildroot
+# pass runs this script before 04 has written the overlay (measured, build
+# ea3ad0f). The commit is added when the file is there; the final pass always
+# has it, and 06-verify checks the finished image. Buildroot wrote
+# usr/lib/os-release in target-finalize, before this script; /etc/os-release
+# is its symlink.
+NOS_VERSION=$(cat "$POST_BUILD_DIR/nebulaos-version" 2>/dev/null || true)
 VERSION_JSON="$TARGET_DIR/opt/nebulaos-version.json"
-NOS_VERSION=$(sed -n 's/^ *"version": *"\([^"]*\)".*/\1/p' "$VERSION_JSON" 2>/dev/null | head -1)
 NOS_SHA=$(sed -n 's/^ *"firmware_sha": *"\([0-9a-f]\{7\}\).*/\1/p' "$VERSION_JSON" 2>/dev/null | head -1)
 printf '%s' "$NOS_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || {
-	echo "FATAL: post-build: no semver \"version\" in $VERSION_JSON" >&2
+	echo "FATAL: post-build: no semver version in $POST_BUILD_DIR/nebulaos-version" >&2
 	exit 1
 }
 BR_VERSION=$(sed -n 's/^VERSION_ID=//p' "$TARGET_DIR/usr/lib/os-release" 2>/dev/null | head -1)
