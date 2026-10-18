@@ -357,21 +357,41 @@ if [ -n "$PLR_CANDIDATE" ] && [ -n "$JOURNAL_CANDIDATE" ]; then
         fail "nebulaos_plr_journal.py's page layout constants do not match the expected stock-compatible layout"
     fi
 
-    # A blunt grep for the substring "M24" would also match this file's own
-    # comments explaining why M24 is never emitted - check specifically for
-    # an actual emitted gcode line instead (the real functional guarantee
-    # is test_nebulaos_power_loss_recovery.py's own
-    # test_never_emits_m24_or_motion, which inspects build_resume_gcode_
-    # lines()'s real return value; this is a lightweight source-level
-    # backstop, not a replacement for that test).
-    if grep -qE '(lines\.append|run_script_from_command)\("M24' "$PLR_CANDIDATE"; then
-        fail "nebulaos_power_loss_recovery.py emits an M24 gcode line - this mission's resume path must never issue it automatically"
+    # M24 (decided by Tim, Run 12, 2026-10-18): the opt-in physical resume
+    # may end with M24; nothing else may. Checked at source level: the only
+    # emitted M24 is inside build_physical_resume_lines(), physical_resume
+    # defaults to False, and the resume command refuses physical resume
+    # unless it is enabled. (The functional checks live in the extension's
+    # own tests.)
+    m24_lines=$(grep -nE '(lines\.append|run_script_from_command)\("M24' "$PLR_CANDIDATE" | cut -d: -f1)
+    phys_start=$(grep -n '^def build_physical_resume_lines' "$PLR_CANDIDATE" | cut -d: -f1)
+    phys_end=$(awk -v s="$phys_start" 'NR>s && /^(def|class) /{print NR; exit}' "$PLR_CANDIDATE")
+    m24_ok=yes
+    [ -n "$m24_lines" ] && [ -n "$phys_start" ] && [ -n "$phys_end" ] || m24_ok=no
+    for n in $m24_lines; do
+        [ "$n" -gt "$phys_start" ] && [ "$n" -lt "$phys_end" ] || m24_ok=no
+    done
+    if [ "$m24_ok" = yes ]; then
+        pass "nebulaos_power_loss_recovery.py emits M24 only from the opt-in physical resume (build_physical_resume_lines)"
     else
-        pass "nebulaos_power_loss_recovery.py never emits an M24 gcode line (no automatic motion/print resume)"
+        fail "nebulaos_power_loss_recovery.py emits M24 outside build_physical_resume_lines (lines: ${m24_lines:-none})"
+    fi
+    if grep -q "config.getboolean('physical_resume', False)" "$PLR_CANDIDATE" \
+       && grep -q 'if physical and not self.physical_resume' "$PLR_CANDIDATE"; then
+        pass "physical resume (the only M24 path) is off by default and refused unless enabled"
+    else
+        fail "physical resume is not off by default or not gated by physical_resume"
     fi
 else
-    echo "SKIP: NebulaOS-klipper-extensions not found alongside this checkout - cannot verify the PLR extension directly (checked in that repo's own tree)"
+    echo "SKIP: NebulaOS-klipper-extensions not found alongside this checkout - cannot verify bl24c16f.py directly (checked in that repo's own tree, see VENDORED.md)"
 fi
+
+# =========================================================================
+# 8. nebulaos_power_loss_recovery.py / nebulaos_plr_journal.py vendored
+#    correctly (Phase 1.9B), same sibling-checkout resolution as bl24c16f.py
+#    above
+# =========================================================================
+
 
 # =========================================================================
 # Summary
