@@ -322,6 +322,23 @@ CAPTURE_PROFILES = {
                        "ls /usr/data/nebulaos/envs/moonraker/lib/python3*/site-packages 2>/dev/null | head -60; "
                        "cat /usr/data/nebulaos/envs/moonraker/.nebulaos-abi 2>/dev/null",
                        False, None, 60),
+    # G70 (Run 13): the camera (USB 1-1.1) resets once ~49 s after some
+    # boots. Every boot's camera/USB/idle-controller lines from the kept
+    # system logs, each boot marked, to see how often and what precedes it.
+    "camera-usb-history": ("L=/opt/printer_data/logs; for f in $L/system.log.1 $L/system.log.0 $L/system.log; do "
+                           "[ -f \"$f\" ] || continue; echo \"== $f\"; "
+                           "grep -E 'syslogd started|usb 1-1|uvcvideo|UVC|ustreamer|camera-idle|webcam|dwc2|-145|-71|-110' \"$f\" "
+                           "| grep -v dropbear | cut -c1-200 | tail -n 400; done; "
+                           "echo '== now'; dmesg | grep -E 'usb 1-1|uvc|dwc2' | tail -n 40; "
+                           "cat /var/run/nebulaos-camera-idle-state 2>/dev/null",
+                           False, None, 90),
+    # G83b (Run 13): ke-dev's real load-cell contact traces (calibrated
+    # sensor) for the offline raw-count replay - the probe logs every
+    # contact's raw samples and fit window to klippy.log.
+    "loadcell-traces": ("L=/opt/printer_data/logs; for f in $(ls -tr $L/klippy.log* 2>/dev/null); do "
+                        "grep -hE 'raw collector samples|ascent fit window data|fit: n_below|counts_per_gram' \"$f\"; "
+                        "done | tail -n 600",
+                        False, None, 120),
     # RTOS logo (G7): what is on rtos/rtos2 before anything writes rtos2.
     "rtos-hashes": (_rtos_hashes(), False, None, 120),
     # --- TOOL-01 base list ---------------------------------------------------
