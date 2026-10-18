@@ -605,6 +605,27 @@ else
     fail "state file was not written for the metachar test case"
 fi
 
+echo "--- G76: MCU_UNREACHABLE leaves a screen notice, PASS removes it ---"
+mkdir -p "$WORK/g76/nebulaos/system"
+G76_NOTICE="$WORK/g76/nebulaos/system/notices/mcu-unreachable.txt"
+MCU_GUARD_STATE="$WORK/g76.state" MCU_IDENTITY_CHECK="$mock_metachar" MCU_UNREACHABLE_NOTICE="$G76_NOTICE" \
+    sh "$GUARD_SCRIPT" start > /dev/null 2>&1
+if grep -q 'Switch the printer off, wait 10 seconds' "$G76_NOTICE" 2>/dev/null; then
+    pass "G76: unreachable MCU writes the power-cycle notice"
+else
+    fail "G76: no power-cycle notice for an unreachable MCU"
+fi
+mock_pass_g76="$WORK/mock_pass_g76.py"
+printf '#!/usr/bin/env python3\nprint("MCU_GUARD_RESULT=PASS")\nprint("MCU_IDENTITY=v0.13.0")\nprint("MCU_LIFECYCLE_STATE=SUPPORTED_HW_NATIVE_APP")\nprint("MCU_LIFECYCLE_DETAIL=ok")\n' > "$mock_pass_g76"
+chmod +x "$mock_pass_g76"
+MCU_GUARD_STATE="$WORK/g76.state" MCU_IDENTITY_CHECK="$mock_pass_g76" MCU_UNREACHABLE_NOTICE="$G76_NOTICE" \
+    sh "$GUARD_SCRIPT" start > /dev/null 2>&1
+if grep -q '^MCU_GUARD_RESULT=PASS' "$WORK/g76.state" && [ ! -e "$G76_NOTICE" ]; then
+    pass "G76: a PASS removes the notice"
+else
+    fail "G76: notice not removed after PASS ($(cat "$WORK/g76.state" 2>/dev/null | head -1))"
+fi
+
 # Test with helper that produces empty output - should exit 0 with WARN.
 mock_empty="$WORK/mock_empty.py"
 cat > "$mock_empty" <<'MOCK_EOF'

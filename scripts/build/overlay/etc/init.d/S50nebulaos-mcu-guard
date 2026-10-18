@@ -91,6 +91,28 @@ write_state() {
 	MCU_HW_ID_STATUS=${_hw_id_status:-not_checked}
 	MCU_RESTORE_RESULT=${_restore_result:-not_attempted}
 	EOF
+    mcu_unreachable_notice "$_result"
+}
+
+# G76 (Run 12, 2026-10-18): on ke-dev, after an install that switched from
+# the Creality slot with a software reboot, neither the MCU firmware nor its
+# bootloader answered until the printer was switched off and on. There is no
+# software path to reset the MCU (bootloader entry goes over the same serial
+# link; no SoC GPIO is wired to its reset in the device tree), so the screen
+# tells the user what fixes it - one notice (the G65 notice mechanism),
+# removed again as soon as the MCU answers.
+MCU_UNREACHABLE_NOTICE="${MCU_UNREACHABLE_NOTICE:-/usr/data/nebulaos/system/notices/mcu-unreachable.txt}"
+mcu_unreachable_notice() {
+    _nd=$(dirname "$MCU_UNREACHABLE_NOTICE")
+    [ -d "$(dirname "$_nd")" ] || return 0
+    if [ "${_lifecycle_state:-}" = MCU_UNREACHABLE ]; then
+        mkdir -p "$_nd" 2>/dev/null
+        printf '%s\n' "The printer's mainboard is not answering. Switch the printer off, wait 10 seconds and switch it on again." \
+            > "$MCU_UNREACHABLE_NOTICE" 2>/dev/null
+    elif [ "$1" = PASS ]; then
+        rm -f "$MCU_UNREACHABLE_NOTICE" 2>/dev/null
+    fi
+    return 0
 }
 
 do_check() {
