@@ -17,7 +17,19 @@
 #           exit has 8|16|32|128   -> mount READ-ONLY                  CHECK_FAILED
 #       still running at the bound -> stopped, mount READ-ONLY         TIMEOUT
 #   e2fsck/dumpe2fs missing        -> mount rw as before               TOOL_MISSING
-# Never mkfs, never a journal change.
+# Never mkfs.
+#
+# G75 (Run 12, 2026-10-18): a journal on /usr/data. Pulling the power is how
+# this printer is switched off; without a journal that can leave the
+# filesystem's bookkeeping half-written (Run 11 on ke-dev: an unattached
+# inode the preen pass could not fix). With a journal the kernel replays it
+# at mount and the filesystem stays consistent - no check, no repair. So
+# before a read-write mount, a filesystem without one gets it, once
+# (`tune2fs -O has_journal`, NDF_JOURNAL_MB). Only on a filesystem that just
+# checked or repaired clean (or was clean); a failure is logged and the boot
+# goes on without a journal. The Creality slot mounts the same partition:
+# has_journal is a "compatible" ext4 feature and every ext4 kernel has
+# journal support (EXT4_FS selects JBD2), so its 4.4 kernel mounts it.
 #
 # Run 11 (2026-10-17, ke-dev): a power cut left one unattached inode that the
 # preen pass may not fix ("RUN fsck MANUALLY"). The old policy then mounted
@@ -51,6 +63,8 @@ NDF_SWAPFILE="${NDF_SWAPFILE:-$NDF_MNT/nebulaos/system/swapfile}"
 NDF_PATH="${NDF_PATH:-/sbin:/usr/sbin:/bin:/usr/bin}"
 NDF_E2FSCK="${NDF_E2FSCK:-$(PATH=$NDF_PATH command -v e2fsck 2>/dev/null)}"
 NDF_DUMPE2FS="${NDF_DUMPE2FS:-$(PATH=$NDF_PATH command -v dumpe2fs 2>/dev/null)}"
+NDF_TUNE2FS="${NDF_TUNE2FS:-$(PATH=$NDF_PATH command -v tune2fs 2>/dev/null)}"
+NDF_JOURNAL_MB="${NDF_JOURNAL_MB:-16}"
 NDF_MOUNT="${NDF_MOUNT:-mount}"
 NDF_UMOUNT="${NDF_UMOUNT:-umount}"
 NDF_FUSER="${NDF_FUSER:-fuser}"
@@ -72,6 +86,30 @@ ndf_log() {
 }
 
 ndf_now() { cut -d' ' -f1 /proc/uptime 2>/dev/null; }
+
+# G75: has_journal in the superblock features? (0 = yes)
+ndf_has_journal() {
+	"$NDF_DUMPE2FS" -h "$NDF_DEV" 2>/dev/null | grep -q '^Filesystem features:.*has_journal'
+}
+
+# G75: add the journal once, before a read-write mount. Sets NDF_JOURNAL
+# (present | added | failed | skipped).
+ndf_ensure_journal() {
+	NDF_JOURNAL=skipped
+	[ -n "$NDF_DUMPE2FS" ] && [ -n "$NDF_TUNE2FS" ] && [ -x "$NDF_TUNE2FS" ] || return 0
+	if ndf_has_journal; then
+		NDF_JOURNAL=present
+		return 0
+	fi
+	if "$NDF_TUNE2FS" -O has_journal -J size="$NDF_JOURNAL_MB" "$NDF_DEV" > /dev/null 2>&1 < /dev/null \
+		&& ndf_has_journal; then
+		NDF_JOURNAL=added
+		ndf_log "added a ${NDF_JOURNAL_MB} MB journal to $NDF_DEV - a power cut no longer needs a repair"
+	else
+		NDF_JOURNAL=failed
+		ndf_log "could not add a journal to $NDF_DEV - continuing without one"
+	fi
+}
 
 # "clean", "not clean", "clean with errors", "not clean with errors", or "".
 ndf_fs_state() {
@@ -144,6 +182,8 @@ ndf_precheck() {
 			fi
 		fi
 	fi
+	NDF_JOURNAL=
+	[ "$NDF_MOUNT_OPTS" = rw ] && [ "$NDF_RESULT" != TOOL_MISSING ] && ndf_ensure_journal
 	NDF_T1=$(ndf_now)
 	mkdir -p "$(dirname "$NDF_STATE")" 2>/dev/null
 	{
@@ -152,6 +192,7 @@ ndf_precheck() {
 		echo "DATAFS_STATE_BEFORE='${NDF_FS_STATE_BEFORE}'"
 		echo "DATAFS_E2FSCK_RC=${NDF_RC}"
 		[ -n "$NDF_PREEN_RC" ] && echo "DATAFS_PREEN_RC=$NDF_PREEN_RC"
+		[ -n "$NDF_JOURNAL" ] && echo "DATAFS_JOURNAL=$NDF_JOURNAL"
 		echo "DATAFS_CHECK_SECONDS=$(awk -v a="$NDF_T0" -v b="$NDF_T1" 'BEGIN{printf "%.2f", b-a}')"
 	} > "$NDF_STATE" 2>/dev/null
 	if [ "$NDF_MOUNT_OPTS" = ro ]; then

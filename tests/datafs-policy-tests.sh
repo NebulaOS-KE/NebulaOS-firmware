@@ -37,7 +37,7 @@ pass() { PASS=$((PASS + 1)); }
 grep -q 'ndf_precheck' "$S01" && grep -q 'ndf_mount' "$S01" && grep -q 'ndf_record' "$S01" && pass || fail "S01 start does not use the boot policy"
 sed -n '/^case "\$1" in/,/^esac/p' "$S01" | grep -q 'ndf_shutdown' && pass || fail "S01 stop does not run the clean shutdown"
 grep -q 'mount -t ext4 /dev/mmcblk0p10 /usr/data' "$S01" && pass || fail "S01 lost its library-less fallback mount"
-grep -v '^[[:space:]]*#' "$LIB" | grep -qE 'mkfs|tune2fs|has_journal' && fail "policy uses mkfs/tune2fs/journal" || pass
+grep -v '^[[:space:]]*#' "$LIB" | grep -qE 'mkfs|has_journal,|\^has_journal' && fail "policy uses mkfs or removes a journal" || pass
 [ "$(grep -v '^[[:space:]]*#' "$LIB" | grep -c -- 'E2FSCK" -fy')" -eq 1 ] && pass || fail "the full repair -fy must appear exactly once (ndf_run_check repair)"
 grep -q '< /dev/null$' "$ROOT/scripts/build/overlay/etc/init.d/rcS" && grep -q '"\$i" start < /dev/null' "$ROOT/scripts/build/overlay/etc/init.d/rcS" && pass || fail "rcS does not give boot scripts stdin from /dev/null"
 grep -qx 'BR2_PACKAGE_E2FSPROGS=y' "$ROOT/br2-external/configs/nebulaos_x2000_defconfig" && pass || fail "defconfig does not ship e2fsprogs"
@@ -123,12 +123,31 @@ if command -v mkfs.ext4 >/dev/null && command -v debugfs >/dev/null && command -
 
 	# clean: no check at all
 	I=$(img clean); : > "$W/calls"
-	r=$(policy "$I" NDF_E2FSCK="$B/rec-e2fsck" NDF_DUMPE2FS="$D2")
+	r=$(policy "$I" NDF_E2FSCK="$B/rec-e2fsck" NDF_DUMPE2FS="$D2" NDF_TUNE2FS=/nonexistent)
 	[ "$r" = "CLEAN rw none" ] && pass || fail "clean image: got '$r'"
 	grep -q e2fsck "$W/calls" && fail "clean image was fsck'd" || pass
 	grep -q '^DATAFS_RESULT=CLEAN$' "$W/state" && grep -q '^DATAFS_MOUNT=rw$' "$W/state" && pass || fail "state file for clean: $(cat "$W/state")"
 	grep -q "mount -t ext4 -o rw $I" "$W/calls" 2>/dev/null || { : > "$W/calls"; (NDF_DEV=$I NDF_MNT="$W/mnt" NDF_MOUNT="$B/fmount" CALLS="$W/calls" NDF_MOUNT_OPTS=rw; export CALLS; . "$LIB"; ndf_mount); }
 	grep -q "mount -t ext4 -o rw $I $W/mnt" "$W/calls" && pass || fail "ndf_mount does not mount rw"
+
+	# G75: the journal is added once before a read-write mount, never on a
+	# filesystem that stays read-only; a failure lets the boot continue.
+	T2=$(command -v tune2fs)
+	I=$(img journal)
+	r=$(policy "$I" NDF_E2FSCK="$B/rec-e2fsck" NDF_DUMPE2FS="$D2" NDF_TUNE2FS="$T2" NDF_JOURNAL_MB=1)
+	[ "$r" = "CLEAN rw none" ] && pass || fail "G75 clean image: got '$r'"
+	dumpe2fs -h "$I" 2>/dev/null | grep -q '^Filesystem features:.*has_journal' && pass || fail "G75: no journal added to a clean image"
+	grep -q '^DATAFS_JOURNAL=added$' "$W/state" && pass || fail "G75: state does not say journal added: $(cat "$W/state")"
+	files_ok "$I" && pass || fail "G75: adding the journal lost data"
+	"$E2" -fn "$I" > /dev/null 2>&1 && pass || fail "G75: image inconsistent after adding the journal"
+	r=$(policy "$I" NDF_E2FSCK="$B/rec-e2fsck" NDF_DUMPE2FS="$D2" NDF_TUNE2FS="$T2" NDF_JOURNAL_MB=1)
+	grep -q '^DATAFS_JOURNAL=present$' "$W/state" && pass || fail "G75: second boot does not see the journal"
+	I2=$(img nojournal-ro); debugfs -w -R "ssv state 0" "$I2" > /dev/null 2>&1
+	r=$(policy "$I2" NDF_E2FSCK="$B/rc-e2fsck" FAKE_RC=4 FAKE_RC_FULL=4 NDF_DUMPE2FS="$D2" NDF_TUNE2FS="$T2" NDF_JOURNAL_MB=1)
+	dumpe2fs -h "$I2" 2>/dev/null | grep -q '^Filesystem features:.*has_journal' && fail "G75: journal added to a filesystem that stays read-only" || pass
+	I3=$(img toosmall)
+	r=$(policy "$I3" NDF_E2FSCK="$B/rec-e2fsck" NDF_DUMPE2FS="$D2" NDF_TUNE2FS="$T2" NDF_JOURNAL_MB=64)
+	[ "$r" = "CLEAN rw none" ] && grep -q '^DATAFS_JOURNAL=failed$' "$W/state" && pass || fail "G75: a failed journal add must not stop the mount: '$r' $(cat "$W/state")"
 
 	# unclean (state flag only): checked, rw
 	I=$(img unclean); debugfs -w -R "ssv state 0" "$I" > /dev/null 2>&1; : > "$W/calls"
