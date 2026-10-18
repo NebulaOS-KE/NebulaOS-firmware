@@ -27,6 +27,11 @@ NEBULAOS_ROOT="${NEBULAOS_ROOT:-/usr/data/nebulaos}"
 PERSISTENT_KEY_DIR="$NEBULAOS_ROOT/system/dropbear"
 FALLBACK_KEY_DIR="${NEBULAOS_DROPBEAR_FALLBACK_DIR:-/var/run/nebulaos-dropbear-fallback}"
 DROPBEAR_ENV_FILE="${NEBULAOS_DROPBEAR_ENV_FILE:-/var/run/dropbear.conf}"
+# G77 (Run 12, 2026-10-18): dropbear reads its host keys from copies in RAM.
+# It re-reads them per connection, and with -R it makes a NEW key when the
+# file is gone - on ke-dev a supervised repair unmounted /usr/data and every
+# later connection showed another host key (refused by pinned clients).
+RUN_KEY_DIR="${NEBULAOS_DROPBEAR_RUN_DIR:-/var/run/nebulaos-dropbear-keys}"
 
 log() {
 	echo "S46nebulaos-dropbear-keys: $1"
@@ -124,8 +129,17 @@ start() {
 
 write_env() {
 	_args=
+	_dir="$1"
+	if mkdir -p "$RUN_KEY_DIR" 2>/dev/null && chmod 700 "$RUN_KEY_DIR" 2>/dev/null; then
+		for _k in dropbear_rsa_host_key dropbear_ed25519_host_key; do
+			[ -s "$1/$_k" ] || continue
+			cp "$1/$_k" "$RUN_KEY_DIR/$_k.tmp" 2>/dev/null && chmod 600 "$RUN_KEY_DIR/$_k.tmp" \
+				&& mv -f "$RUN_KEY_DIR/$_k.tmp" "$RUN_KEY_DIR/$_k" || { _dir="$1"; break; }
+			_dir="$RUN_KEY_DIR"
+		done
+	fi
 	for _k in dropbear_rsa_host_key dropbear_ed25519_host_key; do
-		[ -s "$1/$_k" ] && _args="$_args -r $1/$_k"
+		[ -s "$_dir/$_k" ] && _args="$_args -r $_dir/$_k"
 	done
 	cat > "$DROPBEAR_ENV_FILE" <<EOF
 DROPBEAR_ARGS="${_args# }"
