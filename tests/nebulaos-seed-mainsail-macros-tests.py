@@ -672,8 +672,8 @@ def test_rc3_calibration_migrated_to_final():
         check("rc3 cal migrated: rc==0", rc == 0)
         check("rc3 cal migrated: group now matches final",
               moon.store[group_key("nebulaos-calibration")] == final_cal)
-        check("rc3 cal migrated: final has 9 macros (including INPUT_SHAPER, LOAD_CELL)",
-              len(final_cal["macros"]) == 9)
+        check("rc3 cal migrated: final has 10 macros (including INPUT_SHAPER, LOAD_CELL, BED_TRAM)",
+              len(final_cal["macros"]) == 10)
         with open(marker_path) as f:
             marker = json.load(f)
         check("rc3 cal migrated: marker records migrated",
@@ -859,7 +859,7 @@ def test_rc3_vs_final_calibration_macro_counts():
     rc3_cal = seed.RC3_GROUPS["nebulaos-calibration"]
     final_cal = seed.DEFAULT_GROUPS["nebulaos-calibration"]
     check("RC3 calibration has 7 macros", len(rc3_cal["macros"]) == 7)
-    check("final calibration has 9 macros", len(final_cal["macros"]) == 9)
+    check("final calibration has 10 macros", len(final_cal["macros"]) == 10)
     rc3_names = {m["name"] for m in rc3_cal["macros"]}
     final_names = {m["name"] for m in final_cal["macros"]}
     check("INPUT_SHAPER_CALIBRATE added in final",
@@ -1224,6 +1224,44 @@ def test_g83a_user_modified_calibration_group_untouched():
               moon.store[group_key("nebulaos-calibration")] == custom)
     with_marker_dir(body)
 
+# --- G87: the bed tramming button reaches installs with the G83a default ---
+def test_g87_previous_calibration_group_gets_bed_tram_button():
+    def body(marker_path):
+        prev = seed.PRE_G87_GROUPS["nebulaos-calibration"]
+        final_cal = seed.DEFAULT_GROUPS["nebulaos-calibration"]
+        moon = FakeMoonrakerDb(existing={group_key("nebulaos-calibration"): prev})
+        rc, logs = run_seed(marker_path, moon, groups=seed.DEFAULT_GROUPS)
+        check("g87: rc==0", rc == 0)
+        check("g87: G83a default upgraded to the new default",
+              moon.store[group_key("nebulaos-calibration")] == final_cal)
+        check("g87: new default has the bed tramming button",
+              any(m["name"] == "NEBULAOS_BED_TRAM" for m in final_cal["macros"]))
+    with_marker_dir(body)
+
+
+def test_g87_pre_g83a_group_goes_straight_to_the_newest_default():
+    def body(marker_path):
+        prev = seed.PRE_G83A_GROUPS["nebulaos-calibration"]
+        moon = FakeMoonrakerDb(existing={group_key("nebulaos-calibration"): prev})
+        rc, logs = run_seed(marker_path, moon, groups=seed.DEFAULT_GROUPS)
+        check("g87 from pre-g83a: rc==0", rc == 0)
+        check("g87 from pre-g83a: newest default",
+              moon.store[group_key("nebulaos-calibration")]
+              == seed.DEFAULT_GROUPS["nebulaos-calibration"])
+    with_marker_dir(body)
+
+
+def test_g87_user_modified_calibration_group_untouched():
+    def body(marker_path):
+        custom = json.loads(json.dumps(seed.PRE_G87_GROUPS["nebulaos-calibration"]))
+        custom["name"] = "My calibration"
+        moon = FakeMoonrakerDb(existing={group_key("nebulaos-calibration"): custom})
+        rc, logs = run_seed(marker_path, moon, groups=seed.DEFAULT_GROUPS)
+        check("g87 user-modified: rc==0", rc == 0)
+        check("g87 user-modified: left untouched",
+              moon.store[group_key("nebulaos-calibration")] == custom)
+    with_marker_dir(body)
+
 def main():
     test_moonraker_unavailable()
     test_fresh_install_creates_both_groups()
@@ -1261,6 +1299,9 @@ def main():
     test_rc3_vs_final_calibration_macro_counts()
     test_g83a_previous_calibration_group_gets_load_cell_button()
     test_g83a_user_modified_calibration_group_untouched()
+    test_g87_previous_calibration_group_gets_bed_tram_button()
+    test_g87_pre_g83a_group_goes_straight_to_the_newest_default()
+    test_g87_user_modified_calibration_group_untouched()
     test_rc3_vs_final_extruder_macro_counts()
 
     test_reset_six_group_custom_state_produces_exact_five()
