@@ -2010,7 +2010,10 @@ class ImageTests(unittest.TestCase):
             for idx in range(0, (len(data) + 1048575) // 1048576):
                 chunk = data[idx * 1048576:(idx + 1) * 1048576]
                 if corrupt == (name, idx):
-                    chunk = b"X" + chunk[1:]
+                    # T3: flip the byte. Writing b"X" left the chunk intact
+                    # whenever the random data already started with "X"
+                    # (1 in 256), and the "damaged" image then installed.
+                    chunk = bytes([chunk[0] ^ 0xFF]) + chunk[1:]
                 open(os.path.join(inner, "%s.%04d.%s" % (name, idx, prev)), "wb").write(chunk)
                 prev = hashlib.md5(data[idx * 1048576:(idx + 1) * 1048576]).hexdigest()
                 sums.append(prev)
