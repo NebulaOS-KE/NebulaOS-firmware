@@ -140,8 +140,38 @@ def main():
           f"suspiciously few upstream extras files found ({len(upstream_names)}) - "
           "wrong directory, or upstream tree is damaged")
 
-    manifest_path = ext_src / "nebulaos-extensions.json"
-    manifest = json.loads(manifest_path.read_text())
+    # Run 15 (Run 14 verifier note 1): read the extensions AT THE PIN from
+    # git, whatever is checked out - a stale vendor/ checkout used to pass
+    # here while testing the wrong module list.
+    ext_pin = manifest_value("KLIPPER_EXTENSIONS_PIN")
+
+    def has_pin(src):
+        return subprocess.run(
+            ["git", "-C", str(src), "cat-file", "-e", f"{ext_pin}^{{commit}}"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+    have_pin = has_pin(ext_src)
+    if not have_pin and not os.environ.get("KLIPPER_EXTENSIONS_SRC"):
+        # vendor/ lags the pin between builds: use a workspace checkout
+        # that has it rather than testing an old module list
+        for cand in (REPO_ROOT.parent / "NebulaOS-klipper-extensions",):
+            if (cand / "nebulaos-extensions.json").exists() and has_pin(cand):
+                ok(f"vendor checkout lacks the pin - using {cand}")
+                ext_src, have_pin = cand, True
+                break
+    check(have_pin,
+          f"extensions source contains KLIPPER_EXTENSIONS_PIN {ext_pin[:12]}...",
+          f"extensions source {ext_src} does not contain the pinned commit "
+          f"{ext_pin} - fetch it, or set KLIPPER_EXTENSIONS_SRC to a checkout "
+          "that has it")
+    if not have_pin:
+        report()
+        return
+    manifest = json.loads(subprocess.run(
+        ["git", "-C", str(ext_src), "show", f"{ext_pin}:nebulaos-extensions.json"],
+        stdout=subprocess.PIPE, text=True, check=True).stdout)
+    pinned_extras = set(subprocess.run(
+        ["git", "-C", str(ext_src), "ls-tree", "--name-only", ext_pin, "extras/"],
+        stdout=subprocess.PIPE, text=True, check=True).stdout.split())
     declared = [m["path"] for m in manifest.get("modules", [])
                 if m.get("role") == "runtime"]
     check(len(declared) > 0,
@@ -176,10 +206,9 @@ def main():
     # confirmed absent from the extensions repo's own extras/ directory
     # (not merely "not declared in the manifest", which a stray untracked
     # file could still slip past).
-    ext_extras_dir = ext_src / "extras"
     for name in NAMED_FORBIDDEN_FILENAMES:
         exists_upstream = name in upstream_names
-        exists_in_extensions = (ext_extras_dir / name).exists()
+        exists_in_extensions = f"extras/{name}" in pinned_extras
         check(exists_upstream and not exists_in_extensions,
               f"{name}: confirmed real upstream file, confirmed absent from "
               f"NebulaOS-klipper-extensions/extras/ (no shadow module)",
