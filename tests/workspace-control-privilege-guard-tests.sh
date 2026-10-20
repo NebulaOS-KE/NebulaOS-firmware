@@ -580,7 +580,7 @@ run_case hw ALLOW nebulaos-hardware 1 "hardware agent, capture" "$HWRUN $DEV cap
 run_case hw ALLOW "" 1 "main agent, confirmed exercise" "$HWRUN $DEV exercise camera-resume EXERCISE_CONFIRM=camera-resume"
 run_case hw ALLOW "" 1 "main agent, confirmed reboot" "$HWRUN $DEV reboot REBOOT_CONFIRM=NEBULAOS"
 run_case hw ALLOW nebulaos-hardware 1 "hardware agent, confirmed reboot" "$HWRUN $DEV reboot REBOOT_CONFIRM=NEBULAOS"
-for svc in klipper moonraker guppyscreen webcam nginx; do
+for svc in klipper moonraker nebulascreen guppyscreen webcam nginx; do
   run_case hw ALLOW "" 1 "main agent, restart $svc" "$HWRUN $DEV restart $svc"
 done
 echo

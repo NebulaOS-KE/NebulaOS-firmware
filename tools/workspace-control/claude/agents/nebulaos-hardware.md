@@ -23,7 +23,7 @@ tools/run-nebulaos-hardware.sh --device <enrolled-id> --control <40-hex C> <oper
 | `capture <profile>` | read-only, fixed profile table (TOOL-01) |
 | `exercise <profile> EXERCISE_CONFIRM=<profile>` | reversible, self-undoing state change (TOOL-02) |
 | `verify <X> <ximage-sha256> <rootfs-sha256>` | read-only |
-| `restart klipper\|moonraker\|guppyscreen\|webcam\|nginx` | repair (published C on a RELEASE device) |
+| `restart klipper\|moonraker\|nebulascreen\|guppyscreen\|webcam\|nginx` | repair (published C on a RELEASE device) |
 | `reboot REBOOT_CONFIRM=NEBULAOS` | software reboot of an idle NebulaOS back into NebulaOS; no write |
 | `rtos-logo RTOS_LOGO_CONFIRM=RTOS2` | NebulaOS boot logo into rtos2 (p4) only; host backup first, read-back after |
 | `rtos-logo-restore <backup-sha256> RTOS_RESTORE_CONFIRM=RTOS2` | write that backup back to rtos2 |

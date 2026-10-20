@@ -84,7 +84,7 @@ done < "$MANIFEST"
 SENTINEL_SRC=$CANON/sentinel/settings.local.json
 echo
 if [ -f "$SENTINEL_SRC" ]; then
-  for e in NebulaOS-firmware NebulaOS-klipper-extensions NebulaOS-klipper-mcu NebulaOS-kernel NebulaOS-guppyscreen; do
+  for e in NebulaOS-firmware NebulaOS-klipper-extensions NebulaOS-klipper-mcu NebulaOS-kernel NebulaOS-nebulascreen NebulaOS-guppyscreen; do
     repo=$WORKSPACE_ROOT/$e
     [ -d "$repo/.git" ] || continue
     t=$repo/.claude/settings.local.json

@@ -53,7 +53,7 @@ Five NebulaOS development repositories are active here, canonical remotes under
 | `NebulaOS-klipper-extensions/` | `coreflake1/NebulaOS-klipper-extensions` | `main` | NebulaOS-owned host Klipper functionality |
 | `NebulaOS-klipper-mcu/` | `coreflake1/NebulaOS-klipper-mcu` | `main` | GD32F303 application firmware development |
 | `NebulaOS-kernel/` | `coreflake1/NebulaOS-kernel` | `openke` | X2000 Linux kernel development |
-| `NebulaOS-guppyscreen/` | `coreflake1/NebulaOS-guppyscreen` | `main` | Touchscreen frontend |
+| `NebulaOS-guppyscreen/` (being renamed `NebulaOS-nebulascreen/`) | `coreflake1/NebulaOS-guppyscreen` (→ `NebulaOS-nebulascreen`) | `main` | Touchscreen frontend (NebulaScreen, based on GuppyScreen) |
 
 In DEV any branch may be checked out. The workspace root is deliberately **not** a git
 repository.
@@ -194,7 +194,7 @@ tools/run-nebulaos-hardware.sh --device <id> --control <40-hex C> <operation>
 | `inspect`, `status`, `diagnose`, `verify` | read-only |
 | `capture <profile>` | read-only, fixed profile table (TOOL-01) |
 | `exercise <profile> EXERCISE_CONFIRM=<profile>` | reversible, self-undoing; refuses motion/heat/flash/reboot text (TOOL-02) |
-| `restart <klipper\|moonraker\|guppyscreen\|webcam\|nginx>` | repair |
+| `restart <klipper\|moonraker\|nebulascreen\|guppyscreen\|webcam\|nginx>` | repair |
 | `reboot REBOOT_CONFIRM=NEBULAOS` | software reboot of an idle NebulaOS back into NebulaOS (boot timing); refused unless the marker already selects NebulaOS; writes nothing |
 | `rtos-logo RTOS_LOGO_CONFIRM=RTOS2` | writes the pinned NebulaOS RTOS image (boot logo) to rtos2 (p4) only, after a verified host backup; idle + marker on NebulaOS; read-back; never rtos (p3) |
 | `rtos-logo-restore <backup-sha256> RTOS_RESTORE_CONFIRM=RTOS2` | writes such a backup back to rtos2 |

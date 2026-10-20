@@ -433,7 +433,7 @@ if sandbox_off:
                 "generation it is running or it is not a controlled session.")
         HW_READONLY=("inspect","status","diagnose")
         HW_KEYED=("verify","install")
-        HW_SERVICES=("klipper","moonraker","guppyscreen","webcam","nginx")
+        HW_SERVICES=("klipper","moonraker","nebulascreen","guppyscreen","webcam","nginx")
         # capture/exercise take a profile NAME, never a command: lowercase
         # letters, digits and '-', not starting with '-'. The agent refuses
         # names outside its fixed tables. An exercise changes device state
@@ -465,7 +465,7 @@ if sandbox_off:
                 "  --device <id> --control <40-hex C> diagnose\n"
                 "  --device <id> --control <40-hex C> capture  <profile>\n"
                 "  --device <id> --control <40-hex C> exercise <profile> EXERCISE_CONFIRM=<profile>\n"
-                "  --device <id> --control <40-hex C> restart klipper|moonraker|guppyscreen|webcam|nginx\n"
+                "  --device <id> --control <40-hex C> restart klipper|moonraker|nebulascreen|guppyscreen|webcam|nginx\n"
                 "  --device <id> --control <40-hex C> reboot REBOOT_CONFIRM=NEBULAOS\n"
                 "  --device <id> --control <40-hex C> rtos-logo RTOS_LOGO_CONFIRM=RTOS2\n"
                 "  --device <id> --control <40-hex C> rtos-logo-restore <64-hex> RTOS_RESTORE_CONFIRM=RTOS2\n"

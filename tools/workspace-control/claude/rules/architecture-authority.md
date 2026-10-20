@@ -21,9 +21,9 @@ README prose is informative; executable source and machine-readable
 integration state outrank it.
 ```
 
-Known-stale today: `NebulaOS-firmware/README.md`, `NebulaOS-klipper-extensions/README.md`.
-Scheduled for a separate documentation mission — do not treat as current, and do not
-change source to match them.
+The firmware and extensions READMEs were rewritten from source on 2026-10-20 (Run 15).
+They are still prose: when a README and the code disagree, the code wins - never change
+source to match a README.
 
 The archived workspace (sibling `*-archive-*`) is preserved evidence, not authority, and is blocked
 mechanically. Historical investigation is a separate, explicitly requested session.

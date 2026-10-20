@@ -24,7 +24,8 @@ the human asks for it.
    `REPOSITORY_HEAD != SHIPPING_PIN`.
 2. **Architecture comes from current source**, the manifest and `tools/verify-architecture.sh`
    — not from historical reports, README prose or memory (auto-memory is disabled).
-   Known-stale: `NebulaOS-firmware/README.md`, `NebulaOS-klipper-extensions/README.md`.
+   The firmware and extensions READMEs were rewritten from source on 2026-10-20; they are
+   still informative only.
 3. **Never read the archived workspace** (the sibling `*-archive-*` directory) unless the user
    explicitly asks for historical investigation. A denial is the guardrail working.
 4. **Host Klipper is pristine upstream `Klipper3d/klipper`**, owned by the firmware build. The

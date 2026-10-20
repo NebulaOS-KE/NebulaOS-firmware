@@ -312,7 +312,12 @@ chk_pin(){ # repo_path pin label
   fi
 }
 chk_pin "$WORKSPACE_ROOT/NebulaOS-kernel"      "$(man KERNEL_PIN)"      "kernel"
-chk_pin "$WORKSPACE_ROOT/NebulaOS-guppyscreen" "$(man GUPPYSCREEN_PIN)" "guppyscreen"
+# Run 15: the screen app (GuppyScreen renamed NebulaScreen) - either checkout
+# name and either manifest variable, until the rename is complete everywhere.
+SCREEN_REPO=$WORKSPACE_ROOT/NebulaOS-nebulascreen
+[ -d "$SCREEN_REPO/.git" ] || SCREEN_REPO=$WORKSPACE_ROOT/NebulaOS-guppyscreen
+SCREEN_PIN=$(man NEBULASCREEN_PIN); [ "$SCREEN_PIN" = UNRESOLVED ] && SCREEN_PIN=$(man GUPPYSCREEN_PIN)
+chk_pin "$SCREEN_REPO" "$SCREEN_PIN" "screen"
 chk_pin "$EX"                                  "$EPIN"                  "extensions"
 echo "  (pins checked=$PINCHK, legitimately behind HEAD=$BEHIND - trailing pins are normal, not defects)"
 

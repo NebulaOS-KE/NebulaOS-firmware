@@ -87,7 +87,7 @@ extensions main $(head_of NebulaOS-klipper-extensions)
 extensions ship branch=$(man KLIPPER_EXTENSIONS_BRANCH) pin=$(man KLIPPER_EXTENSIONS_PIN)
 host klipper    $(man KLIPPER_REPO) pin=$(man KLIPPER_PIN)
 kernel          HEAD=$(head_of NebulaOS-kernel) pin=$(man KERNEL_PIN)
-guppyscreen     HEAD=$(head_of NebulaOS-guppyscreen) pin=$(man GUPPYSCREEN_PIN)
+screen          HEAD=$(if [ -d "$ROOT/NebulaOS-nebulascreen/.git" ]; then head_of NebulaOS-nebulascreen; else head_of NebulaOS-guppyscreen; fi) pin=$(p=$(man NEBULASCREEN_PIN); [ "$p" = UNRESOLVED ] && p=$(man GUPPYSCREEN_PIN); echo "$p")
 mcu             HEAD=$(head_of NebulaOS-klipper-mcu) provenance=$MCUPROV
 
 $BUILD_LINE

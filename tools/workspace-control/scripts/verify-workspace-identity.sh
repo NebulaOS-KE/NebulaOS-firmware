@@ -216,9 +216,15 @@ fi
 echo
 
 # ============================ GUPPYSCREEN ===================================
-GS=$WORKSPACE_ROOT/NebulaOS-guppyscreen
-GUPPYSCREEN_REMOTE_MAIN=$(lsr NebulaOS-guppyscreen main)
-GUPPYSCREEN_SHIPPING_PIN=$(manifest GUPPYSCREEN_PIN)
+# Run 15: GuppyScreen is being renamed NebulaScreen - the checkout, the
+# GitHub repo and the manifest variable may carry either name until the
+# rename is complete; the output keys stay GUPPYSCREEN_* for compatibility.
+GS_NAME=NebulaOS-nebulascreen
+[ -d "$WORKSPACE_ROOT/$GS_NAME/.git" ] || GS_NAME=NebulaOS-guppyscreen
+GS=$WORKSPACE_ROOT/$GS_NAME
+GUPPYSCREEN_REMOTE_MAIN=$(lsr "$GS_NAME" main)
+GUPPYSCREEN_SHIPPING_PIN=$(manifest NEBULASCREEN_PIN)
+[ "$GUPPYSCREEN_SHIPPING_PIN" = UNRESOLVED ] && GUPPYSCREEN_SHIPPING_PIN=$(manifest GUPPYSCREEN_PIN)
 echo "GUPPYSCREEN_PATH=$GS"
 echo "GUPPYSCREEN_REMOTE=$(rem "$GS")"
 echo "GUPPYSCREEN_BRANCH=$(brof "$GS")"
@@ -227,7 +233,10 @@ echo "GUPPYSCREEN_REMOTE_MAIN=$GUPPYSCREEN_REMOTE_MAIN"
 echo "GUPPYSCREEN_SHIPPING_PIN=$GUPPYSCREEN_SHIPPING_PIN"
 echo "GUPPYSCREEN_DIRTY_FILES=$(dirty "$GS")"
 [ -d "$GS/.git" ]                                          || fail "guppyscreen: not a git repository at canonical path"
-[ "$(norm "$(rem "$GS")")" = "$(norm "$GH/NebulaOS-guppyscreen")" ] || strict "guppyscreen: remote is not coreflake1/NebulaOS-guppyscreen"
+case "$(norm "$(rem "$GS")")" in
+  "$(norm "$GH/NebulaOS-nebulascreen")"|"$(norm "$GH/NebulaOS-guppyscreen")") ;;
+  *) strict "guppyscreen: remote is not coreflake1/NebulaOS-nebulascreen (or -guppyscreen)" ;;
+esac
 [ "$(brof "$GS")" = "main" ]                               || strict "guppyscreen: active branch is not main"
 [ "$(dirty "$GS")" = "0" ]                                 || [ "$STRICT_CLEAN" = 0 ] || fail "guppyscreen: working tree is not clean"
 [ "$(wtcount "$GS")" = "1" ]                               || strict "guppyscreen: more than one working tree"
@@ -259,7 +268,7 @@ esac
 echo
 
 # ============================ TOPOLOGY ======================================
-EXPECTED=(NebulaOS-firmware NebulaOS-klipper-extensions NebulaOS-klipper-mcu NebulaOS-kernel NebulaOS-guppyscreen)
+EXPECTED=(NebulaOS-firmware NebulaOS-klipper-extensions NebulaOS-klipper-mcu NebulaOS-kernel NebulaOS-nebulascreen NebulaOS-guppyscreen)
 ACTIVE_REPO_COUNT=0; UNEXPECTED=()
 for d in "$WORKSPACE_ROOT"/*/; do
   name=$(basename "$d")
@@ -364,7 +373,7 @@ echo
 # committed, reproduced by the sync script.
 SENTINEL_SRC=$CANON/sentinel/settings.local.json
 SENTINELS_OK=0; SENTINELS_BAD=()
-for e in NebulaOS-firmware NebulaOS-klipper-extensions NebulaOS-klipper-mcu NebulaOS-kernel NebulaOS-guppyscreen; do
+for e in NebulaOS-firmware NebulaOS-klipper-extensions NebulaOS-klipper-mcu NebulaOS-kernel "$GS_NAME"; do
   t=$WORKSPACE_ROOT/$e/.claude/settings.local.json
   if [ ! -f "$t" ]; then SENTINELS_BAD+=("$e:missing"); continue; fi
   if [ -f "$SENTINEL_SRC" ] && ! cmp -s "$SENTINEL_SRC" "$t"; then SENTINELS_BAD+=("$e:drifted"); continue; fi

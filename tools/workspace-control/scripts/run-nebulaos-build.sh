@@ -133,7 +133,7 @@ if [ "$MODE" != dev ]; then
        remote is an UNVERIFIED source generation, not a pass."
 
   DIRTY=0
-  for r in NebulaOS-firmware NebulaOS-klipper-extensions NebulaOS-kernel NebulaOS-guppyscreen NebulaOS-klipper-mcu; do
+  for r in NebulaOS-firmware NebulaOS-klipper-extensions NebulaOS-kernel NebulaOS-nebulascreen NebulaOS-guppyscreen NebulaOS-klipper-mcu; do
     [ -d "$ROOT/$r/.git" ] || continue
     n=$(git -C "$ROOT/$r" status --porcelain --untracked-files=all 2>/dev/null | grep -vc '^?? \.mcp\.json$' || true)
     [ "$n" -eq 0 ] || { printf 'REASON: %s has %s uncommitted change(s)\n' "$r" "$n" >&2; DIRTY=1; }
@@ -232,7 +232,7 @@ RC=$?
 # checkout while a build runs, and the build itself only ever touches $WORK.
 CANON_DIRTY=0
 if [ "$MODE" != dev ]; then
-  for r in NebulaOS-firmware NebulaOS-klipper-extensions NebulaOS-kernel NebulaOS-guppyscreen NebulaOS-klipper-mcu; do
+  for r in NebulaOS-firmware NebulaOS-klipper-extensions NebulaOS-kernel NebulaOS-nebulascreen NebulaOS-guppyscreen NebulaOS-klipper-mcu; do
     [ -d "$ROOT/$r/.git" ] || continue
     n=$(git -C "$ROOT/$r" status --porcelain --untracked-files=all 2>/dev/null | grep -vc '^?? \.mcp\.json$' || true)
     [ "$n" -eq 0 ] || { printf 'CANONICAL_REPO_DIRTIED=%s (%s file(s))\n' "$r" "$n" >&2; CANON_DIRTY=1; }

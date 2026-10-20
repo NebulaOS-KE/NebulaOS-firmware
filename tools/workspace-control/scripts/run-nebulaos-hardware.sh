@@ -68,7 +68,7 @@
 # REPAIRS
 #
 # `restart` is the only repair: one service from a closed list (klipper,
-# moonraker, guppyscreen, webcam, nginx), with the on-device update supervisor's
+# moonraker, nebulascreen/guppyscreen, webcam, nginx), with the on-device update supervisor's
 # stop/wait/start and print-idle semantics, refused while that supervisor holds a
 # lock or is validating. A RELEASE-mode device additionally requires a published
 # control commit. There is deliberately no package install: the Moonraker venv lives
@@ -139,8 +139,8 @@ case "$OP" in
   restart)
     [ "$#" -eq 2 ] || die "'restart' requires exactly one service name"
     case "$2" in
-      klipper|moonraker|guppyscreen|webcam|nginx) ;;
-      *) die "unknown service '$2'. Restartable: klipper moonraker guppyscreen webcam nginx" ;;
+      klipper|moonraker|nebulascreen|guppyscreen|webcam|nginx) ;;
+      *) die "unknown service '$2'. Restartable: klipper moonraker nebulascreen guppyscreen webcam nginx" ;;
     esac ;;
   capture|exercise)
     # A profile NAME from the agent's fixed tables (TOOL-01/02); the agent
