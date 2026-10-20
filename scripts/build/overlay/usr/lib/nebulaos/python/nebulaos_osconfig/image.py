@@ -35,7 +35,7 @@ import subprocess
 import sys
 import time
 
-from . import common, system
+from . import common, system, updates
 from .common import invalid, OsConfigError
 
 SEVENZA = os.environ.get("NEBULAOS_7ZA", "/usr/bin/7za")
@@ -57,6 +57,9 @@ PROC_MOUNTS = os.environ.get("NEBULAOS_PROC_MOUNTS", "/proc/mounts")
 SLOT_SWAP = os.environ.get("NEBULAOS_SLOT_SWAP", "/usr/libexec/nebulaos/nebulaos-slot-swap")
 REBOOT = os.environ.get("NEBULAOS_REBOOT", "/sbin/reboot")
 OSCONFIG = os.environ.get("NEBULAOS_OSCONFIG", "/usr/libexec/nebulaos/nebulaos-osconfig")
+# G88 (Run 15): how often the finished install re-checks a print that started
+# while it was writing (seconds).
+PRINT_WAIT = float(os.environ.get("NEBULAOS_IMAGE_PRINT_WAIT", "30"))
 MOONRAKER_INFO = os.environ.get("NEBULAOS_MOONRAKER_INFO", "http://127.0.0.1:7125/server/info")
 PROC_DIR = os.environ.get("NEBULAOS_PROC_DIR", "/proc")
 TRIAL_SECONDS = int(os.environ.get("NEBULAOS_IMAGE_TRIAL_SECONDS", "300"))
@@ -657,6 +660,14 @@ def run_job(file_id, sha256):
                        "kernel", progress, (30, 35))
         _write_payload(work, info["payload_dir"], info["images"]["rootfs"], parts["rootfs"],
                        "rootfs", progress, (35, 95))
+        # G88: the printing check ran when the job started; writing takes
+        # minutes, and a print may have started since. Never switch slots and
+        # reboot under a running print - wait for it to end first. Waiting
+        # BEFORE the switch keeps a power cut during the wait on the
+        # current slot.
+        while updates._printing():
+            _state(state="running", phase="waiting_for_print", percent=96, **base)
+            time.sleep(PRINT_WAIT)
         progress(96, "switching")
         kname, _ = uimage_name(_read_head(parts["kernel"]))
         kind = system_kind(kname)

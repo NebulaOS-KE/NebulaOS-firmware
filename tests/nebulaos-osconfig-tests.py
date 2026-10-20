@@ -2152,6 +2152,28 @@ class ImageTests(unittest.TestCase):
         self.assertEqual((trial["from"], trial["to"], trial["system"]), ("B", "A", "nebulaos"))
         self.assertFalse(os.listdir(self.i.WORK_PARENT))           # work dir cleaned
 
+    def test_print_started_during_install_delays_the_switch(self):
+        # G88: a print that starts while the image is being written must end
+        # before the slot switch and reboot.
+        archive, _, _ = self.package()
+        seen = []
+
+        def printing():
+            seen.append(os.path.exists(self.calls))       # switched already?
+            if len(seen) <= 2:
+                st = json.load(open(self.i.JOB_STATE))
+                self.assertEqual(st.get("phase"), "writing" if not seen[:-1] else "waiting_for_print")
+            return len(seen) <= 2
+        old_printing, old_wait = self.i.updates._printing, self.i.PRINT_WAIT
+        self.i.updates._printing, self.i.PRINT_WAIT = printing, 0
+        try:
+            self.i.run_job("upload/nebula.img", self.i.sha256_file(archive))
+        finally:
+            self.i.updates._printing, self.i.PRINT_WAIT = old_printing, old_wait
+        self.assertEqual(seen, [False, False, False])     # no switch while printing
+        self.assertEqual(json.load(open(self.i.JOB_STATE))["state"], "restarting")
+        self.assertEqual(open(self.calls).read().split("\n")[:2], ["swap A", "reboot"])
+
     def test_creality_image_arms_no_trial(self):
         # Creality's firmware never runs the fallback check: no trial, and a
         # stale one from earlier is removed.
