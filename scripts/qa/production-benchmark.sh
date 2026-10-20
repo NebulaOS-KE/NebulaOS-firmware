@@ -142,7 +142,7 @@ SOCKET_COUNT=$(ss -tln 2>/dev/null | tail -n +2 | wc -l)
 
 KLIPPY_RSS=$(rss_for "klippy.py")
 MOONRAKER_RSS=$(rss_for "moonraker.py")
-GUPPYSCREEN_RSS=$(rss_for "/opt/guppyscreen/guppyscreen")
+GUPPYSCREEN_RSS=$(rss_for "/opt/nebulascreen/nebulascreen")
 USTREAMER_RSS=$(rss_for "ustreamer")
 NGINX_RSS=$(rss_for "nginx: master")
 DROPBEAR_RSS=$(rss_for "/usr/sbin/dropbear -R")
@@ -297,7 +297,7 @@ SUMMARY="$BASENAME.txt"
 	echo "preemption model: $PREEMPT_MODEL"
 	echo "root device (active slot): ${ROOT_DEVICE:-unknown}"
 	echo
-	echo "RSS (kB): klippy=$KLIPPY_RSS moonraker=$MOONRAKER_RSS guppyscreen=$GUPPYSCREEN_RSS ustreamer=$USTREAMER_RSS nginx=$NGINX_RSS dropbear=$DROPBEAR_RSS modemmanager=$MODEMMANAGER_RSS dbus=$DBUS_RSS"
+	echo "RSS (kB): klippy=$KLIPPY_RSS moonraker=$MOONRAKER_RSS nebulascreen=$GUPPYSCREEN_RSS ustreamer=$USTREAMER_RSS nginx=$NGINX_RSS dropbear=$DROPBEAR_RSS modemmanager=$MODEMMANAGER_RSS dbus=$DBUS_RSS"
 	echo "ustreamer cumulative cpu ticks (utime+stime): ${USTREAMER_CPU_STAT:-n/a}"
 	echo
 	echo "=== Wi-Fi ==="

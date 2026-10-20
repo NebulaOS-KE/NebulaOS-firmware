@@ -83,7 +83,7 @@ maintenance_gate_ok() {
 
 stop_services() {
 	log "stopping services that hold the application tree open"
-	/etc/init.d/S58guppyscreen stop 2>/dev/null
+	/etc/init.d/S58nebulascreen stop 2>/dev/null
 	/etc/init.d/S50webcam stop 2>/dev/null
 	/etc/init.d/S56moonraker stop 2>/dev/null
 	/etc/init.d/S55klipper stop 2>/dev/null

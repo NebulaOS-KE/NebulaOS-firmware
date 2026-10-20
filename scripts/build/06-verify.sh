@@ -197,8 +197,8 @@ check_vendor_pin x2000_kernel_6.6 "$KERNEL_PIN" \
 # working-tree state after scripts/build-mips.sh's native/MIPS library
 # swap-and-restore (04-cross-compile-app-stack.sh). Verified empirically
 # against a real build, not assumed.
-check_vendor_pin nebulaos-guppyscreen "$GUPPYSCREEN_PIN" \
-	"$GUPPYSCREEN_REPO" 0 \
+check_vendor_pin nebulaos-nebulascreen "$NEBULASCREEN_PIN" \
+	"$NEBULASCREEN_REPO" 0 \
 	libhv \
 	lvgl \
 	spdlog
@@ -222,7 +222,7 @@ check_artifact_sha256 vendor/mainsail-dist/mainsail.zip \
 	df2ba7c301f7bfc8ac9f122741a6ba08356d679ecfa1f62f898d0337802d5de5
 
 # 2026-08-07: GuppyScreen is no longer a fixed prebuilt binary (see
-# manifests/dependencies.conf's GUPPYSCREEN_PIN and
+# manifests/dependencies.conf's NEBULASCREEN_PIN and
 # 04-cross-compile-app-stack.sh) - it is rebuilt from pinned source every run,
 # so a fixed expected hash here would have to be re-derived on every pin bump.
 # Check self-consistency against THIS run's own build-manifest.txt instead
@@ -271,8 +271,8 @@ check_guppyscreen_binary() {
 		echo "MISS $1 sha256 is $gb_actual, this build's manifest recorded $gb_recorded - manifest is stale or binary was replaced after the build"
 	fi
 }
-check_guppyscreen_binary artifacts/guppyscreen-mips/guppyscreen guppyscreen_sha256
-check_guppyscreen_binary artifacts/guppyscreen-mips/guppybeep guppybeep_sha256
+check_guppyscreen_binary artifacts/nebulascreen-mips/nebulascreen guppyscreen_sha256
+check_guppyscreen_binary artifacts/nebulascreen-mips/nebulabeep guppybeep_sha256
 
 check_artifact_sha256 scripts/build/overlay/lib/firmware/brcm/brcmfmac43430-sdio.bin \
 	82ed67a211877efa47aff4aab83d6d2d1ccf3d5d0f5c396df97f292ade01de9e
@@ -1214,7 +1214,7 @@ check_absent /opt/nebulaos-seeds/printer_data-config/simpleaf/homing.cfg
 # shelling out to GuppyScreen/scripts/static_ip.py, whose boot hook targeted
 # stock's wifi_up.sh and lost the setting on every NebulaOS reboot. The
 # script is gone from NebulaOS-guppyscreen and from this seed
-# (tests/guppyscreen-owned-files-tests.sh checks both).
+# (tests/nebulascreen-owned-files-tests.sh checks both).
 check_absent /opt/nebulaos-seeds/printer_data-config/GuppyScreen/scripts/static_ip.py
 
 rm -rf /tmp/printerdata-check
@@ -1704,7 +1704,25 @@ check /etc/nebulaos-network.sh
 check /etc/nebulaos-backlight.sh
 check /etc/nebulaos-moonraker-compose.sh
 check /etc/init.d/S01splash
-check /usr/share/nebulaos/guppyscreen/guppyconfig.default.json
+check /usr/share/nebulaos/nebulascreen/nebulascreen.default.json
+# NebulaScreen (Run 15, G82): the app, its init script and the image's own
+# release record (the seed "the image wins" resets a downloaded release to).
+check /opt/nebulascreen/nebulascreen
+check /opt/nebulascreen/nebulabeep
+check /opt/nebulascreen/nebulascreen.json
+check /etc/init.d/S58nebulascreen
+check /etc/nebulascreen-lib.sh
+check /usr/share/nebulaos/nebulascreen/release_info.json
+check_absent /etc/init.d/S58guppyscreen
+check_absent /opt/guppyscreen/guppyscreen
+NS_RELEASE_INFO=$(debugfs -R "cat /usr/share/nebulaos/nebulascreen/release_info.json" ${IMAGES}/rootfs.ext2 2>/dev/null)
+if printf '%s' "$NS_RELEASE_INFO" | grep -q "\"version\": \"$NEBULASCREEN_VERSION\"" \
+		&& printf '%s' "$NS_RELEASE_INFO" | grep -q "\"nebulaos_ui_api\": $NEBULAOS_UI_API"; then
+	echo "OK   NebulaScreen release record: $NEBULASCREEN_VERSION, nebulaos_ui_api $NEBULAOS_UI_API"
+else
+	echo "FATAL: NebulaScreen release record does not match the manifest ($NEBULASCREEN_VERSION, ui_api $NEBULAOS_UI_API): $NS_RELEASE_INFO" >&2
+	exit 1
+fi
 check /etc/nebulaos-shadow.sh
 check /usr/sbin/nebulaos-passwd
 if debugfs -R "cat /usr/bin/passwd" ${IMAGES}/rootfs.ext2 2>/dev/null | grep -q "nebulaos-passwd"; then
@@ -1712,10 +1730,10 @@ if debugfs -R "cat /usr/bin/passwd" ${IMAGES}/rootfs.ext2 2>/dev/null | grep -q 
 else
 	echo "MISS /usr/bin/passwd is not the NebulaOS wrapper - passwd cannot change root's password"
 fi
-if debugfs -R "stat /opt/guppyscreen/thumbnails" ${IMAGES}/rootfs.ext2 2>/dev/null | grep -q "Type: symlink"; then
-	echo "OK   /opt/guppyscreen/thumbnails is a symlink to persistent storage"
+if debugfs -R "stat /opt/nebulascreen/thumbnails" ${IMAGES}/rootfs.ext2 2>/dev/null | grep -q "Type: symlink"; then
+	echo "OK   /opt/nebulascreen/thumbnails is a symlink to persistent storage"
 else
-	echo "MISS /opt/guppyscreen/thumbnails is not a symlink (GuppyScreen thumbnail cache unwritable)"
+	echo "MISS /opt/nebulascreen/thumbnails is not a symlink (NebulaScreen thumbnail cache unwritable)"
 fi
 if debugfs -R "cat /etc/nebulaos/moonraker/klipper-pin.conf" ${IMAGES}/rootfs.ext2 2>/dev/null \
 	| grep -qx '\[include /etc/nebulaos/moonraker/nebulaos.conf\]'; then
@@ -1895,10 +1913,10 @@ fi
 
 # --- macros/ and guppyscreen/ and uploads/ (sections 7-9; G62 2026-10-16) --
 if [ -n "$S01_CONTENT" ]; then
-	if echo "$S01_CONTENT" | grep -qF 'mount --bind "$GUPPY_STATE/guppyconfig.json" "$PDATA/config/guppyscreen/guppyconfig.json"'; then
-		echo "OK   S01persistent-datastore exposes guppyconfig.json under printer_data/config/guppyscreen/"
+	if echo "$S01_CONTENT" | grep -qF 'mount --bind "$NS_STATE/nebulascreen.json" "$PDATA/config/nebulascreen/nebulascreen.json"'; then
+		echo "OK   S01persistent-datastore exposes nebulascreen.json under printer_data/config/nebulascreen/"
 	else
-		echo "MISS S01persistent-datastore does not expose guppyconfig.json under printer_data/config/guppyscreen/"
+		echo "MISS S01persistent-datastore does not expose nebulascreen.json under printer_data/config/nebulascreen/"
 	fi
 	if echo "$S01_CONTENT" | grep -qF 'mkdir -p "$PDATA/config/uploads/boot-logo" "$PDATA/config/uploads/mainboard-firmware"'; then
 		echo "OK   S01persistent-datastore creates config/uploads/{boot-logo,mainboard-firmware,system-image}"

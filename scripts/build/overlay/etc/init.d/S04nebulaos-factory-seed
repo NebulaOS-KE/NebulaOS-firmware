@@ -127,15 +127,15 @@ if [ -f "$SEED_MANIFEST_LIB" ]; then
 fi
 
 pause_expendable_services() {
-	log "pausing expendable services for memory-heavy seeding (guppyscreen, webcam)"
-	/etc/init.d/S58guppyscreen stop 2>/dev/null
+	log "pausing expendable services for memory-heavy seeding (nebulascreen, webcam)"
+	/etc/init.d/S58nebulascreen stop 2>/dev/null
 	/etc/init.d/S50webcam stop 2>/dev/null
 }
 
 resume_expendable_services() {
 	log "resuming paused services"
 	/etc/init.d/S50webcam start 2>/dev/null
-	/etc/init.d/S58guppyscreen start 2>/dev/null
+	/etc/init.d/S58nebulascreen start 2>/dev/null
 }
 
 seed_git_app() {

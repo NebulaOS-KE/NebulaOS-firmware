@@ -19,7 +19,7 @@ pass() { echo "PASS: $1"; PASS=$((PASS + 1)); }
 
 sh -n "$POLICY" && pass "policy file parses" || fail "policy file does not parse"
 
-for s in S54nebulaos-host-mcu S55klipper S56moonraker S58guppyscreen S50webcam S59nebulaos-update-supervisor; do
+for s in S54nebulaos-host-mcu S55klipper S56moonraker S58nebulascreen S50webcam S59nebulaos-update-supervisor; do
 	f="$OV/etc/init.d/$s"
 	grep -q 'nebulaos_start_with_adj "\$NEBULAOS_ADJ_' "$f" && pass "$s starts its daemon through nebulaos_start_with_adj" || fail "$s does not use nebulaos_start_with_adj"
 	grep -q 'NEBULAOS_OOM_POLICY' "$f" && pass "$s sources the policy" || fail "$s does not source the policy"
@@ -33,9 +33,9 @@ fi
 # shellcheck disable=SC1090
 . "$POLICY"
 [ "$NEBULAOS_ADJ_KLIPPER_MCU" -lt "$NEBULAOS_ADJ_KLIPPY" ] && [ "$NEBULAOS_ADJ_KLIPPY" -lt "$NEBULAOS_ADJ_MOONRAKER" ] \
-	&& [ "$NEBULAOS_ADJ_MOONRAKER" -lt "$NEBULAOS_ADJ_GUPPYSCREEN" ] && [ "$NEBULAOS_ADJ_GUPPYSCREEN" -lt "$NEBULAOS_ADJ_USTREAMER" ] \
+	&& [ "$NEBULAOS_ADJ_MOONRAKER" -lt "$NEBULAOS_ADJ_NEBULASCREEN" ] && [ "$NEBULAOS_ADJ_NEBULASCREEN" -lt "$NEBULAOS_ADJ_USTREAMER" ] \
 	&& [ "$NEBULAOS_ADJ_USTREAMER" -lt "$NEBULAOS_ADJ_UPDATE_SUPERVISOR" ] \
-	&& pass "priority order: klipper_mcu < klippy < moonraker < guppyscreen < ustreamer < updates" \
+	&& pass "priority order: klipper_mcu < klippy < moonraker < nebulascreen < ustreamer < updates" \
 	|| fail "priority order broken"
 [ "$NEBULAOS_ADJ_KLIPPY" -gt -1000 ] && pass "klippy stays killable (not -1000)" || fail "klippy is OOM-immune"
 

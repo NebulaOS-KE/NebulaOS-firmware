@@ -120,7 +120,8 @@ prepare_tmpdir() {
 # GUI/service readiness mission (2026-10-09): re-compose the [nebulaos]
 # component on every start - an update_manager hard recover re-clones the
 # checkout and would otherwise drop it until the next reboot (see the lib).
-# Also allows machine.services.* on guppyscreen (moonraker.asvc), which
+# Also allows machine.services.* on nebulascreen (moonraker.asvc; an old
+# "guppyscreen" entry left by an older image is harmless - add-only), which
 # Moonraker reads once at start.
 NEBULAOS_MOONRAKER_COMPOSE_LIB="${NEBULAOS_MOONRAKER_COMPOSE_LIB:-/etc/nebulaos-moonraker-compose.sh}"
 NEBULAOS_MOONRAKER_APP="${NEBULAOS_MOONRAKER_APP:-/usr/data/nebulaos/apps/moonraker}"
@@ -128,7 +129,7 @@ NEBULAOS_MOONRAKER_APP="${NEBULAOS_MOONRAKER_APP:-/usr/data/nebulaos/apps/moonra
 compose_component() {
 	[ -f "$NEBULAOS_MOONRAKER_COMPOSE_LIB" ] || return 0
 	( . "$NEBULAOS_MOONRAKER_COMPOSE_LIB" && compose_moonraker_component "$NEBULAOS_MOONRAKER_APP" \
-		&& allow_moonraker_service "$DATAPATH" guppyscreen ) || true
+		&& allow_moonraker_service "$DATAPATH" nebulascreen ) || true
 }
 
 start_daemon() {

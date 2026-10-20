@@ -36,7 +36,7 @@ for required in KERNEL_REPO KERNEL_BRANCH KERNEL_PIN KERNEL_CONFIG_PROFILE BUILD
 	MAINSAIL_TAG MAINSAIL_SHA256 \
 	WIFI_FIRMWARE_RELEASE_TAG WIFI_FIRMWARE_RELEASE_URL WIFI_FIRMWARE_ARCHIVE_SHA256 \
 	WIFI_FIRMWARE_TXT_SHA256 WIFI_FIRMWARE_BIN_SHA256 WIFI_FIRMWARE_CLM_SHA256 \
-	GUPPYSCREEN_REPO GUPPYSCREEN_BRANCH GUPPYSCREEN_PIN GUPPYSCREEN_VERSION GUPPYSCREEN_THEME; do
+	NEBULASCREEN_REPO NEBULASCREEN_BRANCH NEBULASCREEN_PIN NEBULASCREEN_VERSION NEBULASCREEN_THEME; do
 	require_pin "$required"
 done
 echo "== all required pins present in $MANIFEST =="
@@ -470,8 +470,8 @@ echo "== v4l-utils pinned commit verified ($V4L_UTILS_PIN) =="
 # script at all (see manifests/dependencies.conf's own comment on this gap);
 # the actual cross-compile happens in 04-cross-compile-app-stack.sh, this
 # stage only fetches/verifies the pinned source.
-clone_pinned nebulaos-guppyscreen "$GUPPYSCREEN_REPO" "$GUPPYSCREEN_PIN"
-git -C nebulaos-guppyscreen submodule update --init --depth 1
+clone_pinned nebulaos-nebulascreen "$NEBULASCREEN_REPO" "$NEBULASCREEN_PIN"
+git -C nebulaos-nebulascreen submodule update --init --depth 1
 
 # Submodule patches (this fork's own documented canonical build procedure,
 # wiki/Building-from-Source.md step 2) - lv_drivers' framebuffer-ioctls fix
@@ -486,12 +486,12 @@ git -C nebulaos-guppyscreen submodule update --init --depth 1
 for entry in "0002-spdlog_fmt_initializer_list.patch spdlog" "0003-lvgl-dpi-text-scale.patch lvgl"; do
 	patch_file=${entry% *}
 	submodule=${entry#* }
-	patch_path="$PWD/nebulaos-guppyscreen/patches/$patch_file"
-	if git -C "nebulaos-guppyscreen/$submodule" apply --check "$patch_path" 2>/dev/null; then
-		echo "== applying $patch_file to nebulaos-guppyscreen/$submodule =="
-		git -C "nebulaos-guppyscreen/$submodule" apply "$patch_path"
+	patch_path="$PWD/nebulaos-nebulascreen/patches/$patch_file"
+	if git -C "nebulaos-nebulascreen/$submodule" apply --check "$patch_path" 2>/dev/null; then
+		echo "== applying $patch_file to nebulaos-nebulascreen/$submodule =="
+		git -C "nebulaos-nebulascreen/$submodule" apply "$patch_path"
 	else
-		echo "== $patch_file already applied (or does not cleanly apply) to nebulaos-guppyscreen/$submodule, skipping =="
+		echo "== $patch_file already applied (or does not cleanly apply) to nebulaos-nebulascreen/$submodule, skipping =="
 	fi
 done
 

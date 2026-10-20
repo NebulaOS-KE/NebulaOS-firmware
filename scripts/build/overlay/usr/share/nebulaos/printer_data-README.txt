@@ -13,7 +13,7 @@ The three folders that are yours (the same ones Mainsail shows):
                  boot-logo/            images for the boot logo (PNG, BMP, JPEG)
                  mainboard-firmware/   .bin files for the mainboard (MCU)
                  system-image/         .img files with a whole system
-               guppyscreen/          the screen's settings
+               nebulascreen/         the screen's settings
                nebulaos/             NebulaOS's own Klipper settings - do not
                                      edit, they are replaced at every update;
                                      override them in printer.cfg or macros/

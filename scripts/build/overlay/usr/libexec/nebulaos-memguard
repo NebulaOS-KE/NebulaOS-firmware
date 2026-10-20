@@ -56,7 +56,7 @@ MG_P4_EXHAUSTED_AFTER=120
 MG_MOONRAKER_RESTART_RSS_KB=65536
 MG_MOONRAKER_RESTART_SPACING=1800
 MG_S56="${MG_S56:-/etc/init.d/S56moonraker}"
-MG_S58="${MG_S58:-/etc/init.d/S58guppyscreen}"
+MG_S58="${MG_S58:-/etc/init.d/S58nebulascreen}"
 
 # MEM-T13: the eMMC swapfile (S03nebulaos-diskswap) is a maintenance-only tier.
 # maintenance (default): on only while MAINT=1, off in IDLE and PRINTING.
@@ -188,7 +188,7 @@ mg_enforce_adj() {
 	_protected=" "
 	for _e in klipper_mcu.pid:$NEBULAOS_ADJ_KLIPPER_MCU klippy.pid:$NEBULAOS_ADJ_KLIPPY \
 		nebulaos-memguard.pid:$NEBULAOS_ADJ_MEMGUARD wpa_supplicant-wlan0.pid:$NEBULAOS_ADJ_WPA_SUPPLICANT \
-		moonraker.pid:$NEBULAOS_ADJ_MOONRAKER guppyscreen.pid:$NEBULAOS_ADJ_GUPPYSCREEN \
+		moonraker.pid:$NEBULAOS_ADJ_MOONRAKER nebulascreen.pid:$NEBULAOS_ADJ_NEBULASCREEN \
 		ustreamer.pid:$NEBULAOS_ADJ_USTREAMER nebulaos-update-supervisor.pid:$NEBULAOS_ADJ_UPDATE_SUPERVISOR; do
 		mg_pid_of "${_e%%:*}"
 		[ -n "$_p" ] || continue
@@ -245,7 +245,7 @@ mg_check_locked() {
 
 mg_snapshot() {
 	_s="snapshot MA=${MA}kB ML=${MLOCKED:-?}kB ZU=$ZU ZL=$ZL SOME10=$SOME10 FULL10=$FULL10 PRINT=$PRINT MAINT=$MAINT state=$STATE"
-	for _e in klippy.pid moonraker.pid guppyscreen.pid ustreamer.pid; do
+	for _e in klippy.pid moonraker.pid nebulascreen.pid ustreamer.pid; do
 		mg_pid_of "$_e"
 		[ -n "$_p" ] || continue
 		mg_rss_kb "$_p"
@@ -315,7 +315,7 @@ mg_enter() { # new level
 	case "$1" in
 	1) : > "$MG_RUN/memguard/deny-maintenance" ;;
 	2) : > "$MG_RUN/shed/camera" ;;
-	3) : > "$MG_RUN/shed/guppyscreen"; "$MG_S58" stop >/dev/null 2>&1 ;;
+	3) : > "$MG_RUN/shed/nebulascreen"; "$MG_S58" stop >/dev/null 2>&1 ;;
 	4) mg_p4_action ;;
 	esac
 }
@@ -326,7 +326,7 @@ mg_exit() { # level being left
 	case "$1" in
 	1) rm -f "$MG_RUN/memguard/deny-maintenance" ;;
 	2) rm -f "$MG_RUN/shed/camera" ;;
-	3) rm -f "$MG_RUN/shed/guppyscreen"; "$MG_S58" start >/dev/null 2>&1 ;;
+	3) rm -f "$MG_RUN/shed/nebulascreen"; "$MG_S58" start >/dev/null 2>&1 ;;
 	esac
 }
 
@@ -386,10 +386,10 @@ mg_evaluate() {
 # restarting GuppyScreen if it had shed it.
 mg_reset_markers() {
 	rm -f "$MG_RUN/memguard/deny-maintenance" "$MG_RUN/shed/camera" "$MG_RUN/shed/moonraker-restarting"
-	if [ -e "$MG_RUN/shed/guppyscreen" ]; then
-		rm -f "$MG_RUN/shed/guppyscreen"
+	if [ -e "$MG_RUN/shed/nebulascreen" ]; then
+		rm -f "$MG_RUN/shed/nebulascreen"
 		[ "$MG_ACTIONS" = 1 ] && "$MG_S58" start >/dev/null 2>&1
-		mg_log "cleared a GuppyScreen shed left by a previous instance"
+		mg_log "cleared a NebulaScreen shed left by a previous instance"
 	fi
 }
 

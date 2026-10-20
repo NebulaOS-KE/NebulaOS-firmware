@@ -40,7 +40,7 @@
 # Must run after S02nebulaos-namespace, S03nebulaos-diskswap, and
 # S04nebulaos-factory-seed (needs the layout, swap resilience, and a
 # seeded copy to all exist), and BEFORE S50webcam/S55klipper/
-# S56moonraker/S58guppyscreen - no service may start against a path that
+# S56moonraker/S58nebulascreen - no service may start against a path that
 # might still change under it. S01wifi (renumbered from S39, see that
 # script's own header) is a deliberate exception - it has no dependency
 # on this activation step at all, only on S01persistent-datastore's real

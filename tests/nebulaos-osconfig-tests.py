@@ -1605,7 +1605,7 @@ class SettingsSnapshotTests(unittest.TestCase):
         self.assertEqual(out["result"], "TAKEN")
         snap = os.path.join(self.s.BACKUPS_DIR, out["name"])
         for rel in ("printer.cfg", "moonraker.conf", "macros/mine.cfg", "calibration/journal.json",
-                    "guppyscreen/guppyconfig.json", "SNAPSHOT.txt"):
+                    "nebulascreen/nebulascreen.json", "SNAPSHOT.txt"):
             self.assertTrue(os.path.isfile(os.path.join(snap, rel)), rel)
         self.assertIn("#*# points = 0.1", open(os.path.join(snap, "printer.cfg")).read())
         # the database (login data, API keys) never goes under config

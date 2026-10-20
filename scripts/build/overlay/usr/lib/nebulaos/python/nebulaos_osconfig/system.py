@@ -54,6 +54,9 @@ def build_info():
             "nebulaos_version": manifest.get("nebulaos_version"),
             "firmware_head": manifest.get("firmware_head"),
             "build_date": manifest.get("build_date"),
+            # Run 15: the screen pin under its new name; the old key stays
+            # for anything that still reads it.
+            "nebulascreen_pin": manifest.get("nebulascreen_pin") or manifest.get("guppyscreen_pin"),
             "guppyscreen_pin": manifest.get("guppyscreen_pin"),
             "klipper": seed("klipper"),
             "nebulaos_klipper_extensions": seed("nebulaos-klipper-extensions"),

@@ -2,7 +2,7 @@
 #
 # NebulaOS mutable-runtime mission, Phase 8: launches the update-rollback
 # supervisor (/etc/nebulaos-update-supervisor.sh) as a persistent background
-# poller. Must start after S55klipper/S56moonraker/S58guppyscreen - it
+# poller. Must start after S55klipper/S56moonraker/S58nebulascreen - it
 # queries Moonraker's HTTP API and needs the real service topology (and any
 # already-bind-mounted persistent apps from S05) to be up first, and its own
 # restart actions target those same services.

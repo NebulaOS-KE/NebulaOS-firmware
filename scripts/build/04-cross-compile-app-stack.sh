@@ -675,149 +675,78 @@ cp -r "$VENDOR"/mainsail-dist/dist/* "$OVERLAY/usr/share/mainsail/"
 # (MIPS)" section, scripts/build-mips.sh) rather than reinventing the build
 # steps - GUPPY_SMALL_SCREEN=1 is already hardcoded inside that script, not
 # passed in from here.
-GUPPYSCREEN_SRC="$VENDOR/nebulaos-guppyscreen"
-if [ ! -d "$GUPPYSCREEN_SRC" ]; then
-	echo "FATAL: $GUPPYSCREEN_SRC not found - run 00-fetch-vendor-sources.sh first" >&2
+NEBULASCREEN_SRC="$VENDOR/nebulaos-nebulascreen"
+if [ ! -d "$NEBULASCREEN_SRC" ]; then
+	echo "FATAL: $NEBULASCREEN_SRC not found - run 00-fetch-vendor-sources.sh first" >&2
 	exit 1
 fi
-echo "== cross-compiling GuppyScreen (Migration A: Bootlin mips32el-musl toolchain, now baked into this image - see build-env/versions.env) =="
-# REPRODUCIBILITY. libhv embeds the compiler __DATE__/__TIME__ macros:
-# hv_compile_datetime() (libhv/base/htime.c) sscanf()s them and
-# hv_compile_version() (libhv/base/hversion.c) builds a version string from the
-# result. libhv.a links into guppyscreen but not into guppybeep, which is
-# exactly why guppybeep reproduced byte-for-byte across builds while
-# guppyscreen did not - same pin, same container digest, different day,
-# different binary.
-#
-# GCC honours SOURCE_DATE_EPOCH when expanding those macros, so it is pinned to
-# the committer date of the MANIFEST PIN. Anchoring to the pin rather than to
-# whatever HEAD happens to be matters: run this stage standalone against a
-# drifted checkout and a HEAD-anchored check would compare HEAD against itself,
-# pass, and still produce a binary that is not a function of the manifest.
-# An unset or empty pin is FATAL, not a fallback to HEAD. Falling back was
-# demonstrated to reproduce exactly the defect this block exists to close: with
-# no pin, the epoch is taken from whatever the checkout happens to be and the
-# refusal below never fires, so the check compares HEAD against itself, passes,
-# and still yields a binary that is not a function of the manifest.
-if [ -z "${GUPPYSCREEN_PIN:-}" ]; then
-	echo "FATAL: GUPPYSCREEN_PIN is unset or empty - refusing to anchor the GuppyScreen build date to an unpinned checkout" >&2
+echo "== cross-compiling NebulaScreen (Bootlin mips32el-musl toolchain, baked into this image - see build-env/versions.env) =="
+
+# The embedded build date is the pinned commit's date, never the wall clock:
+# SOURCE_DATE_EPOCH comes from the pin, and the build refuses a checkout that
+# is not exactly the pin.
+if [ -z "${NEBULASCREEN_PIN:-}" ]; then
+	echo "FATAL: NEBULASCREEN_PIN is unset or empty - refusing to anchor the NebulaScreen build date to an unpinned checkout" >&2
 	exit 1
 fi
-GUPPY_REF=$GUPPYSCREEN_PIN
-GUPPY_HEAD=$(git -C "$GUPPYSCREEN_SRC" rev-parse HEAD 2>/dev/null || echo "")
-if [ "$GUPPY_HEAD" != "$GUPPYSCREEN_PIN" ]; then
-	echo "FATAL: GuppyScreen checkout is at $GUPPY_HEAD but the manifest pins $GUPPYSCREEN_PIN - refusing to build a binary that is not a function of the pin" >&2
+NS_HEAD=$(git -C "$NEBULASCREEN_SRC" rev-parse HEAD 2>/dev/null || echo "")
+if [ "$NS_HEAD" != "$NEBULASCREEN_PIN" ]; then
+	echo "FATAL: NebulaScreen checkout is at $NS_HEAD but the manifest pins $NEBULASCREEN_PIN - refusing to build a binary that is not a function of the pin" >&2
 	exit 1
 fi
-GUPPY_EPOCH=$(git -C "$GUPPYSCREEN_SRC" show -s --format=%ct "$GUPPY_REF" 2>/dev/null || echo "")
-case "$GUPPY_EPOCH" in
+NS_EPOCH=$(git -C "$NEBULASCREEN_SRC" show -s --format=%ct "$NEBULASCREEN_PIN" 2>/dev/null || echo "")
+case "$NS_EPOCH" in
 	''|*[!0-9]*)
-		echo "FATAL: cannot derive SOURCE_DATE_EPOCH from the pinned GuppyScreen commit ($GUPPY_REF) - refusing to produce a binary whose embedded build date depends on the wall clock" >&2
+		echo "FATAL: cannot derive SOURCE_DATE_EPOCH from the pinned NebulaScreen commit ($NEBULASCREEN_PIN)" >&2
 		exit 1 ;;
 esac
-# The C __DATE__ format is "Mmm dd yyyy" with a space-padded day, and it is
-# always ASCII English. LC_ALL=C is mandatory here, not cosmetic: under an
-# LC_TIME such as sv_SE this same call renders "aug 18 2026" and the assertion
-# below would hard-fail a release build over a problem that does not exist.
-GUPPY_EXPECT_DATE=$(LC_ALL=C date -u -d "@$GUPPY_EPOCH" '+%b %e %Y')
-echo "== GuppyScreen SOURCE_DATE_EPOCH=$GUPPY_EPOCH (expects __DATE__ \"$GUPPY_EXPECT_DATE\") =="
+echo "== NebulaScreen SOURCE_DATE_EPOCH=$NS_EPOCH =="
 
-# Remove every cross-build tree, not just build/. scripts/build-mips.sh builds
-# libhv and spdlog in their OWN directories (libhv/build-mips, spdlog/build-mips)
-# and copies the resulting archives over libhv/lib/libhv.a. Those two survive a
-# `rm -rf build`, htime.c does not change when SOURCE_DATE_EPOCH does, and make
-# would therefore relink a STALE libhv.a still carrying the old date - making
-# this whole fix a silent no-op on any persistent vendor checkout, which is the
-# normal local-developer case (clone_pinned has an "already present" branch).
-rm -rf "$GUPPYSCREEN_SRC/build" "$GUPPYSCREEN_SRC/libhv/build-mips" "$GUPPYSCREEN_SRC/spdlog/build-mips"
+# G82 (Run 15): ONE build recipe for the image and for stand-alone releases -
+# the screen repo's own scripts/build-release.sh (host libhv/spdlog, the MIPS
+# build, strip, the commit-date check, then the release zip and its check).
+# The toolchain is put on PATH only for this subshell - see build-env/
+# Dockerfile's comment on GUPPYSCREEN_TOOLCHAIN_BIN (its bundled autotools
+# would shadow the system ones v4l2-ctl needs if put on PATH globally).
 (
 	set -e
-	cd "$GUPPYSCREEN_SRC"
-	export GUPPYSCREEN_VERSION="$GUPPYSCREEN_VERSION"
-	export GUPPY_THEME="$GUPPYSCREEN_THEME"
-	# Derived and validated above, before any build tree was touched.
-	export SOURCE_DATE_EPOCH="$GUPPY_EPOCH"
-	# Scoped to this subshell only, NOT the image's global PATH - see
-	# build-env/Dockerfile's own comment on GUPPYSCREEN_TOOLCHAIN_BIN for
-	# why (this toolchain's own bundled autoreconf/automake is broken and
-	# would shadow the system one v4l2-ctl's autoreconf step needs, if put
-	# on PATH globally).
+	cd "$NEBULASCREEN_SRC"
+	export SOURCE_DATE_EPOCH="$NS_EPOCH"
+	export NEBULASCREEN_THEME="$NEBULASCREEN_THEME"
+	export CROSS_COMPILE=mipsel-linux-
 	if [ -n "${GUPPYSCREEN_TOOLCHAIN_BIN:-}" ]; then
 		export PATH="$GUPPYSCREEN_TOOLCHAIN_BIN:$PATH"
 	fi
-	# wiki/Building-from-Source.md step 3 ("Build the bundled libraries") -
-	# scripts/build-mips.sh backs up and restores these two native
-	# archives around its own MIPS rebuild, so they must already exist.
-	# (The wpa_supplicant client library is gone: GuppyScreen's Wi-Fi goes
-	# through machine.nebulaos.wifi.* since 2026-10-11.)
-	# Deliberately NOT setting CROSS_COMPILE for these two - the top-level
-	# Makefile switches CC/AR/etc the moment CROSS_COMPILE is non-empty (see
-	# its own `ifdef CROSS_COMPILE` block), and these three targets need a
-	# plain NATIVE build here (confirmed: setting it broke `make libhv.a`
-	# with "Relocations in generic ELF" - its own build system does not
-	# cross-compile correctly through this simple CC override, unlike
-	# build-mips.sh below, which cross-compiles libhv/spdlog itself via a
-	# proper CMake toolchain file).
-	make libhv.a
-	make libspdlog.a
-	# build-mips.sh defaults CROSS_COMPILE to mipsel-linux- itself when
-	# unset - not overridden here, for the same reason as above. Finds the
-	# Migration-A toolchain via this image's own PATH (build-env/Dockerfile
-	# puts /toolchains/mips32el--musl--stable-2024.02-1/bin on PATH
-	# directly, matching what ghcr.io/coreflake1/guppydev used to provide).
-	bash scripts/build-mips.sh
-	# scripts/release.sh, the documented release packaging step for this
-	# project, strips both binaries before shipping them - matches the
-	# previously hand-built binary being replaced here, and there is no
-	# reason to ship debug symbols on the printer.
-	mipsel-linux-strip build/bin/guppyscreen build/bin/guppybeep
+	bash scripts/build-release.sh "$NEBULASCREEN_VERSION"
 )
-# Phase 11 (2026-08-15): the alpine:latest chown-fixup container that used
-# to run here is gone - it existed only to reclaim ownership of build/
-# after the old guppydev container wrote it as root. This build now runs
-# as one consistent user throughout, so build/ was never root-owned to
-# begin with.
 
-GUPPY_BIN="$GUPPYSCREEN_SRC/build/bin/guppyscreen"
-GUPPY_BEEP="$GUPPYSCREEN_SRC/build/bin/guppybeep"
-
-# Verify real output rather than trusting a zero exit code alone - the
-# per-object-directory-race retry logic inside build-mips.sh (see its own
-# header comment) is a real, documented workaround, not proof the final
-# binary is actually a complete, correctly-linked MIPS executable.
-for bin in "$GUPPY_BIN" "$GUPPY_BEEP"; do
+NS_BIN="$NEBULASCREEN_SRC/build/bin/nebulascreen"
+NS_BEEP="$NEBULASCREEN_SRC/build/bin/nebulabeep"
+NS_ZIP="$NEBULASCREEN_SRC/dist/nebulascreen-$NEBULASCREEN_VERSION.zip"
+for bin in "$NS_BIN" "$NS_BEEP"; do
 	[ -s "$bin" ] || { echo "FATAL: $bin missing or empty after build" >&2; exit 1; }
 	file "$bin" | grep -q "MIPS" || { echo "FATAL: $bin is not a MIPS binary (got: $(file "$bin"))" >&2; exit 1; }
+	file "$bin" | grep -q "statically linked" || {
+		echo "FATAL: $bin is not statically linked - this rootfs has no dynamic linker entry for it" >&2
+		exit 1
+	}
 done
-# The reproducibility fix is ASSERTED, not assumed, and the assertion is not
-# skippable: GUPPY_EXPECT_DATE was derived and validated before the build, and
-# an unset value here is itself fatal. A check that quietly does nothing when
-# its input is missing is the failure mode this section exists to prevent.
-if [ -z "${GUPPY_EXPECT_DATE:-}" ]; then
-	echo "FATAL: GUPPY_EXPECT_DATE was never derived - the reproducibility assertion cannot run, and skipping it is not an option" >&2
-	exit 1
-fi
-if strings -a "$GUPPY_BIN" | grep -qF "$GUPPY_EXPECT_DATE"; then
-	echo "PASS: guppyscreen embeds the pinned commit date ($GUPPY_EXPECT_DATE), not the wall clock"
-else
-	echo "FATAL: guppyscreen does not embed the pinned commit date ($GUPPY_EXPECT_DATE) - SOURCE_DATE_EPOCH did not reach the compiler, so this binary is a function of the calendar and not of the pin" >&2
-	echo "       date-shaped strings actually embedded:" >&2
-	strings -a "$GUPPY_BIN" | grep -aoE '(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) [ 0-9][0-9] [0-9]{4}' | sort -u >&2
-	exit 1
-fi
+[ -s "$NS_ZIP" ] || { echo "FATAL: release zip $NS_ZIP missing" >&2; exit 1; }
+echo "== NebulaScreen build verified: $(file "$NS_BIN") =="
 
-file "$GUPPY_BIN" | grep -q "statically linked" || {
-	echo "FATAL: $GUPPY_BIN is not statically linked - this rootfs has no dynamic linker entry for it (see the ustreamer section above for the exact ABI-mismatch failure mode a dynamically-linked binary hits here)" >&2
-	exit 1
-}
-echo "== GuppyScreen build verified: $(file "$GUPPY_BIN") =="
-
-mkdir -p "$OVERLAY/opt/guppyscreen" "$REPO_ROOT/artifacts/guppyscreen-mips"
-cp "$GUPPY_BIN" "$OVERLAY/opt/guppyscreen/guppyscreen"
-cp "$GUPPY_BEEP" "$OVERLAY/opt/guppyscreen/guppybeep"
-cp "$GUPPY_BIN" "$REPO_ROOT/artifacts/guppyscreen-mips/guppyscreen"
-cp "$GUPPY_BEEP" "$REPO_ROOT/artifacts/guppyscreen-mips/guppybeep"
-chmod 755 "$OVERLAY/opt/guppyscreen/guppyscreen" "$OVERLAY/opt/guppyscreen/guppybeep"
+mkdir -p "$OVERLAY/opt/nebulascreen" "$REPO_ROOT/artifacts/nebulascreen-mips" \
+	"$OVERLAY/usr/share/nebulaos/nebulascreen"
+cp "$NS_BIN" "$OVERLAY/opt/nebulascreen/nebulascreen"
+cp "$NS_BEEP" "$OVERLAY/opt/nebulascreen/nebulabeep"
+cp "$NS_BIN" "$REPO_ROOT/artifacts/nebulascreen-mips/nebulascreen"
+cp "$NS_BEEP" "$REPO_ROOT/artifacts/nebulascreen-mips/nebulabeep"
+chmod 755 "$OVERLAY/opt/nebulascreen/nebulascreen" "$OVERLAY/opt/nebulascreen/nebulabeep"
+# G82: the image's own release record - the seed "the image wins" resets a
+# downloaded release to (S58nebulascreen, /etc/nebulascreen-lib.sh).
+python3 -c 'import sys, zipfile; sys.stdout.buffer.write(zipfile.ZipFile(sys.argv[1]).read("release_info.json"))' \
+	"$NS_ZIP" > "$OVERLAY/usr/share/nebulaos/nebulascreen/release_info.json"
+chmod 644 "$OVERLAY/usr/share/nebulaos/nebulascreen/release_info.json"
+echo "== NebulaScreen release record: $(tr -d '\n' < "$OVERLAY/usr/share/nebulaos/nebulascreen/release_info.json") =="
 
 ### 7. NebulaOS mutable-runtime mission, Phase 4 (revised - real-history
 # repair mission, see docs/NEBULAOS_MOONRAKER_UPDATE_AND_CAMERA_ANALYSIS.md
@@ -1047,7 +976,7 @@ fi
 # hand-incremented counter - adding a third component to the identity is a
 # one-line change that cannot be forgotten to bump, and a device whose
 # extensions pin moved but whose Klipper pin did not still migrates.
-migration_version=$(printf '%s' "${klipper_seed_commit}:${extensions_seed_commit}:${moonraker_seed_commit}:${GUPPYSCREEN_PIN:-unknown}" | sha256sum | cut -c1-16)
+migration_version=$(printf '%s' "${klipper_seed_commit}:${extensions_seed_commit}:${moonraker_seed_commit}:${NEBULASCREEN_PIN:-unknown}" | sha256sum | cut -c1-16)
 firmware_head=$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo "unknown")
 
 cat > "$OVERLAY/opt/nebulaos-seeds/seed-manifest.json" <<EOF
@@ -1057,7 +986,8 @@ cat > "$OVERLAY/opt/nebulaos-seeds/seed-manifest.json" <<EOF
   "build_date": "$build_date",
   "migration_version": "$migration_version",
   "firmware_head": "$firmware_head",
-  "guppyscreen_pin": "${GUPPYSCREEN_PIN:-unknown}",
+  "nebulascreen_pin": "${NEBULASCREEN_PIN:-unknown}",
+  "guppyscreen_pin": "${NEBULASCREEN_PIN:-unknown}",
   "seeds": {
     "klipper": {
       "format": "git_repo_archive_real_history",
@@ -1137,7 +1067,9 @@ cat > "$OVERLAY/opt/nebulaos-version.json" <<EOF
   "firmware_tag": "$firmware_tag",
   "firmware_sha": "$firmware_head",
   "kernel_sha": "${KERNEL_PIN:-unknown}",
-  "guppyscreen_sha": "${GUPPYSCREEN_PIN:-unknown}"
+  "nebulascreen_sha": "${NEBULASCREEN_PIN:-unknown}",
+  "guppyscreen_sha": "${NEBULASCREEN_PIN:-unknown}",
+  "nebulaos_ui_api": ${NEBULAOS_UI_API:?NEBULAOS_UI_API missing from manifests/dependencies.conf}
 }
 EOF
 echo "== wrote /opt/nebulaos-version.json: $(cat "$OVERLAY/opt/nebulaos-version.json") =="

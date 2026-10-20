@@ -232,7 +232,7 @@ expect "(g) transitions" "$TRANS" " P1@10022 P2@10037 P3@10052 P4@10067"
 expect "(g) state P4" "$STATE" P4
 [ -e "$MG_RUN/memguard/deny-maintenance" ] && pass "(g) P1 denies maintenance" || fail "(g) no deny-maintenance"
 [ -e "$MG_RUN/shed/camera" ] && pass "(g) P2 sheds the camera (also while printing)" || fail "(g) camera not shed"
-[ -e "$MG_RUN/shed/guppyscreen" ] && grep -q 'S58 stop' "$WORK/svc.calls" && pass "(g) P3 stops GuppyScreen" || fail "(g) GuppyScreen not stopped"
+[ -e "$MG_RUN/shed/nebulascreen" ] && grep -q 'S58 stop' "$WORK/svc.calls" && pass "(g) P3 stops NebulaScreen" || fail "(g) NebulaScreen not stopped"
 # fast drop: escalation is still one level per 10 s
 fresh; NOW=20000; TRANS=""; run 40 10
 expect "(g) a sudden drop still escalates one level per 10 s" "$TRANS" " P1@20002 P2@20012 P3@20022 P4@20032"
@@ -240,9 +240,9 @@ expect "(g) a sudden drop still escalates one level per 10 s" "$TRANS" " P1@2000
 TRANS=""; run 241 100
 expect "(h) de-escalation one level per 60 s dwell" "$TRANS" " P3@20101 P2@20161 P1@20221 P0@20281"
 expect "(h) back to NORMAL" "$STATE" NORMAL
-[ ! -e "$MG_RUN/shed/camera" ] && [ ! -e "$MG_RUN/shed/guppyscreen" ] && [ ! -e "$MG_RUN/memguard/deny-maintenance" ] \
+[ ! -e "$MG_RUN/shed/camera" ] && [ ! -e "$MG_RUN/shed/nebulascreen" ] && [ ! -e "$MG_RUN/memguard/deny-maintenance" ] \
 	&& pass "(h) every marker removed" || fail "(h) markers left: $(ls "$MG_RUN/shed" "$MG_RUN/memguard")"
-grep -q 'S58 start' "$WORK/svc.calls" && pass "(h) GuppyScreen restarted on leaving P3" || fail "(h) GuppyScreen not restarted"
+grep -q 'S58 start' "$WORK/svc.calls" && pass "(h) NebulaScreen restarted on leaving P3" || fail "(h) NebulaScreen not restarted"
 # (i) P4 with Moonraker RSS 40 MiB -> no restart
 fresh; NOW=30000; fakeproc 102 python3 -400 40960; run 40 10
 grep -q 'S56' "$WORK/svc.calls" 2>/dev/null && fail "(i) Moonraker restarted at 40 MiB" || pass "(i) P4 with Moonraker at 40 MiB: no restart"
@@ -268,10 +268,10 @@ fresh; NOW=80000; MG_ACTIONS=0; run 40 10; MG_ACTIONS=1
 [ ! -e "$MG_RUN/shed/camera" ] && [ ! -e "$WORK/svc.calls" ] && pass "MG_ACTIONS=0: tracks without acting" || fail "MG_ACTIONS=0 acted"
 expect "MG_ACTIONS=0 still reports the level" "$STATE" P4
 # a restarted memguard clears a previous instance's sheds
-fresh; : > "$MG_RUN/shed/guppyscreen"; : > "$MG_RUN/shed/camera"
+fresh; : > "$MG_RUN/shed/nebulascreen"; : > "$MG_RUN/shed/camera"
 mg_reset_markers
-[ ! -e "$MG_RUN/shed/guppyscreen" ] && [ ! -e "$MG_RUN/shed/camera" ] && grep -q 'S58 start' "$WORK/svc.calls" \
-	&& pass "restart clears stale sheds and restarts GuppyScreen" || fail "stale sheds not cleared"
+[ ! -e "$MG_RUN/shed/nebulascreen" ] && [ ! -e "$MG_RUN/shed/camera" ] && grep -q 'S58 start' "$WORK/svc.calls" \
+	&& pass "restart clears stale sheds and restarts NebulaScreen" || fail "stale sheds not cleared"
 
 echo "nebulaos-memguard-tests: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

@@ -11,7 +11,7 @@
 # present in the shipped printer_data config tree.
 #
 # That copy silently reverted a fix that had already landed upstream of it.
-# GUPPYSCREEN_PIN 5f1911ac - subject "fix(paths): route NebulaOS-owned state
+# NEBULASCREEN_PIN 5f1911ac - subject "fix(paths): route NebulaOS-owned state
 # through /opt bind mounts, not /usr/data top-level aliases" - moved
 # static_ip.py's state off the retired /usr/data/printer_data alias, which
 # overlaps stock's shared tree. A later firmware commit restored the file
@@ -20,7 +20,7 @@
 # copy had no mechanical link to the canonical version, so nothing noticed.
 #
 # This test is that link. It is deliberately a byte-for-byte comparison
-# against the OWNING repository at the exact GUPPYSCREEN_PIN the firmware
+# against the OWNING repository at the exact NEBULASCREEN_PIN the firmware
 # manifest ships - not a spot-check of the two lines that happened to drift
 # last time.
 #
@@ -38,16 +38,18 @@ pass() { echo "PASS: $1"; PASS=$((PASS + 1)); }
 fail() { echo "FAIL: $1"; FAIL=$((FAIL + 1)); }
 
 [ -f "$DEPS" ] || { echo "SKIP: $DEPS not present"; exit 0; }
-PIN=$(grep -E '^GUPPYSCREEN_PIN=' "$DEPS" | tail -1 | cut -d= -f2)
-[ -n "$PIN" ] || { echo "SKIP: GUPPYSCREEN_PIN not set in the manifest"; exit 0; }
+PIN=$(grep -E '^NEBULASCREEN_PIN=' "$DEPS" | tail -1 | cut -d= -f2)
+[ -n "$PIN" ] || { echo "SKIP: NEBULASCREEN_PIN not set in the manifest"; exit 0; }
 
 # Resolve the OWNING repository at exactly the shipping pin. A checkout at
 # any other commit is not evidence about what ships, so it is refused rather
 # than silently used - the same rule tests/virgin-first-boot-simulation-
 # tests.sh applies to the extensions checkout.
 GUPPY_REPO=""
-if [ -d "$REPO_ROOT/vendor/nebulaos-guppyscreen/.git" ]; then
-	GUPPY_REPO="$REPO_ROOT/vendor/nebulaos-guppyscreen"
+if [ -d "$REPO_ROOT/vendor/nebulaos-nebulascreen/.git" ]; then
+	GUPPY_REPO="$REPO_ROOT/vendor/nebulaos-nebulascreen"
+elif [ -d "$REPO_ROOT/../NebulaOS-nebulascreen/.git" ]; then
+	GUPPY_REPO=$(cd "$REPO_ROOT/../NebulaOS-nebulascreen" && pwd)
 elif [ -d "$REPO_ROOT/../NebulaOS-guppyscreen/.git" ]; then
 	GUPPY_REPO=$(cd "$REPO_ROOT/../NebulaOS-guppyscreen" && pwd)
 fi
@@ -56,7 +58,7 @@ if [ -z "$GUPPY_REPO" ]; then
 	exit 0
 fi
 if ! git -C "$GUPPY_REPO" cat-file -e "${PIN}^{commit}" 2>/dev/null; then
-	echo "SKIP: $GUPPY_REPO does not contain GUPPYSCREEN_PIN $PIN - refusing to compare against a checkout that is not what ships"
+	echo "SKIP: $GUPPY_REPO does not contain NEBULASCREEN_PIN $PIN - refusing to compare against a checkout that is not what ships"
 	exit 0
 fi
 
@@ -80,7 +82,7 @@ for spec in $OWNED_FILES; do
 	if git -C "$GUPPY_REPO" show "$PIN:$src" | cmp -s - "$local_copy"; then
 		pass "$dst is byte-identical to NebulaOS-guppyscreen@${PIN%%??????????????????????????????}...:$src"
 	else
-		fail "$dst has DRIFTED from its owner (NebulaOS-guppyscreen@$PIN:$src). Do not hand-edit this copy - update the owning repository, advance GUPPYSCREEN_PIN, then re-sync. Diff:
+		fail "$dst has DRIFTED from its owner (NebulaOS-guppyscreen@$PIN:$src). Do not hand-edit this copy - update the owning repository, advance NEBULASCREEN_PIN, then re-sync. Diff:
 $(git -C "$GUPPY_REPO" show "$PIN:$src" | diff - "$local_copy" | head -20)"
 	fi
 done

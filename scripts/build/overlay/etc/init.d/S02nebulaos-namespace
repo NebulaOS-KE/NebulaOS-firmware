@@ -35,7 +35,10 @@ NEBULAOS_ROOT="${NEBULAOS_ROOT:-/usr/data/nebulaos}"
 # upgraded into this generation would otherwise keep advertising a layout
 # that no longer describes what is on disk, and that is exactly the kind of
 # quiet drift this file exists to prevent.
-SCHEMA_VERSION=2
+# 3 (Run 15): the screen app is NebulaScreen (apps/updates/backups
+# nebulascreen; apps/guppyscreen is no longer created and never deleted - an
+# image in the other slot may still use it).
+SCHEMA_VERSION=3
 PRINTER_DATA_CONFIG_SEED="${PRINTER_DATA_CONFIG_SEED:-/opt/nebulaos-seeds/printer_data-config}"
 PRINTER_DATA_CONFIG_MARKER="$NEBULAOS_ROOT/system/printer-data-config-seeded.json"
 
@@ -49,7 +52,7 @@ create_layout() {
 		"$NEBULAOS_ROOT/apps/nebulaos-klipper-extensions" \
 		"$NEBULAOS_ROOT/apps/moonraker" \
 		"$NEBULAOS_ROOT/apps/mainsail" \
-		"$NEBULAOS_ROOT/apps/guppyscreen" \
+		"$NEBULAOS_ROOT/apps/nebulascreen" \
 		"$NEBULAOS_ROOT/envs/moonraker" \
 		"$NEBULAOS_ROOT/envs/klipper" \
 		"$NEBULAOS_ROOT/printer_data/config/uploads/boot-logo" \
@@ -69,24 +72,18 @@ create_layout() {
 		"$NEBULAOS_ROOT/updates/klipper-stack" \
 		"$NEBULAOS_ROOT/updates/moonraker" \
 		"$NEBULAOS_ROOT/updates/mainsail" \
+		"$NEBULAOS_ROOT/updates/nebulascreen" \
 		"$NEBULAOS_ROOT/backups/klipper" \
 		"$NEBULAOS_ROOT/backups/nebulaos-klipper-extensions" \
 		"$NEBULAOS_ROOT/backups/moonraker" \
 		"$NEBULAOS_ROOT/backups/mainsail" \
+		"$NEBULAOS_ROOT/backups/nebulascreen" \
 		"$NEBULAOS_ROOT/backups/printer_config" \
 		"$NEBULAOS_ROOT/maintenance/logs"
 
-	# apps/guppyscreen is reserved-only per this mission's own scope - a
-	# marker file documents why it's intentionally empty, so a future
-	# reader (or this project's own retention manager) doesn't mistake it
-	# for an abandoned/incomplete directory.
-	if [ ! -e "$NEBULAOS_ROOT/apps/guppyscreen/.reserved-not-implemented" ]; then
-		cat > "$NEBULAOS_ROOT/apps/guppyscreen/.reserved-not-implemented" <<'EOF'
-GuppyScreen stays served from the immutable /opt/guppyscreen copy for this
-mission. This directory is reserved layout only - GuppyScreen's own update
-mechanism is explicitly a separate, future mission per the governing brief.
-EOF
-	fi
+	# apps/nebulascreen holds a NebulaScreen release downloaded by Moonraker's
+	# update manager (G82); empty, the image's own /opt/nebulascreen runs. S58
+	# resets it to the image seed after a system image install (image wins).
 }
 
 # Real bug found live (auto-updates-camera-complete mission addendum,
@@ -173,10 +170,10 @@ write_manifest() {
   "created_at": "$now",
   "created_at_caveat": "may read as an early-epoch date if this boot occurred before NTP sync - see docs/NEBULAOS_RETENTION_POLICY.md sec 2.6",
   "layout": {
-    "apps": ["klipper", "nebulaos-klipper-extensions", "moonraker", "mainsail", "guppyscreen"],
+    "apps": ["klipper", "nebulaos-klipper-extensions", "moonraker", "mainsail", "nebulascreen"],
     "klipper_stack": ["klipper", "nebulaos-klipper-extensions"],
     "klipper_stack_note": "validated, updated and rolled back as one pair - see /etc/nebulaos-update-supervisor.sh",
-    "guppyscreen_status": "reserved_not_implemented",
+    "nebulascreen_note": "a downloaded release in apps/nebulascreen is bound over /opt/nebulascreen per item; a new system image resets it",
     "envs": ["moonraker", "klipper"],
     "printer_data": "private",
     "shared_gcode_path": "/usr/data/printer_data/gcodes"

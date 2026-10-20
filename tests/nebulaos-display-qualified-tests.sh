@@ -673,7 +673,7 @@ index_of() {
 }
 i_klipper=$(index_of S55klipper)
 i_moonraker=$(index_of S56moonraker)
-i_guppy=$(index_of S58guppyscreen)
+i_guppy=$(index_of S58nebulascreen)
 i_mcurecovery=$(index_of S95mcu-boot-recovery)
 i_ours=$(index_of S97nebulaos-display-qualified-apply)
 i_sleepwake=$(index_of S98nebulaos-display-sleep-wake-controller)
@@ -691,7 +691,7 @@ if [ -n "$i_klipper" ] && [ -n "$i_moonraker" ] && [ -n "$i_guppy" ] && [ -n "$i
 	if [ "$i_ours" -gt "$i_klipper" ] && [ "$i_ours" -gt "$i_moonraker" ] && [ "$i_ours" -gt "$i_guppy" ]; then
 		pass
 	else
-		fail "S97nebulaos-display-qualified-apply does not sort strictly after S55klipper/S56moonraker/S58guppyscreen"
+		fail "S97nebulaos-display-qualified-apply does not sort strictly after S55klipper/S56moonraker/S58nebulascreen"
 	fi
 	if [ -n "$i_mcurecovery" ] && [ "$i_ours" -gt "$i_mcurecovery" ]; then
 		pass
@@ -777,7 +777,7 @@ MARKER_HEALTHY="$WORK/marker-healthy"
 	PATH="$FAKE_ETC:$PATH"
 	export PATH
 	NDQ_LIB="$LIB" NDQ_HEALTHCHECK_LIB="$HEALTHCHECK_LIB" \
-	MARKER="$MARKER_HEALTHY" GUPPYSCREEN_PIDFILE="$GUPPY_PIDFILE" \
+	MARKER="$MARKER_HEALTHY" NEBULASCREEN_PIDFILE="$GUPPY_PIDFILE" \
 	HEALTH_RETRIES=2 HEALTH_DELAY=0 \
 	NDQ_CONFIG_FILE="$NDQ_CONFIG_FILE" \
 	NDQ_TOUCH_MODE_FILE="$NDQ_TOUCH_MODE_FILE" NDQ_TOUCH_STATUS_FILE="$NDQ_TOUCH_STATUS_FILE" \
@@ -798,7 +798,7 @@ echo "SENTINEL-UNTOUCHED" > "$NDQ_BACKLIGHT_CMD_FILE"
 	PATH="$FAKE_ETC:$PATH"
 	export PATH
 	NDQ_LIB="$LIB" NDQ_HEALTHCHECK_LIB="$HEALTHCHECK_LIB" \
-	MARKER="$MARKER_HEALTHY" GUPPYSCREEN_PIDFILE="$GUPPY_PIDFILE" \
+	MARKER="$MARKER_HEALTHY" NEBULASCREEN_PIDFILE="$GUPPY_PIDFILE" \
 	HEALTH_RETRIES=2 HEALTH_DELAY=0 \
 	NDQ_CONFIG_FILE="$NDQ_CONFIG_FILE" \
 	NDQ_TOUCH_MODE_FILE="$NDQ_TOUCH_MODE_FILE" NDQ_TOUCH_STATUS_FILE="$NDQ_TOUCH_STATUS_FILE" \
@@ -817,7 +817,7 @@ MARKER_UNHEALTHY="$WORK/marker-unhealthy"
 	PATH="$FAKE_ETC:$PATH"
 	export PATH
 	NDQ_LIB="$LIB" NDQ_HEALTHCHECK_LIB="$HEALTHCHECK_LIB" \
-	MARKER="$MARKER_UNHEALTHY" GUPPYSCREEN_PIDFILE="$GUPPY_PIDFILE" \
+	MARKER="$MARKER_UNHEALTHY" NEBULASCREEN_PIDFILE="$GUPPY_PIDFILE" \
 	HEALTH_RETRIES=1 HEALTH_DELAY=0 \
 	NDQ_CONFIG_FILE="$NDQ_CONFIG_FILE" \
 	NDQ_TOUCH_MODE_FILE="$NDQ_TOUCH_MODE_FILE" NDQ_TOUCH_STATUS_FILE="$NDQ_TOUCH_STATUS_FILE" \
@@ -842,7 +842,7 @@ MARKER_NODISPLAY="$WORK/marker-nodisplay"
 	PATH="$FAKE_ETC:$PATH"
 	export PATH
 	NDQ_LIB="$LIB" NDQ_HEALTHCHECK_LIB="$HEALTHCHECK_LIB" \
-	MARKER="$MARKER_NODISPLAY" GUPPYSCREEN_PIDFILE="$GUPPY_PIDFILE" \
+	MARKER="$MARKER_NODISPLAY" NEBULASCREEN_PIDFILE="$GUPPY_PIDFILE" \
 	HEALTH_RETRIES=1 HEALTH_DELAY=0 \
 	NDQ_CONFIG_FILE="$NDQ_CONFIG_FILE" \
 	NDQ_TOUCH_MODE_FILE="$NDQ_TOUCH_MODE_FILE" NDQ_TOUCH_STATUS_FILE="$NDQ_TOUCH_STATUS_FILE" \
@@ -867,7 +867,7 @@ s2_run() { # marker -> rc; elapsed seconds in S2_SECS
 		PATH="$FAKE_ETC:$PATH"
 		export PATH
 		NDQ_LIB="$LIB" NDQ_HEALTHCHECK_LIB="$HEALTHCHECK_LIB" \
-		MARKER="$1" GUPPYSCREEN_PIDFILE="$GUPPY_PIDFILE" \
+		MARKER="$1" NEBULASCREEN_PIDFILE="$GUPPY_PIDFILE" \
 		HEALTH_RETRIES="${S2_RETRIES:-20}" HEALTH_DELAY="${S2_DELAY:-3}" \
 		NDQ_CONFIG_FILE="$S2_CONF" \
 		NDQ_TOUCH_MODE_FILE="$NDQ_TOUCH_MODE_FILE" NDQ_TOUCH_STATUS_FILE="$NDQ_TOUCH_STATUS_FILE" \

@@ -44,8 +44,8 @@
 #     see ndq_stage2_stack() below for why) - the exact same Moonraker
 #     /server/info klippy_state=ready + klippy_connected=true check
 #     S99confirm-good and S95mcu-boot-recovery both already rely on.
-#   - GuppyScreen running: its own S58guppyscreen PIDFILE
-#     (/var/run/guppyscreen.pid), checked the same way S58 itself manages
+#   - NebulaScreen running: its own S58nebulascreen PIDFILE
+#     (/var/run/nebulascreen.pid), checked the same way S58 itself manages
 #     it (start-stop-daemon's pidfile convention) - `kill -0` against the
 #     recorded PID.
 #   - the display itself: the backlight-final-controller driver's own
@@ -89,7 +89,7 @@ ndq_stage2_stack() {
 }
 
 : "${MARKER:=/run/nebulaos-display-qualified-apply-attempted}"
-: "${GUPPYSCREEN_PIDFILE:=/var/run/guppyscreen.pid}"
+: "${NEBULASCREEN_PIDFILE:=/var/run/nebulascreen.pid}"
 : "${HEALTH_RETRIES:=20}"
 : "${HEALTH_DELAY:=3}"
 
@@ -97,9 +97,9 @@ log() {
 	echo "S97nebulaos-display-qualified-apply: $1"
 }
 
-guppyscreen_running() {
-	[ -f "$GUPPYSCREEN_PIDFILE" ] || return 1
-	pid=$(cat "$GUPPYSCREEN_PIDFILE" 2>/dev/null)
+nebulascreen_running() {
+	[ -f "$NEBULASCREEN_PIDFILE" ] || return 1
+	pid=$(cat "$NEBULASCREEN_PIDFILE" 2>/dev/null)
 	[ -n "$pid" ] || return 1
 	kill -0 "$pid" 2>/dev/null
 }
@@ -132,7 +132,7 @@ display_healthy() {
 wait_for_health() {
 	i=0
 	while [ "$i" -lt "$HEALTH_RETRIES" ]; do
-		if ndq_stage2_stack >/dev/null 2>&1 && guppyscreen_running && networking_up && display_healthy; then
+		if ndq_stage2_stack >/dev/null 2>&1 && nebulascreen_running && networking_up && display_healthy; then
 			return 0
 		fi
 		i=$((i + 1))
@@ -164,10 +164,10 @@ start() {
 	fi
 
 	if ! wait_for_health; then
-		log "printer stack (Klipper/Moonraker), GuppyScreen, networking, or the display itself never confirmed healthy after $((HEALTH_RETRIES * HEALTH_DELAY))s - doing nothing, both drivers remain at their own safe boot defaults"
+		log "printer stack (Klipper/Moonraker), NebulaScreen, networking, or the display itself never confirmed healthy after $((HEALTH_RETRIES * HEALTH_DELAY))s - doing nothing, both drivers remain at their own safe boot defaults"
 		exit 0
 	fi
-	log "health gates passed (Klipper/Moonraker ready, GuppyScreen running, networking up, display driver responding)"
+	log "health gates passed (Klipper/Moonraker ready, NebulaScreen running, networking up, display driver responding)"
 
 	if ndq_apply_all "$NDQ_CONFIG_FILE"; then
 		log "qualified display configuration applied"

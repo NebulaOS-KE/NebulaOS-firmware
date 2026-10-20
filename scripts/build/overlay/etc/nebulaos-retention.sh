@@ -193,6 +193,8 @@ rotate_if_oversized() {
 rotate_platform_logs() {
 	rotate_if_oversized "$NEBULAOS_ROOT/printer_data/logs/klippy.log" "$LOG_ROTATE_MAX_BYTES"
 	rotate_if_oversized "$NEBULAOS_ROOT/printer_data/logs/moonraker.log" "$LOG_ROTATE_MAX_BYTES"
+	rotate_if_oversized "$NEBULAOS_ROOT/printer_data/logs/nebulascreen.log" "$LOG_ROTATE_MAX_BYTES"
+	# (the screen's log before the Run 15 rename - an old image may still write it)
 	rotate_if_oversized "$NEBULAOS_ROOT/printer_data/logs/guppyscreen.log" "$LOG_ROTATE_MAX_BYTES"
 	rotate_if_oversized "$NEBULAOS_ROOT/printer_data/logs/nginx-access.log" "$LOG_ROTATE_MAX_BYTES"
 	rotate_if_oversized "$NEBULAOS_ROOT/printer_data/logs/nginx-error.log" "$LOG_ROTATE_MAX_BYTES"

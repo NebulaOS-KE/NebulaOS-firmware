@@ -126,9 +126,9 @@ if [ "${NEBULAOS_REQUIRE_CLEAN_TREE:-0}" = "1" ]; then
 	# correction exists to avoid, so the exclusion below is kept on the
 	# narrow ground that stage 04 rewrites these tracked binaries, not on a
 	# claim that the rewrite is byte-identical.
-	if [ -n "$(cd "$REPO_ROOT" && git status --porcelain -- . ":!artifacts/guppyscreen-mips/")" ]; then
-		echo "FATAL: NEBULAOS_REQUIRE_CLEAN_TREE=1 but the main repository has uncommitted changes outside the known build-regenerated artifacts/guppyscreen-mips/ path - a release build must come from a clean, committed tree" >&2
-		echo "$(cd "$REPO_ROOT" && git status --porcelain -- . ":!artifacts/guppyscreen-mips/")" >&2
+	if [ -n "$(cd "$REPO_ROOT" && git status --porcelain -- . ":!artifacts/nebulascreen-mips/")" ]; then
+		echo "FATAL: NEBULAOS_REQUIRE_CLEAN_TREE=1 but the main repository has uncommitted changes outside the known build-regenerated artifacts/nebulascreen-mips/ path - a release build must come from a clean, committed tree" >&2
+		echo "$(cd "$REPO_ROOT" && git status --porcelain -- . ":!artifacts/nebulascreen-mips/")" >&2
 		exit 1
 	fi
 fi
@@ -175,7 +175,9 @@ artifact_sha256() {
 	git_field git_commit_buildroot vendor/buildroot-x2000
 	git_field git_commit_klipper vendor/klipper
 	git_field git_commit_moonraker vendor/moonraker
-	git_field git_commit_guppyscreen vendor/nebulaos-guppyscreen
+	# Key names kept from before the Run 15 rename (frozen provenance keys
+	# the baseline comparison reads); the values are NebulaScreen's.
+	git_field git_commit_guppyscreen vendor/nebulaos-nebulascreen
 	git_field git_commit_pellcorp_creality vendor/pellcorp-creality
 	git_field git_commit_k1_ustreamer vendor/k1-ustreamer
 	git_field git_commit_v4l_utils vendor/v4l-utils
@@ -187,8 +189,8 @@ artifact_sha256() {
 	artifact_sha256 ustreamer_cam05_patch_sha256 "$REPO_ROOT/scripts/build/patches/ustreamer-cam05-paused-blank-cache.patch"
 	artifact_sha256 ustreamer_sha256 "$REPO_ROOT/vendor/k1-ustreamer/build/ustreamer-src/src/ustreamer.bin"
 	artifact_sha256 mainsail_zip_sha256 "$REPO_ROOT/vendor/mainsail-dist/mainsail.zip"
-	artifact_sha256 guppyscreen_sha256 "$REPO_ROOT/artifacts/guppyscreen-mips/guppyscreen"
-	artifact_sha256 guppybeep_sha256 "$REPO_ROOT/artifacts/guppyscreen-mips/guppybeep"
+	artifact_sha256 guppyscreen_sha256 "$REPO_ROOT/artifacts/nebulascreen-mips/nebulascreen"
+	artifact_sha256 guppybeep_sha256 "$REPO_ROOT/artifacts/nebulascreen-mips/nebulabeep"
 	artifact_sha256 wifi_firmware_sha256 "$REPO_ROOT/scripts/build/overlay/lib/firmware/brcm/brcmfmac43430-sdio.bin"
 	artifact_sha256 wifi_clm_sha256 "$REPO_ROOT/scripts/build/overlay/lib/firmware/brcm/brcmfmac43430-sdio.clm_blob"
 	artifact_sha256 wifi_nvram_sha256 "$REPO_ROOT/scripts/build/overlay/lib/firmware/brcm/brcmfmac43430-sdio.txt"

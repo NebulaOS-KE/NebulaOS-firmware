@@ -126,9 +126,13 @@ mkdir -p "$WORK/other"; touch "$WORK/other/keep"
 ns_image_wins "$WORK/other" "$STATE.x" "$VJ" "$SEEDINFO"
 t "refuses an unexpected directory" '[ -e "$WORK/other/keep" ]'
 
-# --- the library is inert in this stage --------------------------------
-t "not wired into any init script yet" \
-	'! grep -rl "nebulascreen-lib.sh" "$REPO_ROOT/scripts/build/overlay/etc/init.d" >/dev/null 2>&1'
+# --- wired into boot (stage 2b) -------------------------------------------
+INITD="$REPO_ROOT/scripts/build/overlay/etc/init.d"
+t "S01 migrates the settings through the library" \
+	'grep -q "ns_migrate_config" "$INITD/S01persistent-datastore"'
+t "S58nebulascreen applies the image-wins rule, then activates per item" \
+	'grep -q "ns_image_wins" "$INITD/S58nebulascreen" && grep -q "ns_activate" "$INITD/S58nebulascreen"'
+t "no S58guppyscreen in the image" '[ ! -e "$INITD/S58guppyscreen" ]'
 
 echo "nebulascreen-lib-tests: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]

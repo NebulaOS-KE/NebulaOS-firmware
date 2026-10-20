@@ -52,7 +52,14 @@
 
 DATA_ROOT=/usr/data/nebulaos
 PDATA=$DATA_ROOT/printer_data
-GUPPY_STATE=$DATA_ROOT/guppyscreen
+# NebulaScreen (GuppyScreen renamed, Run 15): its own state directory. The
+# old $DATA_ROOT/guppyscreen stays untouched - an image in the other A/B slot
+# may still use it (copy, never move: /etc/nebulascreen-lib.sh).
+NS_STATE=$DATA_ROOT/nebulascreen
+OLD_GUPPY_STATE=$DATA_ROOT/guppyscreen
+NEBULASCREEN_LIB="${NEBULASCREEN_LIB:-/etc/nebulascreen-lib.sh}"
+# shellcheck disable=SC1090
+[ -r "$NEBULASCREEN_LIB" ] && . "$NEBULASCREEN_LIB"
 
 seed_once() {
 	src="$1"
@@ -107,12 +114,19 @@ start() {
 	# real folder is config/guppyscreen. An empty leftover is removed; one
 	# with files stays (an old printer.cfg may still include from it).
 	rmdir "$PDATA/config/GuppyScreen/scripts" "$PDATA/config/GuppyScreen" 2>/dev/null
-	seed_once /opt/guppyscreen/guppyconfig.json "$GUPPY_STATE/guppyconfig.json"
-	# GuppyScreen's shipped thumbnail_path is /opt/guppyscreen/thumbnails, on
+	# The screen's settings: copied once from the GuppyScreen file when there
+	# is one, else the image default (best effort; the library never fails).
+	if command -v ns_migrate_config >/dev/null 2>&1; then
+		ns_migrate_config "$OLD_GUPPY_STATE/guppyconfig.json" \
+			"$NS_STATE/nebulascreen.json" /opt/nebulascreen/nebulascreen.json
+	else
+		seed_once /opt/nebulascreen/nebulascreen.json "$NS_STATE/nebulascreen.json"
+	fi
+	# The screen's shipped thumbnail_path is /opt/nebulascreen/thumbnails, on
 	# the read-only squashfs: the image ships it as a symlink to this
 	# persistent directory, so thumbnail downloads work without touching any
 	# device's saved config (GUI readiness work, 2026-10-10).
-	mkdir -p "$GUPPY_STATE/thumbnails"
+	mkdir -p "$NS_STATE/thumbnails"
 	# G63 (2026-10-16): one place for files handed to NebulaOS, inside the
 	# config root - Mainsail's upload button only ever uploads into "config"
 	# (the separate G62 root "uploads" could not receive files): boot logos,
@@ -130,35 +144,40 @@ start() {
 	# writable and persistent, without changing either service's config.
 	mount --bind "$PDATA" /opt/printer_data
 
-	# GuppyScreen hardcodes its own config path as
-	# /proc/self/exe's-directory/guppyconfig.json (main.cpp) - i.e.
-	# /opt/guppyscreen/guppyconfig.json, on the read-only squashfs, not
+	# NebulaScreen (formerly GuppyScreen) hardcodes its own config path as
+	# /proc/self/exe's-directory/nebulascreen.json (main.cpp) - i.e.
+	# /opt/nebulascreen/nebulascreen.json, on the read-only squashfs, not
 	# reachable via any override flag. A single-file bind mount is the only
 	# way to make just this one file persistent without also having to
-	# duplicate the guppyscreen/guppybeep binaries or themes/ into real
+	# duplicate the nebulascreen/nebulabeep binaries or themes/ into real
 	# storage. Without this, touch_calibrated (sysinfo_panel.cpp) can never
 	# actually save - not just "resets every boot," writes fail outright,
-	# which is why GuppyScreen was stuck showing the recalibration wizard.
-	mount --bind "$GUPPY_STATE/guppyconfig.json" /opt/guppyscreen/guppyconfig.json
+	# which is why the screen was stuck showing the recalibration wizard.
+	mount --bind "$NS_STATE/nebulascreen.json" /opt/nebulascreen/nebulascreen.json
 
 	# Phase 2 final software closure mission (2026-09-09): the SAME real
 	# file, bind-mounted a second time onto printer_data/config/
-	# guppyscreen/guppyconfig.json, so it is also visible and editable
+	# nebulascreen/nebulascreen.json, so it is also visible and editable
 	# through Mainsail's ordinary Config Files browser - both paths are
-	# the identical persistent inode at $GUPPY_STATE/guppyconfig.json, so
+	# the identical persistent inode at $NS_STATE/nebulascreen.json, so
 	# an edit through either one is immediately visible through the
-	# other. Deliberately only this one file, never the guppyscreen/
-	# guppybeep binaries or themes/ - those are image-owned, not user
+	# other. Deliberately only this one file, never the nebulascreen/
+	# nebulabeep binaries or themes/ - those are image-owned, not user
 	# config, and do not belong under printer_data/config/ at all (see
 	# docs/NEBULAOS_CONFIG_MATERIALIZATION.md's ownership model).
-	mkdir -p "$PDATA/config/guppyscreen"
-	[ -e "$PDATA/config/guppyscreen/guppyconfig.json" ] || touch "$PDATA/config/guppyscreen/guppyconfig.json"
-	mount --bind "$GUPPY_STATE/guppyconfig.json" "$PDATA/config/guppyscreen/guppyconfig.json"
+	mkdir -p "$PDATA/config/nebulascreen"
+	[ -e "$PDATA/config/nebulascreen/nebulascreen.json" ] || touch "$PDATA/config/nebulascreen/nebulascreen.json"
+	mount --bind "$NS_STATE/nebulascreen.json" "$PDATA/config/nebulascreen/nebulascreen.json"
+	# The old image's empty Mainsail placeholder (config/guppyscreen/
+	# guppyconfig.json): removed only when zero-length - an old image
+	# booted from the other slot recreates it.
+	command -v ns_remove_empty_placeholder >/dev/null 2>&1 \
+		&& ns_remove_empty_placeholder "$PDATA/config/guppyscreen/guppyconfig.json"
 	# G63 (2026-10-16): the /opt/printer_data bind above is not recursive and
 	# was made before this one, so Mainsail, SFTP and the log zip (all via
 	# /opt/printer_data) saw the empty placeholder - and an edit saved there
 	# went nowhere. Bind the same file there too.
-	mount --bind "$GUPPY_STATE/guppyconfig.json" /opt/printer_data/config/guppyscreen/guppyconfig.json
+	mount --bind "$NS_STATE/nebulascreen.json" /opt/printer_data/config/nebulascreen/nebulascreen.json
 
 	# Persistent root password (D7, 2026-10-10): seed /etc/shadow once into
 	# the data partition and bind it over the read-only image copy, so

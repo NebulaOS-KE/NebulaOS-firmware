@@ -2,7 +2,7 @@
 #
 #   config/backups/settings-<UTC>-<reason>/   visible in Mainsail
 #       printer.cfg moonraker.conf songs.conf    (calibration is in printer.cfg)
-#       macros/  guppyscreen/guppyconfig.json  calibration/
+#       macros/  nebulascreen/nebulascreen.json  calibration/
 #       SNAPSHOT.txt                             what, why, which system, and
 #                                                where the database copy is
 #   Moonraker's database (Mainsail's settings - and login data and API keys,
@@ -32,7 +32,7 @@ PDATA = os.environ.get("NEBULAOS_PDATA", "/opt/printer_data")
 CONFIG_DIR = os.environ.get("NEBULAOS_CONFIG_DIR", os.path.join(PDATA, "config"))
 BACKUPS_DIR = os.path.join(CONFIG_DIR, "backups")
 GUPPY_CONFIG = os.environ.get("NEBULAOS_GUPPY_CONFIG",
-                              os.path.join(common.NEBULAOS_ROOT, "guppyscreen", "guppyconfig.json"))
+                              os.path.join(common.NEBULAOS_ROOT, "nebulascreen", "nebulascreen.json"))
 CALIBRATION_DIR = os.path.join(PDATA, "calibration")
 DATABASE_DIR = os.path.join(PDATA, "database")
 API_BACKUP_DIR = os.path.join(PDATA, "backup", "database")
@@ -59,7 +59,7 @@ def _system_label():
 def _sources():
     """(path, name in the snapshot) of every settings file, sorted."""
     out = [(os.path.join(CONFIG_DIR, f), f) for f in FILES]
-    out.append((GUPPY_CONFIG, "guppyscreen/guppyconfig.json"))
+    out.append((GUPPY_CONFIG, "nebulascreen/nebulascreen.json"))
     for base, prefix in ((os.path.join(CONFIG_DIR, "macros"), "macros"),
                          (CALIBRATION_DIR, "calibration")):
         for root, dirs, names in os.walk(base):

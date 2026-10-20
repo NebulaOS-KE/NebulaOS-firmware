@@ -116,8 +116,8 @@ check "allow list: missing data dir is a no-op" '[ ! -e "$T/no-such-dir" ]'
 # Wiring.
 check "S56 start_daemon composes before starting" \
 	'awk "/^start_daemon\\(\\)/{s=1} s&&/compose_component/{c=NR} s&&/start-stop-daemon -S/{print (c&&c<NR)?\"ok\":\"bad\"; exit}" "$S56" | grep -qx ok'
-check "S56 allows guppyscreen in the data path" \
-	'grep -q "allow_moonraker_service \"\$DATAPATH\" guppyscreen" "$S56"'
+check "S56 allows nebulascreen in the data path" \
+	'grep -q "allow_moonraker_service \"\$DATAPATH\" nebulascreen" "$S56"'
 check "S05 composes before the bind mount" \
 	'awk "/compose_moonraker_component \"\\\$NEBULAOS_ROOT\\/apps\\/moonraker\"/{c=NR} /bind_if_not_already \"\\\$NEBULAOS_ROOT\\/apps\\/moonraker\"/{print (c&&c<NR)?\"ok\":\"bad\"; exit}" "$S05" | grep -qx ok'
 

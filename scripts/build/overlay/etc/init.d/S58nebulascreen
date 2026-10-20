@@ -1,0 +1,63 @@
+#!/bin/sh
+#
+# NebulaScreen (based on GuppyScreen; renamed in Run 15): the touchscreen
+# app. Draws directly to the framebuffer/touch device, independent of the
+# network - the only way to see what a printer does when Wi-Fi is down.
+#
+# Numbered after Moonraker - NebulaScreen is a real-time client of
+# Moonraker's websocket API, though it degrades to a reconnecting/error state
+# rather than failing outright if Moonraker isn't up yet.
+#
+# G82: before every start, "the image wins" (a new system image drops a
+# downloaded NebulaScreen release) and a complete downloaded release is bound
+# over the image's own files, item by item (/etc/nebulascreen-lib.sh). With
+# no release downloaded both are no-ops and the image's own NebulaScreen runs.
+
+NS_DIR=/opt/nebulascreen
+NS_APP=/usr/data/nebulaos/apps/nebulascreen
+NS_UPDATE_STATE=/usr/data/nebulaos/updates/nebulascreen/state.json
+PIDFILE=/var/run/nebulascreen.pid
+
+# OOM priority policy (MEM-T07); without it, services still start, unadjusted.
+NEBULAOS_OOM_POLICY="${NEBULAOS_OOM_POLICY:-/etc/nebulaos-oom-policy.sh}"
+if [ -r "$NEBULAOS_OOM_POLICY" ]; then . "$NEBULAOS_OOM_POLICY"; else nebulaos_start_with_adj() { shift; "$@"; }; fi
+NEBULASCREEN_LIB="${NEBULASCREEN_LIB:-/etc/nebulascreen-lib.sh}"
+# shellcheck disable=SC1090
+[ -r "$NEBULASCREEN_LIB" ] && . "$NEBULASCREEN_LIB"
+
+start() {
+	echo "Starting nebulascreen"
+	if command -v ns_image_wins >/dev/null 2>&1; then
+		ns_image_wins "$NS_APP" "$NS_UPDATE_STATE" /opt/nebulaos-version.json \
+			/usr/share/nebulaos/nebulascreen/release_info.json
+		ns_activate "$NS_APP" "$NS_DIR"
+	fi
+	# OOM priority at birth (MEM-T07): expendable UI tier, explicit 0.
+	nebulaos_start_with_adj "$NEBULAOS_ADJ_NEBULASCREEN" \
+		start-stop-daemon -S -b -m -p "$PIDFILE" \
+		-x "$NS_DIR/nebulascreen"
+}
+
+stop() {
+	echo "Stopping nebulascreen"
+	start-stop-daemon -K -p "$PIDFILE" && rm -f "$PIDFILE"
+}
+
+case "$1" in
+	start)
+		start
+		;;
+	stop)
+		stop
+		;;
+	restart)
+		stop
+		start
+		;;
+	*)
+		echo "Usage: $0 {start|stop|restart}"
+		exit 1
+		;;
+esac
+
+exit 0

@@ -110,7 +110,7 @@ FAILED=0
 	echo "  If guppybeep ever differs, that is a real finding and not a known-benign rebuild artifact."
 	echo "- git_commit_guppyscreen / git_commit_guppyscreen_dirty (2026-08-07: GuppyScreen is now a pinned,"
 	echo "  automatically-built vendor source, not present as a manifest field on the 2026-08-03 baseline"
-	echo "  at all - see manifests/dependencies.conf's GUPPYSCREEN_PIN)"
+	echo "  at all - see manifests/dependencies.conf's NEBULASCREEN_PIN)"
 	echo "- git_commit_klipper / git_commit_klipper_dirty (z_compensate.py structured status contract)"
 	echo "- rootfs_squashfs_sha256 / rootfs_squashfs_size (grows ~18.6MB vs the 2026-08-03 baseline - traced"
 	echo "  to Buildroot's linux-firmware package pulling in a broader firmware set; every accepted feature"

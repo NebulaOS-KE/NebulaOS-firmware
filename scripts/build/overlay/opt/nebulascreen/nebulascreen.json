@@ -1,7 +1,7 @@
 {
   "default_printer": "default_printer",
   "display_rotate": 2,
-  "log_path": "/opt/printer_data/logs/guppyscreen.log",
+  "log_path": "/opt/printer_data/logs/nebulascreen.log",
   "printers": {
     "default_printer": {
       "default_macros": {
@@ -22,6 +22,6 @@
       "moonraker_port": 7125
     }
   },
-  "guppy_init_script": "/etc/init.d/S58guppyscreen",
-  "thumbnail_path": "/opt/guppyscreen/thumbnails"
+  "nebulascreen_init_script": "/etc/init.d/S58nebulascreen",
+  "thumbnail_path": "/opt/nebulascreen/thumbnails"
 }

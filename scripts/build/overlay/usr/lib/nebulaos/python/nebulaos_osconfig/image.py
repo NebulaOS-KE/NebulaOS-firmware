@@ -760,7 +760,8 @@ def _gui_running():
     for pid in pids:
         try:
             with open(os.path.join(PROC_DIR, pid, "comm")) as handle:
-                if handle.read().strip() == "guppyscreen":
+                # NebulaScreen; GuppyScreen on an image from before Run 15
+                if handle.read().strip() in ("nebulascreen", "guppyscreen"):
                     return True
         except OSError:
             continue

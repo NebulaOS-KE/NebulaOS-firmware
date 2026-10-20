@@ -46,7 +46,7 @@ UPLOAD_DIR = os.environ.get("NEBULAOS_BOOT_UPLOAD_DIR",
                             "/opt/printer_data/config/uploads/boot-logo")
 FB_DEV = os.environ.get("NEBULAOS_FB_DEV", "/dev/fb0")
 FB_SYSFS = os.environ.get("NEBULAOS_FB_SYSFS", "/sys/class/graphics/fb0")
-GUPPY_CONFIG = os.environ.get("NEBULAOS_GUPPY_CONFIG", "/opt/guppyscreen/guppyconfig.json")
+GUPPY_CONFIG = os.environ.get("NEBULAOS_GUPPY_CONFIG", "/opt/nebulascreen/nebulascreen.json")
 SEED_MANIFEST = os.environ.get("NEBULAOS_SEED_MANIFEST", "/opt/nebulaos-seeds/seed-manifest.json")
 
 FBIOGET_VSCREENINFO = 0x4600
@@ -130,7 +130,7 @@ def fb_geometry():
 
 
 def guppy_rotation():
-    """GuppyScreen's display_rotate (LVGL quarter turns); the boot image must
+    """NebulaScreen's display_rotate (LVGL quarter turns); the boot image must
     look the same way up as the UI that follows it."""
     try:
         with open(GUPPY_CONFIG) as handle:

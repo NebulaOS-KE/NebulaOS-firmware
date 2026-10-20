@@ -230,7 +230,7 @@ fi
 # falling back to `date +%s` and producing an unreproducible image.
 #
 # NOTE this is the IMAGE epoch. scripts/build/04 separately derives a
-# GuppyScreen epoch from GUPPYSCREEN_PIN, scoped to that subshell, because that
+# NebulaScreen epoch from NEBULASCREEN_PIN, scoped to that subshell, because that
 # binary should track its pin rather than the firmware commit. Two epochs, two
 # deliberate scopes.
 if [ -z "${SOURCE_DATE_EPOCH:-}" ]; then

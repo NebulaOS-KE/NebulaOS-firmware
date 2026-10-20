@@ -365,23 +365,37 @@ else
 fi
 
 echo
-echo "[ GuppyScreen (closed previously, must stay closed) ]"
-if grep -q 'GUPPY_EPOCH=$(git -C "$GUPPYSCREEN_SRC" show -s --format=%ct "$GUPPY_REF"' "$ROOT/$S04"; then
-  ok "GuppyScreen epoch is still anchored to GUPPYSCREEN_PIN, not vendor HEAD"
+echo "[ NebulaScreen (closed previously, must stay closed) ]"
+if grep -q 'NS_EPOCH=$(git -C "$NEBULASCREEN_SRC" show -s --format=%ct "$NEBULASCREEN_PIN"' "$ROOT/$S04" \
+    && have "$S04" 'if [ "$NS_HEAD" != "$NEBULASCREEN_PIN" ]; then'; then
+  ok "NebulaScreen epoch is still anchored to NEBULASCREEN_PIN, and the checkout must be the pin"
 else
-  bad "GuppyScreen epoch anchoring regressed"
+  bad "NebulaScreen epoch anchoring regressed"
 fi
 
-if have "$S04" 'FATAL: GUPPYSCREEN_PIN is unset or empty'; then
-  ok "an unset GUPPYSCREEN_PIN is still fatal"
+if have "$S04" 'FATAL: NEBULASCREEN_PIN is unset or empty'; then
+  ok "an unset NEBULASCREEN_PIN is still fatal"
 else
-  bad "an unset GUPPYSCREEN_PIN no longer fails the build"
+  bad "an unset NEBULASCREEN_PIN no longer fails the build"
 fi
 
-if have "$S04" 'rm -rf "$GUPPYSCREEN_SRC/build" "$GUPPYSCREEN_SRC/libhv/build-mips" "$GUPPYSCREEN_SRC/spdlog/build-mips"'; then
-  ok "libhv/spdlog cross-build trees are still cleared"
+# G82 (Run 15): the image builds through the screen repo's own release
+# recipe, which clears the libhv/spdlog cross-build trees itself.
+if have "$S04" 'bash scripts/build-release.sh "$NEBULASCREEN_VERSION"'; then
+  ok "the image builds NebulaScreen through the screen repo's scripts/build-release.sh"
 else
-  bad "the libhv/spdlog cross-build clean regressed - the epoch would be a no-op"
+  bad "04 no longer builds NebulaScreen through scripts/build-release.sh"
+fi
+NS_SIBLING="$ROOT/../NebulaOS-guppyscreen"
+[ -d "$ROOT/../NebulaOS-nebulascreen/.git" ] && NS_SIBLING="$ROOT/../NebulaOS-nebulascreen"
+if [ -f "$NS_SIBLING/scripts/build-release.sh" ]; then
+  if grep -qF 'rm -rf build libhv/build-mips spdlog/build-mips' "$NS_SIBLING/scripts/build-release.sh"; then
+    ok "libhv/spdlog cross-build trees are still cleared (screen checkout's build-release.sh)"
+  else
+    bad "the libhv/spdlog cross-build clean regressed - the epoch would be a no-op"
+  fi
+else
+  echo "  SKIP  no NebulaScreen checkout beside this repo - recipe clean not checked here"
 fi
 
 echo

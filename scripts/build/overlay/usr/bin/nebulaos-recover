@@ -486,7 +486,7 @@ cmd_config() {
         echo ""
         echo "Recovery complete for config."
         echo "printer.cfg's own user-owned region, SAVE_CONFIG, macros/,"
-        echo "guppyscreen/, uploads/ and moonraker.conf are all untouched."
+        echo "nebulascreen/, uploads/ and moonraker.conf are all untouched."
         echo "No reboot is required - Klipper reads the managed tree fresh on its"
         echo "next restart; run FIRMWARE_RESTART if you want it to pick this up now."
     else
@@ -515,7 +515,7 @@ usage() {
     echo "                            (printer_data/config/nebulaos/) from the"
     echo "                            immutable image - never touches printer.cfg's"
     echo "                            own user-owned region, SAVE_CONFIG, macros/,"
-    echo "                            guppyscreen/, uploads/ or moonraker.conf"
+    echo "                            nebulascreen/, uploads/ or moonraker.conf"
     exit 1
 }
 
