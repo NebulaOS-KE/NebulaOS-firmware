@@ -89,7 +89,7 @@ check "usage 64" '[ $rc -eq 64 ]'
 check "S01splash calls boot" 'grep -q "\"\$NBD\" boot" "$OVERLAY/etc/init.d/S01splash"'
 check "S01splash sorts after S01persistent-datastore and before S01wifi" \
 	'[ "$(printf "%s\n" S01persistent-datastore S01splash S01wifi S01seedrng S01syslogd | LC_ALL=C sort | tr "\n" " ")" = "S01persistent-datastore S01seedrng S01splash S01syslogd S01wifi " ]'
-check "S58 no longer calls the boot display" '! grep -q "boot-display" "$OVERLAY/etc/init.d/S58guppyscreen"'
+check "S58 no longer calls the boot display" '[ -f "$OVERLAY/etc/init.d/S58nebulascreen" ] && ! grep -q "boot-display" "$OVERLAY/etc/init.d/S58nebulascreen"'
 
 # --- sudo adapter ------------------------------------------------------------------------
 mkdir -p "$T/s/sbin" "$T/s/bin"

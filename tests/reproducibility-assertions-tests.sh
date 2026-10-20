@@ -379,6 +379,14 @@ else
   bad "an unset NEBULASCREEN_PIN no longer fails the build"
 fi
 
+# G82 review: the app migration generation must change when the screen pin
+# changes, or a screen-only update would not count as a new app generation.
+if grep -q 'migration_version=$(printf .*${NEBULASCREEN_PIN' "$ROOT/$S04"; then
+  ok "migration_version still includes NEBULASCREEN_PIN"
+else
+  bad "migration_version no longer includes NEBULASCREEN_PIN"
+fi
+
 # G82 (Run 15): the image builds through the screen repo's own release
 # recipe, which clears the libhv/spdlog cross-build trees itself.
 if have "$S04" 'bash scripts/build-release.sh "$NEBULASCREEN_VERSION"'; then

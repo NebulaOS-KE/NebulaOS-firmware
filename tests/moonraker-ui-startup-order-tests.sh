@@ -13,8 +13,9 @@ set -u
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
 S56="$ROOT/scripts/build/overlay/etc/init.d/S56moonraker"
-S58="$ROOT/scripts/build/overlay/etc/init.d/S58guppyscreen"
-GUPPY="$ROOT/vendor/nebulaos-guppyscreen"
+S58="$ROOT/scripts/build/overlay/etc/init.d/S58nebulascreen"
+GUPPY="$ROOT/vendor/nebulaos-nebulascreen"
+[ -d "$GUPPY" ] || GUPPY="$ROOT/vendor/nebulaos-guppyscreen"
 W=$(mktemp -d "${TMPDIR:-/tmp}/moonraker-ui-startup-order-tests.XXXXXX")
 [ -n "${W:-}" ] && [ -e "$W" ] || { echo "FATAL: mktemp failed" >&2; exit 1; }
 SERVER_PID=
@@ -120,7 +121,13 @@ kill -0 $SL 2>/dev/null && [ ! -e "$C/recovery.pid" ] && pass || fail "cancel ki
 kill $SL 2>/dev/null
 
 # 7. S58 has no dependency on Moonraker being ready
-grep -v '^[[:space:]]*#' "$S58" | grep -qE 'wget|curl|7125|server/info|sleep' && fail "S58 waits on Moonraker" || pass
+if [ ! -f "$S58" ]; then
+	fail "S58 init script $S58 is missing"
+elif grep -v '^[[:space:]]*#' "$S58" | grep -qE 'wget|curl|7125|server/info|sleep'; then
+	fail "S58 waits on Moonraker"
+else
+	pass
+fi
 
 # 8. GuppyScreen (pinned source) tolerates a backend that is not up yet
 if [ -f "$GUPPY/src/websocket_client.cpp" ]; then
