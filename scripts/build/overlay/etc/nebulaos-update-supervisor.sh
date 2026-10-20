@@ -374,6 +374,14 @@ refresh_update_info() {
 # repo state across restarts, and the refresh sent at rollback time may have
 # been lost (power cut, Moonraker restarting).
 reconcile_update_info_on_boot() {
+	# G85: this boot's image migration replaced the app trees (S04 marker).
+	if [ -e "$NEBULAOS_RUN_DIR/apps-migrated" ]; then
+		rm -f "$NEBULAOS_RUN_DIR/apps-migrated"
+		for _n in klipper moonraker nebulaos_klipper_extensions; do
+			refresh_update_info "$_n"
+		done
+		return 0
+	fi
 	for _n in moonraker mainsail; do
 		[ "$(read_state_field "$_n" state)" = "rolled-back" ] && refresh_update_info "$_n"
 	done

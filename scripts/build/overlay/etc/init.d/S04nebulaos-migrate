@@ -1723,6 +1723,13 @@ start() {
 		_migration_action="incomplete"
 		log "migration INCOMPLETE - at least one component failed and was left at its previous version (see errors above). Generation NOT advanced, so this will retry next boot. Nothing was destroyed: any component that failed still has its pre-migration tree in place at $APPS, and $(backup_dir_desc) holds whatever was successfully backed up before the failure. A retry reuses that directory, so repeated failures do not accumulate backups."
 	fi
+	# G85 (Run 15): Moonraker's update manager keeps the replaced trees'
+	# versions in its database until a refresh, so Mainsail and the screen
+	# showed the pre-install Klipper/Moonraker/extensions after an image
+	# install (ke-dev, 2026-10-19). Tell the update supervisor, for this boot
+	# only (/run is tmpfs); it asks for a refresh once Moonraker is up.
+	mkdir -p "${NEBULAOS_RUN_DIR:-/run/nebulaos}" 2>/dev/null \
+		&& : > "${NEBULAOS_RUN_DIR:-/run/nebulaos}/apps-migrated" 2>/dev/null || true
 	_diag_write_state
 }
 

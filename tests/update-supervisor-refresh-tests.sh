@@ -54,6 +54,21 @@ read_state_field() { echo healthy; }
 read_stack_field() { echo healthy; }
 reconcile_update_info_on_boot; sleep 0.3
 [ ! -e "$WORK/wget.calls" ] && pass || fail "healthy components refreshed: $(cat "$WORK/wget.calls")"
+# G85: after this boot's image migration, all three app trees are refreshed
+# once (the marker is consumed), whatever their last update outcome was
+rm -f "$WORK/wget.calls" "$WORK/log"
+: > "$NEBULAOS_RUN_DIR/apps-migrated"
+reconcile_update_info_on_boot
+settle "nebulaos_klipper_extensions: Moonraker's update manager refreshed"
+settle "klipper: Moonraker's update manager refreshed"; settle "moonraker: Moonraker's update manager refreshed"
+calls=$(sed 's/.*name=//' "$WORK/wget.calls" | sort | tr '\n' ' ')
+[ "$calls" = "klipper moonraker nebulaos_klipper_extensions " ] && pass || fail "after migration: $calls"
+[ ! -e "$NEBULAOS_RUN_DIR/apps-migrated" ] && pass || fail "marker not consumed"
+rm -f "$WORK/wget.calls"
+reconcile_update_info_on_boot; sleep 0.3
+[ ! -e "$WORK/wget.calls" ] && pass || fail "refreshed twice: $(cat "$WORK/wget.calls")"
+grep -q 'apps-migrated' "$REPO_ROOT/scripts/build/overlay/etc/init.d/S04nebulaos-migrate" && pass || fail "S04 does not leave the marker"
+
 grep -q "reconcile_update_info_on_boot" "$SUP" && sed -n '/^loop() {/,/^}/p' "$SUP" | grep -q reconcile_update_info_on_boot && pass || fail "not called from loop()"
 
 echo "update-supervisor-refresh-tests: PASS=$PASS FAIL=$FAIL"
