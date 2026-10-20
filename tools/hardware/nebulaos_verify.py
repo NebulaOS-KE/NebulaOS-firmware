@@ -309,7 +309,7 @@ def part1_verify(session, expected_ximage_sha, expected_ximage_size,
 
     # --- health -----------------------------------------------------------
     health = session.service_health()
-    for service in ("klipper", "moonraker", "nginx", "guppyscreen"):
+    for service in ("klipper", "moonraker", "nginx", "screen"):
         result.add("%s is running" % service, health.get(service) == "running",
                    health.get(service, "unknown"))
     result.add("the local Moonraker endpoint answers",

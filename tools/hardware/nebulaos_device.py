@@ -333,11 +333,14 @@ STOCK_MCU_UPDATE_PROBE = (
 
 # The services `restart` may name: service -> (init script, pidfile). Closed on
 # purpose - an agent names a service, never a script. Paths are the overlay's
-# own (etc/init.d/S55klipper, S56moonraker, S58guppyscreen, S50webcam) and
-# Buildroot's nginx package (S50nginx).
+# own (etc/init.d/S55klipper, S56moonraker, S58nebulascreen, S50webcam) and
+# Buildroot's nginx package (S50nginx). The screen app was GuppyScreen
+# (S58guppyscreen) before Run 15 and is NebulaScreen after: both names stay
+# while either image may be booted on a slot.
 RESTARTABLE_SERVICES = {
     "klipper": ("/etc/init.d/S55klipper", "/var/run/klippy.pid"),
     "moonraker": ("/etc/init.d/S56moonraker", "/var/run/moonraker.pid"),
+    "nebulascreen": ("/etc/init.d/S58nebulascreen", "/var/run/nebulascreen.pid"),
     "guppyscreen": ("/etc/init.d/S58guppyscreen", "/var/run/guppyscreen.pid"),
     "webcam": ("/etc/init.d/S50webcam", "/var/run/ustreamer-supervisor.pid"),
     "nginx": ("/etc/init.d/S50nginx", "/run/nginx.pid"),
@@ -810,10 +813,12 @@ class SshDeviceSession(DeviceSession):
             # read "stopped" while nginx was serving HTTP 200). The bracketed
             # patterns cannot match this probe's own command line.
             "P=$(ps w 2>/dev/null); "
+            # screen: NebulaScreen, or GuppyScreen on an image from before
+            # Run 15 (either may be booted on a slot).
             "for pair in 'klipper:[k]lippy' 'moonraker:[m]oonraker' "
-            "'guppyscreen:[g]uppyscreen' 'nginx:[n]ginx'; do "
+            "'screen:[n]ebulascreen|[g]uppyscreen' 'nginx:[n]ginx'; do "
             "  n=${pair%%:*}; pat=${pair#*:}; "
-            "  if printf '%s\\n' \"$P\" | grep -q \"$pat\"; then printf '%s=running\\n' \"$n\"; "
+            "  if printf '%s\\n' \"$P\" | grep -qE \"$pat\"; then printf '%s=running\\n' \"$n\"; "
             "  else printf '%s=stopped\\n' \"$n\"; fi; done; "
             "printf 'moonraker_http=%s\\n' \"$(curl -s -o /dev/null -w '%{http_code}' "
             "--max-time 5 http://127.0.0.1:7125/server/info 2>/dev/null)\"; "

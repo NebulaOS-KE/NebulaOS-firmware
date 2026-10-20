@@ -10,7 +10,7 @@ D=/sys/kernel/debug
 echo "debugfs_mounted_before=$(grep -c " $D debugfs " /proc/mounts) owner_of_mounts=$(grep -l debugfs /etc/fstab /etc/inittab /etc/init.d/* 2>/dev/null | tr '\n' ' ')"
 gates() {
 	/etc/nebulaos-healthcheck.sh stage2 > /dev/null 2>&1 && echo -n "stack=ok " || echo -n "stack=fail "
-	p=$(cat /var/run/guppyscreen.pid 2>/dev/null); [ -n "$p" ] && kill -0 $p 2>/dev/null && echo -n "guppyscreen=ok " || echo -n "guppyscreen=fail "
+	p=$(cat /var/run/nebulascreen.pid /var/run/guppyscreen.pid 2>/dev/null | head -1); [ -n "$p" ] && kill -0 $p 2>/dev/null && echo -n "screen=ok " || echo -n "screen=fail "
 	ip -4 -o addr show scope global 2>/dev/null | grep -qv '^$' && echo -n "network=ok " || echo -n "network=fail "
 	[ -r $D/nebulaos_backlight_final/status ] && cat $D/nebulaos_backlight_final/status > /dev/null 2>&1 && echo "display=ok" || echo "display=fail"
 }

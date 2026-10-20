@@ -103,7 +103,7 @@ class SimulatedPrinter:
         self.heater_targets = {"extruder": 0, "heater_bed": 0}
         self.klippy_state = "ready"
         self.services = {"klipper": "running", "moonraker": "running",
-                         "nginx": "running", "guppyscreen": "running"}
+                         "nginx": "running", "screen": "running"}
         self.mcu_serial = "usb-Klipper_stm32-if00"
         self.mcu_guard_restores = 0
         # Stock's /tmp/mcu_update.log as the real S13mcu_update leaves it after a

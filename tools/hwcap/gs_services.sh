@@ -7,7 +7,7 @@
 U=http://127.0.0.1:7125
 echo "uptime=$(cut -d' ' -f1 /proc/uptime)"
 echo "== boot scripts (new/changed)"
-grep -E 'S01(splash|wifi)|S05nebulaos-activate|S56moonraker|S58guppyscreen|S9[78]' /run/nebulaos-boot-scripts.log 2>/dev/null
+grep -E 'S01(splash|wifi)|S05nebulaos-activate|S56moonraker|S58(nebula|guppy)screen|S9[78]' /run/nebulaos-boot-scripts.log 2>/dev/null
 grep -E 'EV=(begin|done)' /run/nebulaos-boot-scripts.log 2>/dev/null
 echo "== component endpoints"
 for e in info network/status boot_display/status display/status wifi/status; do
@@ -93,11 +93,11 @@ p=$(cat /var/run/nebulaos-display-sleep-wake-controller.pid 2>/dev/null); echo "
 echo "== boot image upload root"
 ls -la /usr/data/nebulaos/printer_data/uploads/boot-logo 2>&1 | head -5
 curl -s -m 5 "$U/server/files/roots" | grep -o '"name": *"uploads"[^}]*' | head -c 300; echo
-echo "== guppyscreen thumbnails"
-TP=$(grep -o '"thumbnail_path": *"[^"]*"' /opt/guppyscreen/guppyconfig.json 2>/dev/null | sed 's/.*: *"//;s/"$//')
+echo "== screen thumbnails"
+TP=$(grep -ho '"thumbnail_path": *"[^"]*"' /opt/nebulascreen/nebulascreen.json /opt/guppyscreen/guppyconfig.json 2>/dev/null | head -1 | sed 's/.*: *"//;s/"$//')
 echo "thumbnail_path=$TP"
 ls -ld "$TP" 2>&1 | head -1
-grep -iE "thumbnail|download" /opt/printer_data/logs/guppyscreen.log 2>/dev/null | tail -8 | cut -c1-200
+grep -iE "thumbnail|download" /opt/printer_data/logs/nebulascreen.log /opt/printer_data/logs/guppyscreen.log 2>/dev/null | tail -8 | cut -c1-200
 echo "== health"
 curl -s -m 5 "$U/server/info" | grep -oE '"klippy_state": *"[a-z]*"'
 dmesg | grep -cE 'BUG:|WARNING:|Oops' | sed 's/^/kernel_warnings=/'

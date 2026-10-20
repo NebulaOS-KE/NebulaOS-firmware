@@ -1033,11 +1033,18 @@ def case_service_probe_without_pgrep():
         check("service probe: nginx running is seen without pgrep", up.get("nginx") == "running", str(up))
         check("service probe: klippy running is seen", up.get("klipper") == "running", str(up))
         check("service probe: absent services read stopped",
-              up.get("moonraker") == "stopped" and up.get("guppyscreen") == "stopped", str(up))
+              up.get("moonraker") == "stopped" and up.get("screen") == "stopped", str(up))
         none = facts("    1 root      1M S    init")
         check("service probe: does not match its own command line",
-              all(none.get(k) == "stopped" for k in ("klipper", "moonraker", "guppyscreen", "nginx")),
+              all(none.get(k) == "stopped" for k in ("klipper", "moonraker", "screen", "nginx")),
               str(none))
+        # Run 15: the screen app on either image generation
+        for comm in ("/opt/nebulascreen/nebulascreen", "/opt/guppyscreen/guppyscreen"):
+            s = facts("  900 root     20M S    %s" % comm)
+            check("service probe: screen running as %s" % comm.rsplit("/", 1)[1],
+                  s.get("screen") == "running", str(s))
+        check("restart knows both screen service names",
+              set(("nebulascreen", "guppyscreen")) <= set(device.RESTARTABLE_SERVICES), "")
     finally:
         shutil.rmtree(root, ignore_errors=True)
 

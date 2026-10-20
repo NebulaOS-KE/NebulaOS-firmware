@@ -45,7 +45,7 @@ one() { # label burst(0/1) cold(0/1)
 	[ $3 = 1 ] && { sync; echo 3 > /proc/sys/vm/drop_caches; }
 	old=$(cat /var/run/klippy.pid); l0=$(cut -d' ' -f1 /proc/loadavg); t0=$(cut -d' ' -f1 /proc/uptime)
 	/etc/init.d/S55klipper restart > /dev/null 2>&1 &
-	if [ $2 = 1 ]; then /etc/init.d/S56moonraker restart > /dev/null 2>&1 & /etc/init.d/S58guppyscreen restart > /dev/null 2>&1 & fi
+	if [ $2 = 1 ]; then /etc/init.d/S56moonraker restart > /dev/null 2>&1 & for s in /etc/init.d/S58nebulascreen /etc/init.d/S58guppyscreen; do [ -x "$s" ] && "$s" restart > /dev/null 2>&1 & done; fi
 	r=$(python3 $L/g7poll.py "$SOCK" "$old" $t0 120); wait
 	echo "G7 $1 $r load_before=$l0 load_after=$(cut -d' ' -f1 /proc/loadavg) cpu_psi=$(sed -n 's/^some avg10=\([0-9.]*\).*/\1/p' /proc/pressure/cpu)"
 	i=0; until wget -q -T 3 -O - http://127.0.0.1:7125/server/info 2>/dev/null | grep -q '"klippy_state": *"ready"' || [ $i -ge 90 ]; do sleep 2; i=$((i + 2)); done

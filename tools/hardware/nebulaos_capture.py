@@ -265,7 +265,7 @@ CAPTURE_PROFILES = {
     # collapse), plus the state file and README. Read-only.
     "logs-review": (
         "L=/opt/printer_data/logs; echo '== files'; ls -la $L; "
-        "for f in $L/klippy.log $L/moonraker.log $L/system.log $L/system.log.0 $L/guppyscreen.log "
+        "for f in $L/klippy.log $L/moonraker.log $L/system.log $L/system.log.0 $L/nebulascreen.log $L/guppyscreen.log "
         "$L/nginx-error.log /usr/data/nebulaos/logs/memguard.log /usr/data/nebulaos/maintenance/retention.log "
         "/usr/data/nebulaos/maintenance/logs/*.log /usr/data/nebulaos/system/diagnostics/*.log; do "
         "[ -f \"$f\" ] || continue; echo; echo \"== $f ($(wc -l < \"$f\") lines)\"; "
@@ -815,7 +815,7 @@ CAPTURE_PROFILES["boot-forensics"] = (
     "echo '== debugfs'; grep debugfs /proc/mounts || echo DEBUGFS_NOT_MOUNTED; "
     "ls -l /sys/kernel/debug/nebulaos_backlight_final/status 2>&1; "
     "echo '== S97 gates now'; /etc/nebulaos-healthcheck.sh stage2 2>&1 | tail -8; "
-    "p=$(cat /var/run/guppyscreen.pid 2>/dev/null); [ -n \"$p\" ] && [ -d /proc/$p ] && echo GATE_GUPPYSCREEN=ok || echo GATE_GUPPYSCREEN=fail; "
+    "p=$(cat /var/run/nebulascreen.pid /var/run/guppyscreen.pid 2>/dev/null | head -1); [ -n \"$p\" ] && [ -d /proc/$p ] && echo GATE_GUPPYSCREEN=ok || echo GATE_GUPPYSCREEN=fail; "
     "ip -4 -o addr show scope global | grep -q . && echo GATE_NETWORK=ok || echo GATE_NETWORK=fail; "
     "[ -r /sys/kernel/debug/nebulaos_backlight_final/status ] && echo GATE_DISPLAY=ok || echo GATE_DISPLAY=fail; "
     "echo '== display config'; cat /usr/data/nebulaos/display-qualified.conf 2>&1 | head -30; "
@@ -968,7 +968,7 @@ EXERCISE_PROFILES.update({
     "live-g6-dhcp": (". $T/lv_g6.sh", "rm -f " + _LV + "/g6script " + _LV + "/g6.log " + _LV + "/g6.err", 180),
     "live-g7-klippy": (
         _IDLE_GUARD + "KS=1; . $T/lv_g7.sh",
-        "rm -f " + _LV + "/g7poll.py; for s in moonraker guppyscreen; do p=$(cat /var/run/$s.pid 2>/dev/null); "
+        "rm -f " + _LV + "/g7poll.py; for s in moonraker nebulascreen guppyscreen; do p=$(cat /var/run/$s.pid 2>/dev/null); "
         "[ -n \"$p\" ] && [ -d /proc/$p ] || /etc/init.d/S5*$s start; done; " + _KLIPPY_RESTORE,
         1200),
     "live-g8-seeder": (". $T/lv_g8.sh", "rm -f " + _LV + "/g8dry.py " + _LV + "/g8-marker.json", 240),
@@ -1059,7 +1059,7 @@ CAPTURE_PROFILES["pf-after-load"] = (
     "echo '== wifi'; iw dev wlan0 link 2>/dev/null; iw dev wlan0 station dump 2>/dev/null | grep -E 'tx (retries|failed)|rx drop|signal|beacon loss|tx bitrate'; "
     "cat /proc/net/dev | grep wlan0; grep -E 'wlan|brcm|sdio|mmc1' /proc/interrupts; "
     "echo '== camera idle'; cat /var/run/nebulaos-camera-idle-state 2>/dev/null; echo; "
-    "echo '== services'; for f in klippy moonraker guppyscreen ustreamer nebulaos-camera-idle-controller; do p=$(cat /var/run/$f.pid 2>/dev/null); "
+    "echo '== services'; for f in klippy moonraker nebulascreen guppyscreen ustreamer nebulaos-camera-idle-controller; do p=$(cat /var/run/$f.pid 2>/dev/null); "
     "echo \"$f pid=$p alive=$([ -n \"$p\" ] && [ -d /proc/$p ] && echo yes || echo no)\"; done; "
     "echo '== swaps'; cat /proc/swaps; grep -E '^(pswpin|pswpout|oom_kill) ' /proc/vmstat; head -3 /proc/meminfo; "
     "echo '== uart'; cat '/proc/tty/driver/INGENIC serial' 2>/dev/null | sed -n '2p'; "
