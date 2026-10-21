@@ -58,6 +58,7 @@ PDATA=$DATA_ROOT/printer_data
 NS_STATE=$DATA_ROOT/nebulascreen
 OLD_GUPPY_STATE=$DATA_ROOT/guppyscreen
 NEBULASCREEN_LIB="${NEBULASCREEN_LIB:-/etc/nebulascreen-lib.sh}"
+NEBULAOS_BOOT_DISPLAY="${NEBULAOS_BOOT_DISPLAY:-/usr/libexec/nebulaos/nebulaos-boot-display}"
 # shellcheck disable=SC1090
 [ -r "$NEBULASCREEN_LIB" ] && . "$NEBULASCREEN_LIB"
 
@@ -96,6 +97,12 @@ start() {
 		mount -t ext4 /dev/mmcblk0p10 /usr/data
 		restore_saved_clock
 	fi
+	# G3 (Run 16): the boot screen as soon as its rendered image is readable.
+	# The kernel's display driver starts with an empty (black) framebuffer;
+	# drawing here instead of in S01splash shortens that black gap by the
+	# rest of this script and two more S01 scripts. Best effort, bounded (one
+	# dd), never fails the boot; S01splash then skips the second draw.
+	[ -x "$NEBULAOS_BOOT_DISPLAY" ] && "$NEBULAOS_BOOT_DISPLAY" draw >/dev/null 2>&1
 
 	# Clean NebulaOS reset (S2, 2026-10-11): when requested from the screen,
 	# remove the whole namespace now, before anything below seeds or binds
