@@ -293,6 +293,20 @@ CAPTURE_PROFILES = {
         False, None, 180),
     "versions": (_VERSIONS, False, None, 90),
     "update-log": (_UPDATE_LOG, False, None, 60),
+    # G82 (Run 15 test): the GuppyScreen -> NebulaScreen settings migration,
+    # read-only - the old file must be unchanged, the new one a copy of it.
+    "screen-migration": ("D=/usr/data/nebulaos; for f in $D/guppyscreen/guppyconfig.json "
+        "$D/nebulascreen/nebulascreen.json /opt/nebulascreen/nebulascreen.json "
+        "/opt/printer_data/config/nebulascreen/nebulascreen.json; do "
+        "echo \"== $f\"; ls -l --full-time \"$f\" 2>&1; sha256sum \"$f\" 2>&1; done; "
+        "echo '== mounts'; grep -E 'nebulascreen|guppyscreen' /proc/self/mounts; "
+        "echo '== config/guppyscreen placeholder'; ls -la $D/printer_data/config/guppyscreen 2>&1; "
+        "echo '== settings keys (old / new)'; for f in $D/guppyscreen/guppyconfig.json $D/nebulascreen/nebulascreen.json; do "
+        "python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); "
+        "print(sys.argv[1], sorted(d.keys()))' \"$f\" 2>&1; done; "
+        "echo '== nebulascreen boot log'; grep -h nebulascreen /opt/printer_data/logs/system.log 2>/dev/null | tail -n 20; "
+        "echo '== screen process'; ps | grep -E '[n]ebulascreen|[g]uppyscreen'",
+        False, None, 60),
     # G50 (2026-10-17): what an app update did - pip's lines (index, packages,
     # errors), update_manager and the supervisor - without the debug noise.
     # Run 10 checks (2026-10-17): B2 memguard priority, S1 config tree
