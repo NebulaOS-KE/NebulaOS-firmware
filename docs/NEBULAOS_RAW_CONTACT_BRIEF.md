@@ -5,6 +5,17 @@
 > and G83b = this weight-free path, staged; stages A and B in the next run,
 > C/D need Tim at the printer with a scale). Content below is the brief as
 > supplied.
+>
+> **Implementation status (checked against the code 2026-10-21; the brief
+> below stays as supplied):** `contact_detection_mode` is
+> `auto|calibrated_force|raw_contact` with default **`auto`** (G83b-auto):
+> resolved per caller - the unit's grams calibration first, a qualified raw
+> profile only for the paired Z-offset path, otherwise a refusal.
+> `QUALIFIED_PROFILES` is empty, so behaviour equals `calibrated_force`.
+> Commands: `NEBULAOS_RAW_CONTACT_DIAGNOSTIC`, `NEBULAOS_RAW_CONTACT_REFERENCE`
+> (persisted unloaded reference), `NEBULAOS_RAW_CONTACT_COMPARE SUPERVISED=1`;
+> arming waits up to `raw_settle_time` (5 s) for a calm reading. See
+> `NEBULAOS_CORE_PUBLIC_API.md` section 8.
 
 **Status:** Implementation-ready engineering brief; thresholds and unattended motion are NOT hardware-qualified.
 **Investigation date:** 2026-10-18.
