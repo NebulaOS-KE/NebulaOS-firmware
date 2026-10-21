@@ -1715,6 +1715,9 @@ check /etc/nebulascreen-lib.sh
 check /usr/share/nebulaos/nebulascreen/release_info.json
 # G82 stage 3: the update supervisor's static check of a downloaded release.
 check /usr/libexec/nebulaos/nebulascreen-release-check
+# G82 stage 4: the image-owned [update_manager nebulascreen] section (its
+# include in nebulaos.conf stays commented until a first release exists).
+check /etc/nebulaos/moonraker/nebulascreen-update.conf
 check_absent /etc/init.d/S58guppyscreen
 check_absent /opt/guppyscreen/guppyscreen
 NS_RELEASE_INFO=$(debugfs -R "cat /usr/share/nebulaos/nebulascreen/release_info.json" ${IMAGES}/rootfs.ext2 2>/dev/null)
