@@ -48,8 +48,8 @@
 #     (/var/run/nebulascreen.pid), checked the same way S58 itself manages
 #     it (start-stop-daemon's pidfile convention) - `kill -0` against the
 #     recorded PID.
-#   - the display itself: the backlight-final-controller driver's own
-#     debugfs status file exists and a read of it actually succeeds (see
+#   - the display itself: the backlight-final-controller driver's sysfs
+#     actual_brightness exists and a read of it actually succeeds (see
 #     display_healthy() below) - proves the kernel driver this script is
 #     about to issue commands to is really loaded and responding, without
 #     attempting to interpret display CONTENT (out of scope, and not
@@ -117,16 +117,17 @@ networking_up() {
 # "The display" itself, as its own explicit health gate (the mission spec
 # lists it alongside Klipper/Moonraker/GuppyScreen/networking) - a cheap,
 # meaningful "is the backlight-final-controller driver actually loaded and
-# responding" check: the debugfs status file must exist and a read of it
-# must actually succeed. Deliberately does NOT try to interpret display
+# responding" check: $NDQ_BACKLIGHT_SYSFS/actual_brightness must exist and
+# a read of it must actually succeed (it fails with EIO in the driver's
+# fault state). Deliberately does NOT try to interpret display
 # CONTENT (there is no way to do that from here, and it is not what this
 # gate is for) - it only proves the kernel driver this script is about to
 # issue commands to is really there, the same spirit as
 # ndq_apply_backlight()'s own "not present or not writable" refusal, just
 # checked earlier, before any apply is attempted at all.
 display_healthy() {
-	[ -r "$NDQ_BACKLIGHT_STATUS_FILE" ] || return 1
-	cat "$NDQ_BACKLIGHT_STATUS_FILE" >/dev/null 2>&1
+	[ -r "$NDQ_BACKLIGHT_SYSFS/actual_brightness" ] || return 1
+	cat "$NDQ_BACKLIGHT_SYSFS/actual_brightness" >/dev/null 2>&1
 }
 
 wait_for_health() {

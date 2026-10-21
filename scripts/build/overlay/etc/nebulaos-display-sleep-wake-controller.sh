@@ -5,33 +5,15 @@
 # /etc/nebulaos-display-qualified.sh (see that file's own
 # ndq_apply_deferred_fields() for how/when this gets started, and this
 # mission's own scope: this file builds the WAKE side only - polling the
-# already-qualified touch driver's touch_down_count and issuing the
-# backlight driver's "wake" command when a real touch is observed while
-# asleep. It never triggers sleep itself; whatever future mechanism
-# decides WHEN to sleep the display is explicitly out of scope here.
+# touch driver's sysfs touch_down_count and clearing the backlight class
+# device's bl_power when a real touch is observed while the backlight is
+# off. It never triggers sleep itself; nebulaos-backlight (the GUI sleep
+# path) does that.
 #
-# ==========================================================================
-# IMPORTANT ASSUMPTION - READ THIS BEFORE TRUSTING THIS FILE ON REAL
-# HARDWARE, FIX HERE IF WRONG:
-#
-# The backlight driver's debugfs status file gaining a "sleep"/"wake"-
-# capable asleep state is being added CONCURRENTLY by a different agent
-# working in vendor/x2000_kernel_6.6, not yet visible from this checkout.
-# This file was written against the command names `sleep`/`wake` and
-# assumes the status file reports the asleep condition as the literal line
-#     state: asleep
-# (matching this exact driver's own existing convention of reporting
-# other states the same way - e.g. "state: safe-on", "state: pwm-
-# committed" - see ndq_apply_backlight()'s own grep pattern in
-# /etc/nebulaos-display-qualified.sh for the precedent this follows).
-#
-# If the real, merged driver ends up using a different string for this
-# state, the ONLY thing that needs to change is the pattern inside
-# ndq_swc_backlight_is_asleep() below - nothing else in this file, or in
-# S98nebulaos-display-sleep-wake-controller, or in the tests, depends on
-# the exact string. That function is deliberately the single, isolated
-# place this assumption lives.
-# ==========================================================================
+# Interfaces (both sysfs, paths from /etc/nebulaos-display-qualified.sh):
+#   $NDQ_BACKLIGHT_SYSFS/actual_brightness  0 = off (asleep)
+#   $NDQ_BACKLIGHT_SYSFS/bl_power           written 0 to wake
+#   $NDQ_TOUCH_SYSFS/touch_down_count       decimal, increments per touch-down
 #
 # Sourced by S98nebulaos-display-sleep-wake-controller. Also sourced
 # directly by tests/nebulaos-display-sleep-wake-controller-tests.sh so
@@ -41,11 +23,10 @@
 # controller.sh already both use.
 
 # Sources the display-qualified library for ndq_get_field/ndq_is_uint/
-# NDQ_CONFIG_FILE/NDQ_BACKLIGHT_STATUS_FILE/NDQ_BACKLIGHT_CMD_FILE/
-# NDQ_TOUCH_STATUS_FILE - reused rather than re-parsing the config or
-# re-declaring the debugfs paths a second time. Overridable so the offline
-# test suite can point this at a fake library the same way every other
-# caller of NDQ_LIB in this codebase already does.
+# NDQ_CONFIG_FILE/NDQ_BACKLIGHT_SYSFS/NDQ_TOUCH_SYSFS - reused rather than
+# re-parsing the config or re-declaring the sysfs paths a second time.
+# Overridable so the offline test suite can point this at a fake library
+# the same way every other caller of NDQ_LIB in this codebase already does.
 : "${NDQ_LIB:=/etc/nebulaos-display-qualified.sh}"
 # shellcheck disable=SC1090
 [ -f "$NDQ_LIB" ] && . "$NDQ_LIB"
@@ -58,7 +39,7 @@
 # wake as immediate (a few hundred ms is well under the threshold where a
 # human notices input lag), while staying far from a busy-loop - this is a
 # real-time printer control system sharing the same CPU, and this daemon
-# only ever does meaningful work (a debugfs read, occasionally a debugfs
+# only ever does meaningful work (a sysfs read, occasionally a sysfs
 # write) once every tick, the rest is sleeping. Named/overridable the same
 # way NEBULAOS_CAMERA_IDLE_POLL_INTERVAL already is in this codebase's
 # other background polling controller.
@@ -102,64 +83,45 @@ ndq_swc_touch_wake_allowed() {
 # Driver reads
 # ============================================================
 
-# See the IMPORTANT ASSUMPTION block at the top of this file - this is the
-# ONE place the exact "asleep" status-line spelling is checked. Returns 0
-# (true, asleep) only on a confirmed match; returns 1 (false, treat as
-# "not asleep" / "unknown, do nothing") on anything else, including an
-# unreadable status file - the safe direction on any doubt, matching this
-# whole mission's own stated philosophy.
-# GUI/service readiness mission (2026-10-09, G5): the controller now has a
-# standard backlight class device. When it exists it is the source of truth
-# (off = actual_brightness 0) and waking clears bl_power; the debugfs path
-# below stays for kernels without it.
+# Returns 0 (asleep) only when actual_brightness reads exactly 0; anything
+# else, including an unreadable file, is "not asleep" - do nothing, the
+# safe direction on any doubt. The backlight class device is registered by
+# the controller; this default only applies when the library above was not
+# sourced (tests).
 : "${NDQ_BACKLIGHT_SYSFS:=/sys/class/backlight/nebulaos_backlight}"
 
 ndq_swc_backlight_is_asleep() {
-	if [ -r "$NDQ_BACKLIGHT_SYSFS/actual_brightness" ] && [ -z "${1:-}" ]; then
-		[ "$(cat "$NDQ_BACKLIGHT_SYSFS/actual_brightness" 2>/dev/null)" = 0 ]
-		return $?
-	fi
-	status_file="${1:-$NDQ_BACKLIGHT_STATUS_FILE}"
-	[ -r "$status_file" ] || return 1
-	grep -q '^state: asleep$' "$status_file" 2>/dev/null
+	[ -r "$NDQ_BACKLIGHT_SYSFS/actual_brightness" ] || return 1
+	[ "$(cat "$NDQ_BACKLIGHT_SYSFS/actual_brightness" 2>/dev/null)" = 0 ]
 }
 
-# Prints the touch driver's touch_down_count (from its own already-
-# qualified, already-deployed status file - see
-# ns2009_final_qualification's own debugfs status, unchanged by this
-# mission), or nothing if the file is unreadable/the field is absent.
+# Prints the touch driver's touch_down_count, or nothing (return 1) if the
+# sysfs attribute is missing or unreadable. An empty NDQ_TOUCH_SYSFS (no
+# touch directory when the library was sourced) is re-resolved on each call, so a
+# long-running watcher picks the directory up once it exists.
 ndq_swc_touch_down_count() {
-	status_file="${1:-$NDQ_TOUCH_STATUS_FILE}"
-	[ -r "$status_file" ] || return 1
-	sed -n 's/^touch_down_count: //p' "$status_file" 2>/dev/null | tail -n1
+	if [ -z "$NDQ_TOUCH_SYSFS" ] && command -v ndq_find_touch_sysfs >/dev/null 2>&1; then
+		NDQ_TOUCH_SYSFS=$(ndq_find_touch_sysfs)
+	fi
+	[ -n "$NDQ_TOUCH_SYSFS" ] && [ -r "$NDQ_TOUCH_SYSFS/touch_down_count" ] || return 1
+	cat "$NDQ_TOUCH_SYSFS/touch_down_count" 2>/dev/null
 }
 
-# Writes "wake" to the backlight driver's command file - the one and only
-# write this watcher ever issues. Command spelling matches exactly what
-# was requested of the concurrent backlight-driver work (see this file's
-# own header assumption block); if the merged driver ever uses a different
-# spelling, this is the second (and only other) place to fix, right next
-# to ndq_swc_backlight_is_asleep() above.
+# Wakes the backlight: bl_power=0 (the kernel restores the kept brightness
+# level); if brightness itself was 0, also sets 4 (full, safe-on). The only
+# writes this watcher ever issues.
 ndq_swc_wake() {
-	if [ -w "$NDQ_BACKLIGHT_SYSFS/bl_power" ]; then
-		if printf '0' > "$NDQ_BACKLIGHT_SYSFS/bl_power" 2>/dev/null; then
-			[ "$(cat "$NDQ_BACKLIGHT_SYSFS/brightness" 2>/dev/null)" = 0 ] && \
-				printf '4' > "$NDQ_BACKLIGHT_SYSFS/brightness" 2>/dev/null
-			ndq_swc_log "wake: cleared bl_power on $NDQ_BACKLIGHT_SYSFS"
-			return 0
-		fi
-		ndq_swc_log "wake: write of bl_power on $NDQ_BACKLIGHT_SYSFS failed"
+	if [ ! -w "$NDQ_BACKLIGHT_SYSFS/bl_power" ]; then
+		ndq_swc_log "wake: $NDQ_BACKLIGHT_SYSFS/bl_power not present or not writable - cannot wake"
 		return 1
 	fi
-	if [ ! -w "$NDQ_BACKLIGHT_CMD_FILE" ]; then
-		ndq_swc_log "wake: $NDQ_BACKLIGHT_CMD_FILE not present or not writable - cannot wake"
-		return 1
-	fi
-	if printf '%s' "wake" > "$NDQ_BACKLIGHT_CMD_FILE" 2>/dev/null; then
-		ndq_swc_log "wake: issued 'wake' to $NDQ_BACKLIGHT_CMD_FILE"
+	if printf '0' > "$NDQ_BACKLIGHT_SYSFS/bl_power" 2>/dev/null; then
+		[ "$(cat "$NDQ_BACKLIGHT_SYSFS/brightness" 2>/dev/null)" = 0 ] && \
+			printf '4' > "$NDQ_BACKLIGHT_SYSFS/brightness" 2>/dev/null
+		ndq_swc_log "wake: cleared bl_power on $NDQ_BACKLIGHT_SYSFS"
 		return 0
 	fi
-	ndq_swc_log "wake: write of 'wake' to $NDQ_BACKLIGHT_CMD_FILE failed"
+	ndq_swc_log "wake: write of bl_power on $NDQ_BACKLIGHT_SYSFS failed"
 	return 1
 }
 
@@ -169,9 +131,8 @@ ndq_swc_wake() {
 # read this performs is via ndq_swc_backlight_is_asleep/
 # ndq_swc_touch_down_count, both of which read from overridable file-path
 # variables - so tests can fake the entire kernel-facing surface with
-# plain files on a temp path, the same convention
-# tests/nebulaos-display-qualified-tests.sh already established for these
-# exact two debugfs status files.
+# plain files in a temp sysfs tree, the same convention
+# tests/nebulaos-display-qualified-tests.sh uses.
 #
 # ndq_swc_tick PREV_ASLEEP LAST_TOUCH_COUNT
 #   PREV_ASLEEP: "yes" if the display was believed asleep as of the

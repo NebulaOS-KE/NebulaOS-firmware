@@ -13,9 +13,8 @@
 #     bl_power          0 on, 4 (FB_BLANK_POWERDOWN) off; the brightness
 #                       value is kept while off, so wake restores it
 #     actual_brightness derived by the kernel from its state machine
-# This closes G5: no debugfs for the backlight. (debugfs is still mounted at
-# boot for the touch-wake watcher, which reads the touch driver's
-# touch_down_count - a touch-side diagnostic interface, not the backlight.)
+# The touch-wake watcher reads the touch driver's sysfs touch_down_count;
+# no display service uses or mounts debugfs.
 #
 # OWNERSHIP. The kernel controller's state machine is the single source of
 # truth; it verifies every transition and converges failures to safe-on
@@ -29,24 +28,14 @@
 # refused unless an independent touch-wake path (the S98 watcher) is running.
 
 NBL_SYSFS="${NBL_SYSFS:-/sys/class/backlight/nebulaos_backlight}"
-NBL_DEBUGFS="${NBL_DEBUGFS:-/sys/kernel/debug}"
 NBL_ENV="${NBL_ENV:-/usr/data/nebulaos/display/display.env}"
 NBL_WATCHER_PIDFILE="${NBL_WATCHER_PIDFILE:-/var/run/nebulaos-display-sleep-wake-controller.pid}"
-NBL_PROC_MOUNTS="${NBL_PROC_MOUNTS:-/proc/mounts}"
 NBL_LEVELS="25 50 75 100"
 NBL_POWER_OFF=4
 
 nbl_log() {
 	echo "nebulaos-backlight: $*" >&2
 	command -v logger >/dev/null 2>&1 && logger -t nebulaos-backlight -- "$*" 2>/dev/null
-	return 0
-}
-
-# For the touch-wake watcher only (touch_down_count lives in debugfs).
-nbl_ensure_debugfs() {
-	grep -q " $NBL_DEBUGFS debugfs " "$NBL_PROC_MOUNTS" 2>/dev/null && return 0
-	mount -t debugfs -o mode=0700,nosuid,nodev,noexec debugfs "$NBL_DEBUGFS" 2>/dev/null \
-		|| { nbl_log "could not mount debugfs at $NBL_DEBUGFS"; return 1; }
 	return 0
 }
 
@@ -131,7 +120,6 @@ NBL_WATCHER_START_TENTHS="${NBL_WATCHER_START_TENTHS:-20}"
 # display.env says TOUCH_WAKE="1"), waiting briefly for its pidfile.
 nbl_ensure_watcher() {
 	nbl_watcher_running && return 0
-	nbl_ensure_debugfs || return 1
 	"$NBL_S98" watch >/dev/null 2>&1 || return 1
 	_t=0
 	while [ "$_t" -lt "$NBL_WATCHER_START_TENTHS" ]; do
