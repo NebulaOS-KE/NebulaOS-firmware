@@ -40,7 +40,7 @@ export NEBULAOS_UPDATE_SUPERVISOR_NO_AUTORUN=1 \
 	NS_SCREEN_LOG="$WORK/logs/nebulascreen.log" \
 	NS_SETTLE_SECONDS=0 NS_HEALTH_TIMEOUT=600 REFRESH_PAUSE=0 REFRESH_TRIES=1 \
 	NS_MOUNT="$WORK/bin/fakemount" NS_UMOUNT="$WORK/bin/fakeumount" \
-	NS_MOUNTS="$WORK/mounts" WORK
+	NS_MOUNTS="$WORK/mounts" NS_MOONRAKER_INCLUDE="$WORK/nebulaos.conf" WORK
 APP="$NEBULAOS_ROOT/apps/nebulascreen"
 STATE="$NEBULAOS_ROOT/updates/nebulascreen/state.json"
 BACKUP="$NEBULAOS_ROOT/backups/nebulascreen/last-known-good"
@@ -48,6 +48,11 @@ REPORT="$NEBULAOS_RUN_DIR/nebulascreen-report.json"
 export APP STATE REPORT
 mkdir -p "$WORK/bin" "$WORK/image/nebulascreen" "$WORK/imagefiles" "$WORK/logs"
 echo "screen log line" > "$NS_SCREEN_LOG"
+# [update_manager nebulascreen] enabled (stage 4 include active) unless a
+# test says otherwise.
+configured() { echo '[include /etc/nebulaos/moonraker/nebulascreen-update.conf]' > "$NS_MOONRAKER_INCLUDE"; }
+unconfigured() { echo '# [include /etc/nebulaos/moonraker/nebulascreen-update.conf]' > "$NS_MOONRAKER_INCLUDE"; }
+configured
 
 # --- fixtures ---------------------------------------------------------------
 # A minimal ELF32 executable: MACHINE (8 = MIPS), DYNAMIC adds a PT_INTERP;
@@ -105,6 +110,8 @@ mk_release() { # DIR VERSION [OPTION...]
 	for _o in "$@"; do
 		case "$_o" in
 			incomplete) rm -f "$_d/nebulabeep" ;;
+			truncated) head -c 60 "$_d/nebulascreen" > "$_d/x" && mv "$_d/x" "$_d/nebulascreen" && chmod 755 "$_d/nebulascreen" ;;
+			nolicense) rm -f "$_d/LICENSE" ;;
 			symlink) ln -s /etc/passwd "$_d/themes/link.json" ;;
 			config) echo '{}' > "$_d/nebulascreen.json" ;;
 			extra=*) echo x > "$_d/${_o#extra=}" ;;
@@ -214,6 +221,11 @@ wget() {
 		*/server/info) [ -z "${SERVER_INFO_DOWN:-}" ]; return ;;
 		*print_stats=state) printf '{"result":{"status":{"print_stats":{"state":"%s"}}}}' "$PRINT_STATE" ;;
 		*/machine/update/status) printf '{"result":{"busy":%s}}' "$UM_BUSY" ;;
+		*/machine/update/refresh?name=nebulascreen)
+			# Moonraker without the section: no such updater
+			grep -qx '\[include /etc/nebulaos/moonraker/nebulascreen-update.conf\]' "$NS_MOONRAKER_INCLUDE" \
+				|| { echo "No updater registered for nebulascreen" >&2; return 1; }
+			echo "$_url" >> "$WORK/refreshes" ;;
 		*/machine/update/refresh*) echo "$_url" >> "$WORK/refreshes" ;;
 	esac
 	return 0
@@ -274,7 +286,8 @@ t "merge kept a foreign key and the stamp" '[ "$(field foo)" = bar ] && [ -n "$(
 
 # --- non-MIPS / dynamic / other refusals, no backup -> image's screen ---------
 for bad in "machine=62:not MIPS" "dynamic:dynamically linked" "symlink:symlink in the release" \
-		"config:settings file" "extra=install.sh:unexpected entry"; do
+		"config:settings file" "extra=install.sh:unexpected entry" \
+		"truncated:is truncated" "nolicense:missing LICENSE"; do
 	opt=${bad%%:*} why=${bad#*:}
 	setup; poll_nebulascreen_once
 	moonraker_install v0.9.1 "$opt"
@@ -440,6 +453,89 @@ setup; poll_nebulascreen_once
 mv "$APP" "$APP.old"; mkdir -p "$APP.staging"
 cleanup_stale_staging
 t "interrupted restore: the app dir is put back" '[ -f "$APP/release_info.json" ] && [ ! -e "$APP.old" ] && [ ! -e "$APP.staging" ]'
+
+# --- review F1: a failed copy is never swapped in ------------------------------
+mkdir -p "$WORK/adr/src" "$WORK/adr/dst"; echo keep > "$WORK/adr/dst/f"
+echo secret > "$WORK/adr/src/f"; chmod 000 "$WORK/adr/src/f"
+if [ "$(id -u)" != 0 ]; then
+	atomic_directory_replace "$WORK/adr/src" "$WORK/adr/dst" 2>/dev/null; rc=$?
+	t "atomic replace: cp failure -> non-zero, target untouched, no staging" \
+		'[ "$rc" != 0 ] && [ "$(cat "$WORK/adr/dst/f")" = keep ] && [ ! -e "$WORK/adr/dst.staging" ] && [ ! -e "$WORK/adr/dst.old" ]'
+	setup; poll_nebulascreen_once
+	moonraker_install v0.9.1; poll_nebulascreen_once
+	chmod 000 "$BACKUP/themes/default.json"
+	moonraker_install v0.9.2 api=2; poll_nebulascreen_once
+	t "rollback whose restore copy fails: image's screen, not a partial copy" \
+		'[ "$(field state)" = factory-fallback ] && field last_failure_reason | grep -q "restore_copy_failed" && [ "$(reported)" = v0.9.0 ]'
+	chmod 644 "$BACKUP/themes/default.json" 2>/dev/null
+fi
+chmod 644 "$WORK/adr/src/f"
+atomic_directory_replace "$WORK/adr/src" "$WORK/adr/dst"; rc=$?
+t "atomic replace: success -> 0, new content" '[ "$rc" = 0 ] && [ "$(cat "$WORK/adr/dst/f")" = secret ]'
+t "mainsail/venv callers check the result" \
+	'grep -q "if ! atomic_directory_replace \"\$MAINSAIL_BACKUP\" \"\$path\"" "$SUP" && sed -n "/^moonraker_restore_env() {/,/^}/p" "$SUP" | tail -2 | grep -q "atomic_directory_replace"'
+# The restored copy is checked again (whole files) before it is approved.
+setup; poll_nebulascreen_once
+moonraker_install v0.9.1; poll_nebulascreen_once
+atomic_directory_replace() {
+	rm -rf "$2"; cp -a "$1" "$2"
+	if [ "$2" = "$APP" ]; then head -c 60 "$1/nebulascreen" > "$2/nebulascreen"; fi
+	return 0
+}
+moonraker_install v0.9.2 api=2; poll_nebulascreen_once
+t "restored copy that fails stage 1: not approved, image's screen" \
+	'[ "$(field state)" = factory-fallback ] && field last_failure_reason | grep -q "restored_copy_invalid" && [ "$(reported)" = v0.9.0 ]'
+unset -f atomic_directory_replace; . "$SUP" >/dev/null 2>&1
+log() { echo "LOG: $*" >> "$WORK/log"; }
+
+# --- review F2: changed after stage 1 -> not approved ---------------------------
+setup; poll_nebulascreen_once
+moonraker_install v0.9.1
+ns_busy_reason() { echo late > "$APP/themes/late.json"; return 1; }
+poll_nebulascreen_once
+t "changed between stage 1 and approval: not activated" \
+	'[ -z "$(field approved_token)" ] && [ "$(reported)" = v0.9.0 ] && grep -q "changed after stage 1" "$WORK/log"'
+unset -f ns_busy_reason; . "$SUP" >/dev/null 2>&1
+log() { echo "LOG: $*" >> "$WORK/log"; }
+poll_nebulascreen_once
+t "...checked again and activated on the next poll" '[ "$(field state)" = healthy ] && [ "$(reported)" = v0.9.1 ]'
+
+# --- review F4: same-version re-download during a print is remembered -----------
+PRINT_STATE=printing
+moonraker_install v0.9.2; poll_nebulascreen_once
+moonraker_install v0.9.2; poll_nebulascreen_once
+t "same-version re-download while busy: its fingerprint is recorded" \
+	'[ "$(field state)" = pending ] && [ "$(field pending_fingerprint)" = "$(ns_fingerprint)" ]'
+ns_stage1() { echo "stage1 ran" >> "$WORK/stage1.calls"; return 1; }
+poll_nebulascreen_once
+t "...so the next poll does not redo the settle + stage 1" '[ ! -e "$WORK/stage1.calls" ] && [ "$(field state)" = pending ]'
+unset -f ns_stage1; . "$SUP" >/dev/null 2>&1
+log() { echo "LOG: $*" >> "$WORK/log"; }
+PRINT_STATE=standby
+
+# --- review F6: missing / empty app dir -> the seed, not a failed download -------
+setup; poll_nebulascreen_once
+rm -rf "$APP"
+poll_nebulascreen_once
+t "missing app dir: seed recreated, no failure recorded" \
+	'cmp -s "$APP/release_info.json" "$NS_SEED_INFO" && [ "$(field state)" = healthy ] && ! ls "$NEBULAOS_ROOT"/backups/nebulascreen/failed-* >/dev/null 2>&1'
+moonraker_install v0.9.1; poll_nebulascreen_once
+find "$APP" -mindepth 1 -delete
+poll_nebulascreen_once
+t "emptied app dir of an active release: image's screen" \
+	'[ "$(field state)" = factory-fallback ] && cmp -s "$APP/release_info.json" "$NS_SEED_INFO"'
+
+# --- review F3: no refresh while the updater is not configured -----------------
+unconfigured
+setup; rm -f "$WORK/refreshes"
+poll_nebulascreen_once
+moonraker_install v0.9.1 api=2; poll_nebulascreen_once
+reconcile_update_info_on_boot; sleep 0.3
+t "not configured: Moonraker is never asked to refresh nebulascreen" \
+	'[ "$(field state)" = factory-fallback ] && ! grep -q "refresh?name=nebulascreen" "$WORK/wget.calls"'
+configured
+ns_refresh_update_info "first poll on this image"
+t "refresh log names the real reason" 'grep -q "refresh (first poll on this image)" "$WORK/log"'
 
 # --- wiring -------------------------------------------------------------------
 t "poll_once runs the nebulascreen component" \

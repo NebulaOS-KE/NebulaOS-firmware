@@ -353,6 +353,7 @@ REFRESH_TRIES="${REFRESH_TRIES:-12}"
 REFRESH_PAUSE="${REFRESH_PAUSE:-15}"
 refresh_update_info() {
 	# $1 = update-manager name (moonraker | klipper | mainsail | nebulascreen)
+	# $2 = why (log only; default: after a rollback)
 	(
 		_t=0
 		while [ "$_t" -lt "$REFRESH_TRIES" ]; do
@@ -366,7 +367,7 @@ refresh_update_info() {
 		done
 		log "$1: Moonraker's update manager could not be refreshed ($REFRESH_TRIES attempts)"
 	) >/dev/null 2>&1 &
-	log "$1: asking Moonraker's update manager to refresh after the rollback"
+	log "$1: asking Moonraker's update manager to refresh (${2:-after a rollback})"
 }
 
 # G51 rest (2026-10-15): at start-up, a component whose last outcome was a
@@ -386,7 +387,7 @@ reconcile_update_info_on_boot() {
 		[ "$(read_state_field "$_n" state)" = "rolled-back" ] && refresh_update_info "$_n"
 	done
 	case "$(read_state_field nebulascreen state)" in
-		rolled-back|factory-fallback) refresh_update_info nebulascreen ;;
+		rolled-back|factory-fallback) ns_refresh_update_info "after a rollback" ;;
 	esac
 	[ "$(read_stack_field state)" = "rolled-back" ] && refresh_update_info klipper
 	return 0
@@ -505,19 +506,33 @@ atomic_directory_replace() {
 	staging="$dst.staging"
 	old="$dst.old"
 	rm -rf "$staging" "$old"
-	mkdir -p "$(dirname "$staging")"
-	cp -a "$src" "$staging"
-	if [ -e "$dst" ]; then
-		mv "$dst" "$old"
+	# A failed copy (full /usr/data, I/O error) must never be swapped in: the
+	# target is left untouched and the caller is told (G82 stage 3 review F1).
+	if ! mkdir -p "$(dirname "$staging")" || ! cp -a "$src" "$staging"; then
+		rm -rf "$staging"
+		log "atomic_directory_replace: copying $src failed - $dst left untouched"
+		return 1
 	fi
-	mv "$staging" "$dst"
+	if [ -e "$dst" ] && ! mv "$dst" "$old"; then
+		rm -rf "$staging"
+		log "atomic_directory_replace: could not move $dst aside - left untouched"
+		return 1
+	fi
+	if ! mv "$staging" "$dst"; then
+		[ -e "$old" ] && mv "$old" "$dst"
+		rm -rf "$staging"
+		log "atomic_directory_replace: could not put the copy in place at $dst - previous content restored"
+		return 1
+	fi
 	rm -rf "$old"
+	return 0
 }
 
 mainsail_snapshot_to_backup() {
 	path="$NEBULAOS_ROOT/apps/mainsail"
 	[ -d "$path" ] || return 0
-	atomic_directory_replace "$path" "$MAINSAIL_BACKUP"
+	atomic_directory_replace "$path" "$MAINSAIL_BACKUP" \
+		|| log "mainsail: last-known-good backup NOT refreshed (copy failed) - the previous backup is kept"
 }
 
 # Real bug found live (Mainsail rollback retest, 2026-07-27): restoring the
@@ -610,7 +625,13 @@ validate_mainsail() {
 		return
 	fi
 
-	atomic_directory_replace "$MAINSAIL_BACKUP" "$path"
+	if ! atomic_directory_replace "$MAINSAIL_BACKUP" "$path"; then
+		log "$name: the backup could not be restored - going to factory-fallback"
+		preserve_failure_evidence "$name" "$known_good" "restore_copy_failed"
+		factory_fallback "$name"
+		write_state "$name" "$known_good" "$known_good" "factory-fallback" "${reason}:$new_version;restore_copy_failed"
+		return
+	fi
 	remount_mainsail_bind
 	if "$HEALTHCHECK" stage1 "$name" "$path" && stabilized_stage2_mainsail; then
 		log "$name: restored backup re-validated healthy"
@@ -727,6 +748,20 @@ ns_component_ready() {
 }
 
 ns_get() { read_state_field "$NS_NAME" "$1"; }
+
+# [update_manager nebulascreen] is dormant until its include line in the
+# image-owned nebulaos.conf is active (stage 4). Until then Moonraker has no
+# such updater ("No updater registered"), so it is never asked to refresh.
+NS_MOONRAKER_INCLUDE="${NS_MOONRAKER_INCLUDE:-/etc/nebulaos/moonraker/nebulaos.conf}"
+ns_update_manager_configured() {
+	grep -qx '\[include /etc/nebulaos/moonraker/nebulascreen-update.conf\]' \
+		"$NS_MOONRAKER_INCLUDE" 2>/dev/null
+}
+
+ns_refresh_update_info() { # WHY
+	ns_update_manager_configured || return 0
+	refresh_update_info "$NS_NAME" "$1"
+}
 
 # Merge KEY=VALUE pairs into state.json (atomic). Keys this file does not own
 # (image_identity) are kept; an unreadable file starts empty, which costs at
@@ -910,7 +945,7 @@ ns_image_fallback() { # FAILED_VERSION REASON
 	ns_set_state factory-fallback "$2:$1" approved_version= approved_token= \
 		trial_version= busy_reason= known_good_version="$_nsseed" \
 		known_good_source=image last_seen_version="$_nsseed" restart_pending=1
-	refresh_update_info "$NS_NAME"
+	ns_refresh_update_info "after the fallback to the image's screen"
 	ns_pending_restart
 }
 
@@ -921,7 +956,19 @@ ns_roll_back() { # FAILED_VERSION REASON
 			&& [ "$(ns_release_version "$NS_BACKUP")" = "$_nskg" ] \
 			&& ns_stage1 "$NS_BACKUP" >/dev/null 2>&1; then
 		log "$NS_NAME: $2 on $1 - restoring the last-known-good release $_nskg"
-		atomic_directory_replace "$NS_BACKUP" "$NS_APP_DIR"
+		if ! atomic_directory_replace "$NS_BACKUP" "$NS_APP_DIR"; then
+			log "$NS_NAME: the last-known-good release could not be restored"
+			ns_image_fallback "$1" "$2;restore_copy_failed"
+			return 0
+		fi
+		# The restored copy itself is checked (whole files), never trusted.
+		rm -f "$NS_APP_DIR/.nebulaos-approved"
+		if [ "$(ns_release_version "$NS_APP_DIR")" != "$_nskg" ] \
+				|| ! ns_stage1 "$NS_APP_DIR" >/dev/null 2>&1; then
+			log "$NS_NAME: the restored release $_nskg fails stage 1"
+			ns_image_fallback "$1" "$2;restored_copy_invalid"
+			return 0
+		fi
 		ns_approve "$_nskg"
 		ns_set_state rolling-back "$2:$1" trial_version="$_nskg" \
 			last_seen_version="$_nskg" busy_reason= restart_pending=1
@@ -941,11 +988,12 @@ ns_judge_trial() {
 			log "$NS_NAME: release $_nstr passed full validation - recording it as known-good"
 			ns_set_state healthy "" known_good_version="$_nstr" known_good_source=release \
 				last_seen_version="$_nstr" busy_reason=
-			atomic_directory_replace "$NS_APP_DIR" "$NS_BACKUP"
+			atomic_directory_replace "$NS_APP_DIR" "$NS_BACKUP" \
+				|| log "$NS_NAME: last-known-good backup of $_nstr NOT taken (copy failed) - a later rollback falls back to the image's screen"
 		else
 			log "$NS_NAME: the restored release $_nstr is healthy"
 			ns_set_state rolled-back "$(ns_get last_failure_reason)" busy_reason=
-			refresh_update_info "$NS_NAME"
+			ns_refresh_update_info "after a rollback"
 		fi
 		return 0
 	fi
@@ -977,7 +1025,7 @@ ns_bootstrap() {
 	# Read-only data: do not ask Moonraker again on every poll.
 	[ -n "$(ns_get state)" ] || return 0
 	log "$NS_NAME: bootstrapped (the image's screen $_nsseed is known-good)"
-	refresh_update_info "$NS_NAME"
+	ns_refresh_update_info "first poll on this image"
 }
 
 poll_nebulascreen_once() {
@@ -994,6 +1042,18 @@ poll_nebulascreen_once() {
 	fi
 	if ns_is_image_seed; then
 		# The image's own screen; the normal state without a download.
+		return 0
+	fi
+	# A missing or empty app dir is not a download (Moonraker's own extract
+	# passes through an empty dir - only once it is idle): recreate the seed.
+	if [ -z "$(ls -A "$NS_APP_DIR" 2>/dev/null)" ]; then
+		ns_update_manager_busy && return 0
+		if [ -n "$(ns_get approved_token)" ]; then
+			ns_image_fallback "$(ns_get approved_version)" app_dir_missing
+		else
+			log "$NS_NAME: $NS_APP_DIR is missing or empty - recreating the image seed"
+			ns_reset_to_image "$NS_APP_DIR" "$NS_SEED_INFO"
+		fi
 		return 0
 	fi
 
@@ -1028,8 +1088,17 @@ poll_nebulascreen_once() {
 			ns_set_state pending "activation_deferred" trial_version="$_nscur" \
 				pending_fingerprint="$_nsfp" busy_reason="$_nsbr"
 		else
+			# A re-download of the same version during the print: remember
+			# it, so later polls do not redo the settle + stage 1.
+			[ "$(ns_get pending_fingerprint)" = "$_nsfp" ] \
+				|| ns_set pending_fingerprint="$_nsfp"
 			ns_defer "$_nsbr" "activation of $_nscur"
 		fi
+		return 0
+	fi
+	# Nothing may have changed since stage 1 (the busy check took time).
+	if [ "$(ns_fingerprint)" != "$_nsfp" ]; then
+		log "$NS_NAME: $NS_APP_DIR changed after stage 1 - checking it again on the next poll"
 		return 0
 	fi
 	log "$NS_NAME: release $_nscur passed stage 1 - activating it"
@@ -1061,7 +1130,8 @@ ns_reconcile_on_boot() {
 # definition the one that was just proven to work with this exact source.
 moonraker_snapshot_env() {
 	[ -d "$MOONRAKER_ENV" ] || return 0
-	atomic_directory_replace "$MOONRAKER_ENV" "$MOONRAKER_ENV_BACKUP"
+	atomic_directory_replace "$MOONRAKER_ENV" "$MOONRAKER_ENV_BACKUP" \
+		|| log "moonraker: paired venv backup NOT refreshed (copy failed) - the previous backup is kept"
 }
 
 # Restores the paired venv backup. Returns 1 (without restoring anything)
@@ -1070,8 +1140,9 @@ moonraker_snapshot_env() {
 # than restart Moonraker against a half-reset pairing.
 moonraker_restore_env() {
 	[ -d "$MOONRAKER_ENV_BACKUP" ] || return 1
+	# A failed copy leaves the venv untouched and counts as "no backup"
+	# (the callers then go to factory-fallback, as before).
 	atomic_directory_replace "$MOONRAKER_ENV_BACKUP" "$MOONRAKER_ENV"
-	return 0
 }
 
 # ==========================================================================

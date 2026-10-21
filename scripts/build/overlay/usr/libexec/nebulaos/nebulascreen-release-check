@@ -17,7 +17,8 @@ A release passes only when:
     nebulaos_ui_api EQUAL to this image's "nebulaos_ui_api" (an image
     without that field never accepts a release);
   - nebulascreen and nebulabeep are executable, static, ELF32 little-endian
-    MIPS executables;
+    MIPS executables, read whole: no header or loadable segment past the end;
+  - LICENSE and NOTICE are present (GPL-3, based on GuppyScreen);
   - themes/ holds at least one file;
   - there is no symlink anywhere, no settings file (nebulascreen.json or
     the old GuppyScreen name) and nothing outside those entries + LICENSE/NOTICE
@@ -43,6 +44,7 @@ FORBIDDEN_NAMES = ("nebulascreen.json", "guppyconfig.json")
 VERSION_RE = re.compile(r"^v\d+\.\d+\.\d+([-.][0-9A-Za-z.-]+)?$")
 EM_MIPS = 8
 PT_INTERP = 3
+PT_LOAD = 1
 DEFAULT_IMAGE_VERSION = "/opt/nebulaos-version.json"
 
 
@@ -62,17 +64,24 @@ def elf_problems(data, name):
         problems.append("%s is not MIPS (e_machine %d)" % (name, e_machine))
     if e_type != 2:
         problems.append("%s is not an executable (e_type %d)" % (name, e_type))
-    e_phoff, = struct.unpack_from("<I", data, 28)
-    e_phentsize, e_phnum = struct.unpack_from("<HH", data, 42)
+    # The whole file is read: a download cut short (or a partial copy) is
+    # caught where the headers point past its end.
+    e_phoff, e_shoff = struct.unpack_from("<II", data, 28)
+    e_phentsize, e_phnum, e_shentsize, e_shnum = struct.unpack_from("<HHHH", data, 42)
+    if e_phnum == 0:
+        problems.append("%s has no program headers" % name)
+    if e_phoff + e_phnum * e_phentsize > len(data) or (e_phnum and e_phentsize < 32):
+        problems.append("%s is truncated (program headers past the end)" % name)
+        return problems
+    if e_shoff and e_shoff + e_shnum * e_shentsize > len(data):
+        problems.append("%s is truncated (section headers past the end)" % name)
     for i in range(e_phnum):
         off = e_phoff + i * e_phentsize
-        if off + 4 > len(data):
-            problems.append("%s has a truncated program header" % name)
-            break
-        p_type, = struct.unpack_from("<I", data, off)
+        p_type, p_offset, _va, _pa, p_filesz = struct.unpack_from("<IIIII", data, off)
         if p_type == PT_INTERP:
             problems.append("%s is dynamically linked (has an interpreter)" % name)
-            break
+        elif p_type == PT_LOAD and p_offset + p_filesz > len(data):
+            problems.append("%s is truncated (a loadable segment ends past the file)" % name)
     return problems
 
 
@@ -110,7 +119,11 @@ def check(app_dir, image_version=DEFAULT_IMAGE_VERSION):
         if not os.stat(path).st_mode & stat.S_IXUSR:
             problems.append("%s is not executable" % name)
         with open(path, "rb") as fh:
-            problems += elf_problems(fh.read(4096), name)
+            problems += elf_problems(fh.read(), name)
+    for name in ("LICENSE", "NOTICE"):
+        path = os.path.join(app_dir, name)
+        if os.path.islink(path) or not os.path.isfile(path):
+            problems.append("missing %s" % name)
     themes = os.path.join(app_dir, "themes")
     if not os.path.isdir(themes) or os.path.islink(themes) or not any(
             files for _r, _d, files in os.walk(themes)):
