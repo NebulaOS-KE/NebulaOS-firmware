@@ -2,16 +2,20 @@
 #
 # NebulaOS display-qualification config: shared library for the persistent
 # /usr/data/nebulaos/display-qualified.conf format, its atomic writer, its
-# validator, and the debugfs-apply logic for the two kernel-owned drivers
-# this mission qualifies:
+# validator, and the apply logic for the two kernel-owned drivers this
+# mission qualifies, through their sysfs interfaces:
 #
-#   - CONFIG_TOUCHSCREEN_NS2009_FINAL_QUALIFICATION (commit 022d841),
-#     debugfs at /sys/kernel/debug/ns2009_final_qualification/ - see
-#     scripts/build/patches/touch-final-qualification.patch.
-#   - CONFIG_NEBULAOS_BACKLIGHT_FINAL_CONTROLLER (commit 3993ca2), debugfs
-#     at /sys/kernel/debug/nebulaos_backlight_final/ (NBLC_NAME, not the
-#     driver's .c filename) - see
-#     scripts/build/patches/backlight-final-controller.patch.
+#   - CONFIG_TOUCHSCREEN_NS2009_FINAL_QUALIFICATION
+#     (ns2009_final_qualification.c): /sys/bus/i2c/devices/<bus>-<addr>/
+#     nebulaos_touch/{mode,touch_down_count}, created at the driver's first
+#     poll, before any init script runs.
+#   - CONFIG_NEBULAOS_BACKLIGHT_FINAL_CONTROLLER
+#     (nebulaos_backlight_final_controller.c): the standard backlight class
+#     device /sys/class/backlight/nebulaos_backlight/.
+#
+# Kernel and rootfs ship together in one image, so there is no debugfs
+# fallback; debugfs stays in the kernel for manual diagnostics only and the
+# image never mounts it.
 #
 # Sourced by three callers: the boot-time apply script
 # (etc/init.d/S97nebulaos-display-qualified-apply), the human-operator
@@ -44,24 +48,19 @@ NDQ_FORMAT_VERSION=1
 : "${NDQ_CONFIG_FILE:=$NDQ_CONFIG_DIR/display-qualified.conf}"
 
 # Overridable so the offline test suite can point these at a fake sysfs
-# tree instead of a real kernel - there is no running kernel to test
-# against from this environment at all (see this mission's own test
-# section). Real defaults match the debugfs paths the two patches above
-# actually create (debugfs_create_dir() calls, read directly from each
-# patch's NBLC_NAME/touch-dir macro - NOT the driver .c filenames, which
-# do not match: the backlight driver registers
-# debugfs_create_dir(NBLC_NAME, ...) where NBLC_NAME is
-# "nebulaos_backlight_final", not "nebulaos_backlight_final_controller".
-# An earlier version of this file guessed the .c-filename spelling and was
-# wrong - this silently broke the sleep/wake touch-watcher's
-# asleep-detection (ndq_swc_backlight_is_asleep() could never read the
-# real status file, so it always reported "not asleep" and never armed a
-# touch baseline). Found live during the Display Baseline Cleanup
-# Mission's touch-wake acceptance test; fixed here.
-: "${NDQ_TOUCH_MODE_FILE:=/sys/kernel/debug/ns2009_final_qualification/mode}"
-: "${NDQ_TOUCH_STATUS_FILE:=/sys/kernel/debug/ns2009_final_qualification/status}"
-: "${NDQ_BACKLIGHT_CMD_FILE:=/sys/kernel/debug/nebulaos_backlight_final/command}"
-: "${NDQ_BACKLIGHT_STATUS_FILE:=/sys/kernel/debug/nebulaos_backlight_final/status}"
+# tree instead of a real kernel. NDQ_TOUCH_SYSFS defaults to the first
+# <bus>-<addr>/nebulaos_touch directory under NDQ_I2C_DEVICES (empty if the
+# touch driver has not created one); NDQ_BACKLIGHT_SYSFS is the backlight
+# class device registered by the controller.
+: "${NDQ_I2C_DEVICES:=/sys/bus/i2c/devices}"
+ndq_find_touch_sysfs() {
+	for _ndq_d in "$NDQ_I2C_DEVICES"/*/nebulaos_touch; do
+		[ -d "$_ndq_d" ] && { printf '%s' "$_ndq_d"; return 0; }
+	done
+	return 1
+}
+: "${NDQ_TOUCH_SYSFS:=$(ndq_find_touch_sysfs)}"
+: "${NDQ_BACKLIGHT_SYSFS:=/sys/class/backlight/nebulaos_backlight}"
 
 # The touch-wake watcher's own init.d script, invoked (not sourced) by
 # ndq_apply_deferred_fields() below when sleep_enabled=1 and
@@ -438,8 +437,8 @@ ndq_validate() {
 	esac
 
 	# release_stable_samples / idle_safety_poll_ms / touch_fallback_enabled
-	# are NOT runtime-configurable in this driver (no debugfs knob for any
-	# of them - see ns2009_final_qualification.c's own
+	# are NOT runtime-configurable in this driver (no sysfs or debugfs knob
+	# for any of them - see ns2009_final_qualification.c's own
 	# NS2009_NFQ_RELEASE_CONFIRM_POLLS / NS2009_NFQ_SAFETY_POLL_INTERVAL_MS
 	# compile-time constants). Recording anything other than the actual
 	# compiled-in constants here would misrepresent what was really
@@ -543,9 +542,10 @@ ndq_validate() {
 # always a no-op (poll-only IS the kernel's own boot default - see
 # ns2009_final_qualification.c's probe(), nfq->mode =
 # NS2009_NFQ_MODE_POLL_ONLY unconditionally). touch_mode=irq-assist writes
-# exactly the string "irq-assist" to .../mode, the one and only accepted
-# spelling (ns2009_nfq_mode_write() - see the patch, read directly, not
-# guessed).
+# exactly "irq-assist" to $NDQ_TOUCH_SYSFS/mode (the driver's
+# ns2009_nfq_mode_command() parser rejects anything else) and requires the
+# mode file to read back exactly "irq-assist". Any failure leaves touch at
+# poll-only.
 ndq_apply_touch() {
 	touch_mode="$1"
 
@@ -554,25 +554,23 @@ ndq_apply_touch() {
 		return 0
 	fi
 
-	if [ ! -w "$NDQ_TOUCH_MODE_FILE" ]; then
-		ndq_log "apply-touch: $NDQ_TOUCH_MODE_FILE not present or not writable - kernel driver not loaded as expected, refusing to guess, leaving touch at poll-only"
+	mode_file="$NDQ_TOUCH_SYSFS/mode"
+	if [ -z "$NDQ_TOUCH_SYSFS" ] || [ ! -w "$mode_file" ]; then
+		ndq_log "apply-touch: touch sysfs mode file ('$mode_file') not present or not writable - kernel driver not loaded as expected, refusing to guess, leaving touch at poll-only"
 		return 1
 	fi
 
-	if ! printf '%s' "irq-assist" > "$NDQ_TOUCH_MODE_FILE" 2>/dev/null; then
-		ndq_log "apply-touch: write of 'irq-assist' to $NDQ_TOUCH_MODE_FILE failed"
+	if ! printf '%s' "irq-assist" > "$mode_file" 2>/dev/null; then
+		ndq_log "apply-touch: write of 'irq-assist' to $mode_file failed"
 		return 1
 	fi
 
-	if [ -r "$NDQ_TOUCH_STATUS_FILE" ]; then
-		if grep -q '^mode: irq-assist$' "$NDQ_TOUCH_STATUS_FILE" 2>/dev/null; then
-			ndq_log "apply-touch: confirmed mode=irq-assist via $NDQ_TOUCH_STATUS_FILE"
-		else
-			ndq_log "apply-touch: wrote irq-assist but $NDQ_TOUCH_STATUS_FILE does not confirm it - treating as a failure"
-			return 1
-		fi
+	readback=$(cat "$mode_file" 2>/dev/null)
+	if [ "$readback" != "irq-assist" ]; then
+		ndq_log "apply-touch: wrote irq-assist but $mode_file reads back '$readback' - treating as a failure"
+		return 1
 	fi
-
+	ndq_log "apply-touch: confirmed mode=irq-assist via $mode_file"
 	return 0
 }
 
@@ -580,70 +578,47 @@ ndq_apply_touch() {
 # Apply - backlight
 # ============================================================
 #
-# Only ever called after ndq_validate succeeded. Always transitions to
-# safe-on first, regardless of backlight_mode - re-reading the driver's
-# own state machine (nebulaos_backlight_final_controller.c): "pwm-active"
-# is only reachable from "safe-on" (nblc_cmd_pwm_active() rejects with
-# -EPERM from any other state), and "enter-safe-on" is documented as the
-# universal, always-valid convergence command from ANY state including
-# boot-preserve. Command spellings below are copied verbatim from
-# nblc_command_write()'s strcmp() whitelist in the patch - not guessed.
+# Only ever called after ndq_validate succeeded. Converges the backlight
+# to full (safe-on) through the class device, regardless of
+# backlight_mode: bl_power=0, brightness=4 (the kernel enters safe-on and
+# verifies the GPC0 readback), then actual_brightness must read 4. Any
+# failure stops here; nothing further is tried (the kernel converges its
+# own failures to safe-on or reports a fault).
 #
-# IMPORTANT, HONEST LIMITATION (found while reading the real driver, not
-# assumed): pwm-active-25/50/75 are BOUNDED, auto-reverting operations.
-# nblc_cmd_pwm_active() arms the driver's own kernel watchdog for
-# NBLC_PWM_TEST_MS (2000ms) before applying the duty, and
-# nblc_restore_work() unconditionally converges back to safe-on when that
-# timer fires - there is no debugfs command in this driver that leaves the
-# backlight in a SUSTAINED, non-safe-on PWM brightness. This script issues
-# the qualified pwm-active-<N> command exactly once and does not loop or
-# reissue it: the mission's core safety principle ("never leave the screen
-# possibly-dark for even a moment") is still fully satisfied either way,
-# since the auto-revert target is safe-on (lit), never off. Sustained PWM
-# brightness control is simply not a capability this kernel driver
-# exposes yet - recording pwm_channel/pwm_period_ns/pwm_polarity/
-# safe_brightness in the config is still valuable as an audit trail of
-# what was qualified, and forward-compatible with a future driver
-# revision that does support a sustained mode.
+# backlight_mode=pwm does not change what is written at boot: the
+# qualified pwm_* / safe_brightness fields are an audit record of what was
+# qualified. The user's persisted brightness level is restored afterwards
+# by S98 (nebulaos-backlight, nbl_boot_restore).
 ndq_apply_backlight() {
 	backlight_mode="$1"
 	safe_brightness="$2"
 
-	if [ ! -w "$NDQ_BACKLIGHT_CMD_FILE" ]; then
-		ndq_log "apply-backlight: $NDQ_BACKLIGHT_CMD_FILE not present or not writable - kernel driver not loaded as expected, refusing to guess, leaving backlight at boot-preserve (already safe)"
+	if [ ! -w "$NDQ_BACKLIGHT_SYSFS/bl_power" ] || [ ! -w "$NDQ_BACKLIGHT_SYSFS/brightness" ]; then
+		ndq_log "apply-backlight: $NDQ_BACKLIGHT_SYSFS/{bl_power,brightness} not present or not writable - kernel driver not loaded as expected, refusing to guess, leaving backlight at boot-preserve (already safe)"
 		return 1
 	fi
 
-	if ! printf '%s' "enter-safe-on" > "$NDQ_BACKLIGHT_CMD_FILE" 2>/dev/null; then
-		ndq_log "apply-backlight: write of 'enter-safe-on' to $NDQ_BACKLIGHT_CMD_FILE failed"
+	if ! printf '0' > "$NDQ_BACKLIGHT_SYSFS/bl_power" 2>/dev/null; then
+		ndq_log "apply-backlight: write of 0 to $NDQ_BACKLIGHT_SYSFS/bl_power failed"
+		return 1
+	fi
+	if ! printf '4' > "$NDQ_BACKLIGHT_SYSFS/brightness" 2>/dev/null; then
+		ndq_log "apply-backlight: write of 4 (safe-on) to $NDQ_BACKLIGHT_SYSFS/brightness failed"
 		return 1
 	fi
 
-	if [ -r "$NDQ_BACKLIGHT_STATUS_FILE" ]; then
-		if ! grep -q '^state: safe-on$' "$NDQ_BACKLIGHT_STATUS_FILE" 2>/dev/null \
-		   || ! grep -q '^safe_on_verified: 1$' "$NDQ_BACKLIGHT_STATUS_FILE" 2>/dev/null; then
-			ndq_log "apply-backlight: wrote enter-safe-on but $NDQ_BACKLIGHT_STATUS_FILE does not confirm state=safe-on/safe_on_verified=1 - stopping here, not attempting pwm-active"
-			return 1
-		fi
-		ndq_log "apply-backlight: confirmed safe-on via $NDQ_BACKLIGHT_STATUS_FILE"
+	actual=$(cat "$NDQ_BACKLIGHT_SYSFS/actual_brightness" 2>/dev/null)
+	if [ "$actual" != "4" ]; then
+		ndq_log "apply-backlight: wrote brightness 4 but $NDQ_BACKLIGHT_SYSFS/actual_brightness reads '$actual' - safe-on not confirmed, stopping here"
+		return 1
+	fi
+	ndq_log "apply-backlight: confirmed safe-on (actual_brightness 4) via $NDQ_BACKLIGHT_SYSFS"
+
+	if [ "$backlight_mode" = "pwm" ]; then
+		ndq_log "apply-backlight: backlight_mode=pwm (qualified safe_brightness=$safe_brightness) - the user's persisted level is restored later by S98 (nebulaos-backlight)"
 	else
-		ndq_log "apply-backlight: $NDQ_BACKLIGHT_STATUS_FILE not readable, cannot confirm safe-on - stopping here as a precaution, not attempting pwm-active"
-		return 1
-	fi
-
-	if [ "$backlight_mode" = "fixed-safe-on" ]; then
 		ndq_log "apply-backlight: backlight_mode=fixed-safe-on, done"
-		return 0
 	fi
-
-	# backlight_mode = pwm from here on; ndq_validate already guaranteed
-	# safe_brightness is exactly one of 25/50/75.
-	cmd="pwm-active-${safe_brightness}"
-	if ! printf '%s' "$cmd" > "$NDQ_BACKLIGHT_CMD_FILE" 2>/dev/null; then
-		ndq_log "apply-backlight: write of '$cmd' to $NDQ_BACKLIGHT_CMD_FILE failed - backlight remains at safe-on (safe)"
-		return 1
-	fi
-	ndq_log "apply-backlight: issued '$cmd' - this is a bounded ~2s demonstration pulse per the driver's own watchdog design, it will auto-converge back to safe-on shortly regardless (see this function's header comment) - that is expected, not a failure"
 	return 0
 }
 

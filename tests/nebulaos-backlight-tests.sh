@@ -30,14 +30,12 @@ trap 'rm -rf "$T"' EXIT
 
 # Fake device: three attribute files, kept consistent by fake_sync.
 setup() {
-	rm -rf "$T/c"; mkdir -p "$T/c/bl" "$T/c/dbg"
-	export NBL_SYSFS="$T/c/bl" NBL_DEBUGFS="$T/c/dbg"
+	rm -rf "$T/c"; mkdir -p "$T/c/bl"
+	export NBL_SYSFS="$T/c/bl"
 	export NBL_ENV="$T/c/display.env"
 	export NBL_WATCHER_PIDFILE="$T/c/watcher.pid"
 	export NBL_S98="$T/c/s98"
 	export NBL_WATCHER_START_TENTHS=3
-	echo " $NBL_DEBUGFS debugfs rw 0 0" > "$T/c/mounts"
-	export NBL_PROC_MOUNTS="$T/c/mounts"
 	: > "$T/c/log"
 	FK_BRIGHT=${1:-4}; FK_POWER=${2:-0}; FK_BROKEN=""; FK_STUCK=""
 	fake_sync
@@ -126,8 +124,8 @@ nbl_sleep; rc=$?
 check "unconfirmed sleep reports 2" '[ $rc -eq 2 ]'
 kill "$WPID" 2>/dev/null
 
-# on-demand watcher start (and debugfs for it)
-setup; load; : > "$NBL_PROC_MOUNTS"
+# on-demand watcher start (no mount of any kind)
+setup; load
 mount() { echo "mount $*" >> "$T/c/log"; return 0; }
 cat > "$NBL_S98" <<EOF
 #!/bin/sh
@@ -138,7 +136,7 @@ EOF
 chmod 755 "$NBL_S98"
 nbl_sleep; rc=$?
 check "sleep starts the watcher on demand" '[ $rc -eq 0 ] && nbl_watcher_running && [ "$FK_POWER" = 4 ]'
-check "debugfs mounted root-only for the watcher" 'grep -q "mount -t debugfs -o mode=0700,nosuid,nodev,noexec debugfs $NBL_DEBUGFS" "$T/c/log"'
+check "watcher start mounts nothing (no debugfs)" '! grep -q "^mount" "$T/c/log"'
 unset -f mount
 kill "$(cat "$NBL_WATCHER_PIDFILE")" 2>/dev/null
 
@@ -157,7 +155,7 @@ done
 printf 'BRIGHTNESS="25"\nTOUCH_WAKE="1"\n' > "$NBL_ENV"
 nbl_boot_restore; rc=$?
 check "25 persisted: applied" '[ $rc -eq 0 ] && [ "$(cat "$NBL_SYSFS/actual_brightness")" = 1 ]'
-check "boot restore never touches debugfs" '! grep -q mount "$T/c/log"'
+check "boot restore mounts nothing" '! grep -q mount "$T/c/log"'
 
 # --- CLI ------------------------------------------------------------------------
 setup; NBL_LIB="$LIB" sh "$CLI" bogus >/dev/null 2>&1; rc=$?
@@ -183,7 +181,7 @@ check "S98 has the watch verb" 'grep -q "^	watch)" "$S98"'
 check "watcher gate follows display.env TOUCH_WAKE (rc=$rc)" '[ $rc -eq 0 ]'
 setup
 (
-	NDQ_LIB=/nonexistent; NDQ_BACKLIGHT_SYSFS="$NBL_SYSFS"; NDQ_BACKLIGHT_CMD_FILE="$T/none"
+	NDQ_LIB=/nonexistent; NDQ_BACKLIGHT_SYSFS="$NBL_SYSFS"
 	. "$SWC"
 	ndq_swc_backlight_is_asleep && exit 1
 	echo 4 > "$NBL_SYSFS/bl_power"; echo 0 > "$NBL_SYSFS/actual_brightness"
@@ -193,6 +191,13 @@ setup
 	exit 0
 ); rc=$?
 check "watcher uses sysfs: asleep detection and wake via bl_power (rc=$rc)" '[ $rc -eq 0 ]'
+
+# --- G5 gate: no overlay script mounts or reads debugfs ---------------------------
+# Executable lines only (comments stripped): debugfs stays in the kernel for
+# manual diagnostics, the image never mounts it and no service uses it.
+_g5_hits=$(grep -rnE 'mount[[:space:]]+-t[[:space:]]+debugfs|/sys/kernel/debug' "$OVERLAY" 2>/dev/null \
+	| grep -vE '^[^:]*:[0-9]+:[[:space:]]*#')
+check "no overlay script mounts debugfs or uses /sys/kernel/debug: ${_g5_hits:-none}" '[ -z "$_g5_hits" ]'
 
 echo "nebulaos-backlight-tests: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]

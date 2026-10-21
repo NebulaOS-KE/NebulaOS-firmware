@@ -2,8 +2,7 @@
 #
 # NebulaOS display sleep/wake touch watcher - persistent background daemon.
 # See /etc/nebulaos-display-sleep-wake-controller.sh's own header for the
-# full design rationale, including the documented assumption about the
-# backlight driver's asleep-state status string.
+# full design rationale and the sysfs interfaces it uses.
 #
 # Numbered S98 - right after S97nebulaos-display-qualified-apply (whose own
 # ndq_apply_deferred_fields() may ALSO invoke this script's start() early,
@@ -17,8 +16,8 @@
 # Deliberately a completely separate process/supervisor from anything
 # else in this codebase - a bug in this watcher can never affect touch or
 # backlight's own independently-safe kernel boot defaults (it only ever
-# reads debugfs status files and, at most, writes the single "wake"
-# command - see the library for exactly what it touches).
+# reads sysfs attributes and, at most, clears the backlight's bl_power -
+# see the library for exactly what it touches).
 #
 # Its own start() is a true no-op whenever touch_wake_mode is not
 # "polling" in the persisted config (the default, pre-qualification
@@ -45,9 +44,6 @@ restore_brightness() {
 }
 
 start_watcher() {
-	# The watcher reads the touch driver's debugfs status (touch_down_count);
-	# debugfs is not mounted on the image by default.
-	[ -f "$NBL_LIB" ] && ( . "$NBL_LIB" && nbl_ensure_debugfs )
 	echo "Starting S98nebulaos-display-sleep-wake-controller (touch-wake watcher)"
 	start-stop-daemon -S -b -m -p "$PIDFILE" -x /bin/sh -- "$0" __run
 }

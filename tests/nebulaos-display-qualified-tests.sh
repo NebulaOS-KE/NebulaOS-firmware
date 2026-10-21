@@ -2,7 +2,7 @@
 #
 # Offline, repeatable tests for:
 #   - scripts/build/overlay/etc/nebulaos-display-qualified.sh (the config
-#     format, atomic writer, validator, and debugfs-apply logic, including
+#     format, atomic writer, validator, and sysfs-apply logic, including
 #     the touch_wake_mode field and the sleep/touch-wake watcher-starting
 #     logic in ndq_apply_deferred_fields())
 #   - scripts/build/overlay/etc/init.d/S97nebulaos-display-qualified-apply
@@ -20,7 +20,7 @@
 #
 # HONESTY NOTE (read before trusting a green run here as more than it is):
 # there is no running kernel and no live BusyBox init system available
-# from this environment. Every debugfs interaction below is a fake file
+# from this environment. Every sysfs interaction below is a fake file
 # tree, not a real ns2009_final_qualification/nebulaos_backlight_final_
 # controller kernel driver - what these tests genuinely prove is this
 # project's own userspace logic (parsing, checksum, validation ordering,
@@ -57,33 +57,32 @@ pass() { PASS=$((PASS + 1)); }
 [ -f "$WRITE_HELPER" ] || { echo "FATAL: $WRITE_HELPER not found"; exit 1; }
 
 # ============================================================
-# Fake debugfs tree - reset before each scenario that needs one.
+# Fake sysfs tree - reset before each scenario that needs one.
 # ============================================================
+# Plain files stand in for the kernel attributes: a write lands as written
+# and reads back as written. actual_brightness starts at 4 (the kernel
+# reports boot-preserve as full); bl_power/brightness start empty so a test
+# can tell "never written" apart from a write.
 FAKE_KERNEL="$WORK/fakekernel"
 
 reset_fake_kernel() {
 	rm -rf "$FAKE_KERNEL"
-	mkdir -p "$FAKE_KERNEL/touch" "$FAKE_KERNEL/backlight"
-	: > "$FAKE_KERNEL/touch/mode"
-	printf 'mode: poll-only\npersistent_mode: poll-only\n' > "$FAKE_KERNEL/touch/status"
-	: > "$FAKE_KERNEL/backlight/command"
-	printf 'state: boot-preserve\n' > "$FAKE_KERNEL/backlight/status"
-	NDQ_TOUCH_MODE_FILE="$FAKE_KERNEL/touch/mode"
-	NDQ_TOUCH_STATUS_FILE="$FAKE_KERNEL/touch/status"
-	NDQ_BACKLIGHT_CMD_FILE="$FAKE_KERNEL/backlight/command"
-	NDQ_BACKLIGHT_STATUS_FILE="$FAKE_KERNEL/backlight/status"
-	export NDQ_TOUCH_MODE_FILE NDQ_TOUCH_STATUS_FILE NDQ_BACKLIGHT_CMD_FILE NDQ_BACKLIGHT_STATUS_FILE
+	mkdir -p "$FAKE_KERNEL/i2c/0-0048/nebulaos_touch" "$FAKE_KERNEL/backlight"
+	printf 'poll-only\n' > "$FAKE_KERNEL/i2c/0-0048/nebulaos_touch/mode"
+	printf '0\n' > "$FAKE_KERNEL/i2c/0-0048/nebulaos_touch/touch_down_count"
+	: > "$FAKE_KERNEL/backlight/bl_power"
+	: > "$FAKE_KERNEL/backlight/brightness"
+	printf '4\n' > "$FAKE_KERNEL/backlight/actual_brightness"
+	NDQ_TOUCH_SYSFS="$FAKE_KERNEL/i2c/0-0048/nebulaos_touch"
+	NDQ_BACKLIGHT_SYSFS="$FAKE_KERNEL/backlight"
+	export NDQ_TOUCH_SYSFS NDQ_BACKLIGHT_SYSFS
 }
 
-# "the touch driver confirmed" step of the fake tree - a real driver
-# updates its own status file the instant a mode write is accepted; this
-# helper stands in for that so tests can exercise the apply function's
-# confirm-via-status gate without a real kernel.
-fake_touch_confirm_irq_assist() {
-	printf 'mode: irq-assist\npersistent_mode: poll-only\n' > "$FAKE_KERNEL/touch/status"
-}
-fake_backlight_confirm_safe_on() {
-	printf 'state: safe-on\nsafe_on_verified: 1\n' > "$FAKE_KERNEL/backlight/status"
+# True when neither driver was written: touch mode still poll-only, no
+# backlight write.
+fake_untouched() {
+	[ "$(cat "$NDQ_TOUCH_SYSFS/mode" 2>/dev/null)" = "poll-only" ] \
+		&& [ ! -s "$NDQ_BACKLIGHT_SYSFS/bl_power" ] && [ ! -s "$NDQ_BACKLIGHT_SYSFS/brightness" ]
 }
 
 NDQ_CONFIG_DIR="$WORK/data/nebulaos"
@@ -388,8 +387,6 @@ NDQ_SLEEP_WAKE_INITD="$FAKE_INITD" ndq_apply_deferred_fields 1 0 disabled not-im
 # sleep_enabled=1/touch_wake_mode=polling actually starts the watcher as
 # part of a real apply_all run, without affecting apply_all's own success. ---
 reset_fake_kernel
-fake_touch_confirm_irq_assist
-fake_backlight_confirm_safe_on
 : > "$FAKE_INITD_LOG"
 ndq_render_config qualification_complete=1 touch_mode=irq-assist touch_trigger=pendown-gpio-edge \
 	release_stable_samples=3 idle_safety_poll_ms=250 touch_fallback_enabled=1 \
@@ -497,29 +494,38 @@ if ndq_apply_touch poll-only; then
 else
 	fail "touch_mode=poll-only (the boot default) should always succeed as a no-op"
 fi
-[ ! -s "$NDQ_TOUCH_MODE_FILE" ] && pass || fail "touch_mode=poll-only wrote something to the mode file when it should have been a pure no-op"
+fake_untouched && pass || fail "touch_mode=poll-only wrote something to the mode file when it should have been a pure no-op"
 
 reset_fake_kernel
-# Status never confirms -> must fail, not silently "succeed".
-if ndq_apply_touch irq-assist 2>/dev/null; then
-	fail "irq-assist apply reported success even though the fake status file never confirmed it"
-else
-	pass
-fi
-
-reset_fake_kernel
-fake_touch_confirm_irq_assist
 if ndq_apply_touch irq-assist; then
 	pass
 else
-	fail "irq-assist apply failed even though the fake status file confirms mode: irq-assist"
+	fail "irq-assist apply failed even though the sysfs mode file reads back irq-assist"
 fi
-[ "$(cat "$NDQ_TOUCH_MODE_FILE")" = "irq-assist" ] && pass || fail "wrong bytes written to the touch mode debugfs file"
+[ "$(cat "$NDQ_TOUCH_SYSFS/mode")" = "irq-assist" ] && pass || fail "wrong bytes written to the touch sysfs mode file"
+
+# Readback mismatch: the write is accepted but the mode file does not read
+# back "irq-assist" (here: /dev/null, which reads back empty) -> failure.
+reset_fake_kernel
+ln -sf /dev/null "$NDQ_TOUCH_SYSFS/mode"
+if ndq_apply_touch irq-assist 2>/dev/null; then
+	fail "irq-assist apply reported success even though the mode file never read back irq-assist"
+else
+	pass
+fi
 
 reset_fake_kernel
-rm -f "$NDQ_TOUCH_MODE_FILE"
+rm -f "$NDQ_TOUCH_SYSFS/mode"
 if ndq_apply_touch irq-assist 2>/dev/null; then
-	fail "irq-assist apply reported success when the debugfs mode file does not exist at all"
+	fail "irq-assist apply reported success when the sysfs mode file does not exist at all"
+else
+	pass
+fi
+
+# No nebulaos_touch directory found at all (NDQ_TOUCH_SYSFS empty).
+reset_fake_kernel
+if NDQ_TOUCH_SYSFS="" ndq_apply_touch irq-assist 2>/dev/null; then
+	fail "irq-assist apply reported success with no touch sysfs directory"
 else
 	pass
 fi
@@ -529,44 +535,54 @@ echo "ndq_apply_backlight"
 echo "============================================================"
 
 reset_fake_kernel
-if ndq_apply_backlight fixed-safe-on UNQUALIFIED 2>/dev/null; then
-	fail "fixed-safe-on apply reported success even though status never confirmed safe-on"
-else
-	pass
-fi
-
-reset_fake_kernel
-fake_backlight_confirm_safe_on
 if ndq_apply_backlight fixed-safe-on UNQUALIFIED; then
 	pass
 else
-	fail "fixed-safe-on apply failed even though status confirms safe-on"
+	fail "fixed-safe-on apply failed even though actual_brightness confirms 4"
 fi
-[ "$(cat "$NDQ_BACKLIGHT_CMD_FILE")" = "enter-safe-on" ] && pass || fail "fixed-safe-on apply did not issue exactly enter-safe-on"
+[ "$(cat "$NDQ_BACKLIGHT_SYSFS/bl_power")" = "0" ] && [ "$(cat "$NDQ_BACKLIGHT_SYSFS/brightness")" = "4" ] && pass \
+	|| fail "fixed-safe-on apply did not write bl_power=0 and brightness=4"
 
-# pwm mode: enter-safe-on must be issued and confirmed BEFORE pwm-active-N
-# is ever attempted - verified here by construction: with the fake status
-# never updated past boot-preserve, the pwm-active write must never
-# happen (the command file must still show enter-safe-on, not pwm-active-*).
+# Readback failure: the kernel does not report full -> failure.
 reset_fake_kernel
-ndq_apply_backlight pwm 50 2>/dev/null
-if [ "$(cat "$NDQ_BACKLIGHT_CMD_FILE")" = "enter-safe-on" ]; then
+printf '0\n' > "$NDQ_BACKLIGHT_SYSFS/actual_brightness"
+if ndq_apply_backlight fixed-safe-on UNQUALIFIED 2>/dev/null; then
+	fail "fixed-safe-on apply reported success even though actual_brightness reads 0"
+else
+	pass
+fi
+reset_fake_kernel
+rm -f "$NDQ_BACKLIGHT_SYSFS/actual_brightness"
+if ndq_apply_backlight pwm 50 2>/dev/null; then
+	fail "pwm apply reported success even though actual_brightness is unreadable"
+else
+	pass
+fi
+
+# Missing class device -> failure, nothing written anywhere.
+reset_fake_kernel
+rm -rf "$NDQ_BACKLIGHT_SYSFS"
+if ndq_apply_backlight fixed-safe-on UNQUALIFIED 2>/dev/null; then
+	fail "backlight apply reported success with no backlight class device"
+else
+	pass
+fi
+[ ! -e "$NDQ_BACKLIGHT_SYSFS" ] && pass || fail "backlight apply created files although the class device is missing"
+
+# pwm mode: same safe-on convergence, no demo pulse, never a value other
+# than 4 written to brightness.
+reset_fake_kernel
+if ndq_apply_backlight pwm 50 > "$WORK/apply-pwm.out" 2>&1; then
 	pass
 else
-	fail "pwm-active-50 appears to have been issued even though safe-on was never confirmed - ordering violated: got '$(cat "$NDQ_BACKLIGHT_CMD_FILE")'"
+	fail "pwm apply at 50% failed even though actual_brightness confirms 4"
 fi
-
-reset_fake_kernel
-fake_backlight_confirm_safe_on
-if ndq_apply_backlight pwm 50; then
-	pass
-else
-	fail "pwm apply at 50% failed even though safe-on was confirmed"
-fi
-[ "$(cat "$NDQ_BACKLIGHT_CMD_FILE")" = "pwm-active-50" ] && pass || fail "pwm apply did not issue pwm-active-50 as its final command"
+[ "$(cat "$NDQ_BACKLIGHT_SYSFS/brightness")" = "4" ] && pass || fail "pwm apply wrote brightness '$(cat "$NDQ_BACKLIGHT_SYSFS/brightness")', expected 4"
+grep -q 'restored later by S98' "$WORK/apply-pwm.out" && ! grep -q 'pwm-active' "$WORK/apply-pwm.out" && pass \
+	|| fail "pwm apply did not log the S98 restore hand-off, or still mentions a pwm-active pulse: $(cat "$WORK/apply-pwm.out")"
 
 echo "============================================================"
-echo "ndq_apply_all - end-to-end against the fake debugfs tree"
+echo "ndq_apply_all - end-to-end against the fake sysfs tree"
 echo "============================================================"
 
 # --- missing config file -> no mutation at all. ---
@@ -577,8 +593,8 @@ if ndq_apply_all "$NDQ_CONFIG_FILE" 2>/dev/null; then
 else
 	pass
 fi
-[ ! -s "$NDQ_TOUCH_MODE_FILE" ] && [ ! -s "$NDQ_BACKLIGHT_CMD_FILE" ] && pass \
-	|| fail "apply_all mutated a debugfs file even though the config file was entirely missing"
+fake_untouched && pass \
+	|| fail "apply_all mutated a sysfs file even though the config file was entirely missing"
 
 # --- corrupt (tampered checksum) config file -> no mutation at all. ---
 reset_fake_kernel
@@ -591,33 +607,31 @@ if ndq_apply_all "$NDQ_CONFIG_FILE" 2>/dev/null; then
 else
 	pass
 fi
-[ ! -s "$NDQ_TOUCH_MODE_FILE" ] && [ ! -s "$NDQ_BACKLIGHT_CMD_FILE" ] && pass \
-	|| fail "apply_all mutated a debugfs file even though the config file was corrupt"
+fake_untouched && pass \
+	|| fail "apply_all mutated a sysfs file even though the config file was corrupt"
 
-# --- valid config, but the touch debugfs file is missing (simulating a
+# --- valid config, but the touch sysfs mode file is missing (simulating a
 # kernel build without the qualification driver) -> touch fails, and
 # critically the backlight must be left ENTIRELY untouched too (this
 # script's own abort-on-first-failure design - see ndq_apply_all's own
 # comment for why partial application across the two drivers is refused
 # even though each driver's OWN boot default is independently safe). ---
 reset_fake_kernel
-rm -f "$NDQ_TOUCH_MODE_FILE"
+rm -f "$NDQ_TOUCH_SYSFS/mode"
 ndq_render_config qualification_complete=1 touch_mode=irq-assist touch_trigger=pendown-gpio-edge \
 	release_stable_samples=3 idle_safety_poll_ms=250 touch_fallback_enabled=1 \
 	backlight_mode=fixed-safe-on > "$NDQ_CONFIG_FILE"
 if ndq_apply_all "$NDQ_CONFIG_FILE" 2>/dev/null; then
-	fail "apply_all reported success even though the touch debugfs mode file does not exist"
+	fail "apply_all reported success even though the touch sysfs mode file does not exist"
 else
 	pass
 fi
-[ ! -s "$NDQ_BACKLIGHT_CMD_FILE" ] && pass \
+[ ! -s "$NDQ_BACKLIGHT_SYSFS/bl_power" ] && [ ! -s "$NDQ_BACKLIGHT_SYSFS/brightness" ] && pass \
 	|| fail "backlight was mutated even though the earlier touch apply step failed - abort-on-first-failure ordering was violated"
 
 # --- fully valid config, fully healthy fake driver tree -> full success,
 # both drivers actually mutated as expected. ---
 reset_fake_kernel
-fake_touch_confirm_irq_assist
-fake_backlight_confirm_safe_on
 ndq_render_config qualification_complete=1 touch_mode=irq-assist touch_trigger=pendown-gpio-edge \
 	release_stable_samples=3 idle_safety_poll_ms=250 touch_fallback_enabled=1 \
 	backlight_mode=pwm pwm_channel=0 pwm_period_ns=20000 pwm_polarity=normal safe_brightness=75 \
@@ -627,8 +641,9 @@ if ndq_apply_all "$NDQ_CONFIG_FILE"; then
 else
 	fail "apply_all failed against a fully valid config and a fully healthy fake driver tree"
 fi
-[ "$(cat "$NDQ_TOUCH_MODE_FILE")" = "irq-assist" ] && pass || fail "end-to-end apply_all did not write irq-assist to the touch mode file"
-[ "$(cat "$NDQ_BACKLIGHT_CMD_FILE")" = "pwm-active-75" ] && pass || fail "end-to-end apply_all did not finish with pwm-active-75 on the backlight command file"
+[ "$(cat "$NDQ_TOUCH_SYSFS/mode")" = "irq-assist" ] && pass || fail "end-to-end apply_all did not write irq-assist to the touch mode file"
+[ "$(cat "$NDQ_BACKLIGHT_SYSFS/brightness")" = "4" ] && [ "$(cat "$NDQ_BACKLIGHT_SYSFS/bl_power")" = "0" ] && pass \
+	|| fail "end-to-end apply_all did not converge the backlight to bl_power=0 brightness=4"
 
 echo "============================================================"
 echo "Write helper (usr/libexec/nebulaos-display-qualified-write)"
@@ -766,8 +781,6 @@ GUPPY_PIDFILE="$WORK/guppyscreen.pid"
 echo $$ > "$GUPPY_PIDFILE"	# our own test process - guaranteed to exist
 
 reset_fake_kernel
-fake_touch_confirm_irq_assist
-fake_backlight_confirm_safe_on
 ndq_render_config qualification_complete=1 touch_mode=irq-assist touch_trigger=pendown-gpio-edge \
 	release_stable_samples=3 idle_safety_poll_ms=250 touch_fallback_enabled=1 \
 	backlight_mode=fixed-safe-on > "$NDQ_CONFIG_FILE"
@@ -780,20 +793,19 @@ MARKER_HEALTHY="$WORK/marker-healthy"
 	MARKER="$MARKER_HEALTHY" NEBULASCREEN_PIDFILE="$GUPPY_PIDFILE" \
 	HEALTH_RETRIES=2 HEALTH_DELAY=0 \
 	NDQ_CONFIG_FILE="$NDQ_CONFIG_FILE" \
-	NDQ_TOUCH_MODE_FILE="$NDQ_TOUCH_MODE_FILE" NDQ_TOUCH_STATUS_FILE="$NDQ_TOUCH_STATUS_FILE" \
-	NDQ_BACKLIGHT_CMD_FILE="$NDQ_BACKLIGHT_CMD_FILE" NDQ_BACKLIGHT_STATUS_FILE="$NDQ_BACKLIGHT_STATUS_FILE" \
+	NDQ_TOUCH_SYSFS="$NDQ_TOUCH_SYSFS" NDQ_BACKLIGHT_SYSFS="$NDQ_BACKLIGHT_SYSFS" \
 	sh "$APPLY_SCRIPT" start
 )
 rc=$?
 [ "$rc" -eq 0 ] && pass || fail "S97 start (healthy path) exited $rc, expected 0"
-[ "$(cat "$NDQ_BACKLIGHT_CMD_FILE")" = "enter-safe-on" ] && pass \
-	|| fail "S97 end-to-end healthy run did not actually apply the qualified backlight config"
+[ "$(cat "$NDQ_BACKLIGHT_SYSFS/brightness")" = "4" ] && [ "$(cat "$NDQ_TOUCH_SYSFS/mode")" = "irq-assist" ] && pass \
+	|| fail "S97 end-to-end healthy run did not actually apply the qualified display config"
 [ -f "$MARKER_HEALTHY" ] && pass || fail "S97 did not create its once-per-boot marker"
 
 # Second invocation with the marker already present must be a pure no-op
-# (skips even the health poll) - overwrite the command file with a
-# sentinel first so we can prove nothing touched it again.
-echo "SENTINEL-UNTOUCHED" > "$NDQ_BACKLIGHT_CMD_FILE"
+# (skips even the health poll) - overwrite brightness with a sentinel
+# first so we can prove nothing touched it again.
+echo "SENTINEL-UNTOUCHED" > "$NDQ_BACKLIGHT_SYSFS/brightness"
 (
 	PATH="$FAKE_ETC:$PATH"
 	export PATH
@@ -801,15 +813,14 @@ echo "SENTINEL-UNTOUCHED" > "$NDQ_BACKLIGHT_CMD_FILE"
 	MARKER="$MARKER_HEALTHY" NEBULASCREEN_PIDFILE="$GUPPY_PIDFILE" \
 	HEALTH_RETRIES=2 HEALTH_DELAY=0 \
 	NDQ_CONFIG_FILE="$NDQ_CONFIG_FILE" \
-	NDQ_TOUCH_MODE_FILE="$NDQ_TOUCH_MODE_FILE" NDQ_TOUCH_STATUS_FILE="$NDQ_TOUCH_STATUS_FILE" \
-	NDQ_BACKLIGHT_CMD_FILE="$NDQ_BACKLIGHT_CMD_FILE" NDQ_BACKLIGHT_STATUS_FILE="$NDQ_BACKLIGHT_STATUS_FILE" \
+	NDQ_TOUCH_SYSFS="$NDQ_TOUCH_SYSFS" NDQ_BACKLIGHT_SYSFS="$NDQ_BACKLIGHT_SYSFS" \
 	sh "$APPLY_SCRIPT" start
 )
-[ "$(cat "$NDQ_BACKLIGHT_CMD_FILE")" = "SENTINEL-UNTOUCHED" ] && pass \
+[ "$(cat "$NDQ_BACKLIGHT_SYSFS/brightness")" = "SENTINEL-UNTOUCHED" ] && pass \
 	|| fail "S97's once-per-boot marker did not prevent a second apply attempt"
 
 # --- unhealthy path: GuppyScreen "not running" (a PID that doesn't
-# exist) -> S97 must exit 0 and must NOT touch either debugfs file. ---
+# exist) -> S97 must exit 0 and must NOT touch either driver. ---
 reset_fake_kernel
 echo 999999999 > "$GUPPY_PIDFILE"	# almost certainly not a real PID
 MARKER_UNHEALTHY="$WORK/marker-unhealthy"
@@ -820,23 +831,22 @@ MARKER_UNHEALTHY="$WORK/marker-unhealthy"
 	MARKER="$MARKER_UNHEALTHY" NEBULASCREEN_PIDFILE="$GUPPY_PIDFILE" \
 	HEALTH_RETRIES=1 HEALTH_DELAY=0 \
 	NDQ_CONFIG_FILE="$NDQ_CONFIG_FILE" \
-	NDQ_TOUCH_MODE_FILE="$NDQ_TOUCH_MODE_FILE" NDQ_TOUCH_STATUS_FILE="$NDQ_TOUCH_STATUS_FILE" \
-	NDQ_BACKLIGHT_CMD_FILE="$NDQ_BACKLIGHT_CMD_FILE" NDQ_BACKLIGHT_STATUS_FILE="$NDQ_BACKLIGHT_STATUS_FILE" \
+	NDQ_TOUCH_SYSFS="$NDQ_TOUCH_SYSFS" NDQ_BACKLIGHT_SYSFS="$NDQ_BACKLIGHT_SYSFS" \
 	sh "$APPLY_SCRIPT" start
 )
 rc=$?
 [ "$rc" -eq 0 ] && pass || fail "S97 start (unhealthy GuppyScreen) exited $rc, expected 0 (fail-safe, not a boot-halting error)"
-[ ! -s "$NDQ_TOUCH_MODE_FILE" ] && [ ! -s "$NDQ_BACKLIGHT_CMD_FILE" ] && pass \
-	|| fail "S97 mutated a debugfs file even though GuppyScreen was never confirmed running"
+fake_untouched && pass \
+	|| fail "S97 mutated a sysfs file even though NebulaScreen was never confirmed running"
 
 # --- unhealthy path: the display itself never confirms healthy (backlight
-# status debugfs file missing entirely, e.g. a kernel build without the
-# driver) - S97 must exit 0 and must NOT touch either debugfs file, even
+# actual_brightness missing entirely, e.g. a kernel build without the
+# driver) - S97 must exit 0 and must NOT touch either driver, even
 # though Klipper/Moonraker/GuppyScreen/networking are all otherwise fully
 # healthy. ---
 reset_fake_kernel
 echo $$ > "$GUPPY_PIDFILE"
-rm -f "$NDQ_BACKLIGHT_STATUS_FILE"
+rm -f "$NDQ_BACKLIGHT_SYSFS/actual_brightness"
 MARKER_NODISPLAY="$WORK/marker-nodisplay"
 (
 	PATH="$FAKE_ETC:$PATH"
@@ -845,14 +855,13 @@ MARKER_NODISPLAY="$WORK/marker-nodisplay"
 	MARKER="$MARKER_NODISPLAY" NEBULASCREEN_PIDFILE="$GUPPY_PIDFILE" \
 	HEALTH_RETRIES=1 HEALTH_DELAY=0 \
 	NDQ_CONFIG_FILE="$NDQ_CONFIG_FILE" \
-	NDQ_TOUCH_MODE_FILE="$NDQ_TOUCH_MODE_FILE" NDQ_TOUCH_STATUS_FILE="$NDQ_TOUCH_STATUS_FILE" \
-	NDQ_BACKLIGHT_CMD_FILE="$NDQ_BACKLIGHT_CMD_FILE" NDQ_BACKLIGHT_STATUS_FILE="$NDQ_BACKLIGHT_STATUS_FILE" \
+	NDQ_TOUCH_SYSFS="$NDQ_TOUCH_SYSFS" NDQ_BACKLIGHT_SYSFS="$NDQ_BACKLIGHT_SYSFS" \
 	sh "$APPLY_SCRIPT" start
 )
 rc=$?
-[ "$rc" -eq 0 ] && pass || fail "S97 start (missing display status file) exited $rc, expected 0 (fail-safe, not a boot-halting error)"
-[ ! -s "$NDQ_TOUCH_MODE_FILE" ] && [ ! -s "$NDQ_BACKLIGHT_CMD_FILE" ] && pass \
-	|| fail "S97 mutated a debugfs file even though the display's own backlight status file was never confirmed readable"
+[ "$rc" -eq 0 ] && pass || fail "S97 start (missing actual_brightness) exited $rc, expected 0 (fail-safe, not a boot-halting error)"
+fake_untouched && pass \
+	|| fail "S97 mutated a sysfs file even though the display's own actual_brightness was never confirmed readable"
 
 # --- S2 (2026-10-05): no qualification_complete=1 config -> S97 exits at
 # once, before the health wait (65 s per boot on ke-dev before), touching
@@ -870,8 +879,7 @@ s2_run() { # marker -> rc; elapsed seconds in S2_SECS
 		MARKER="$1" NEBULASCREEN_PIDFILE="$GUPPY_PIDFILE" \
 		HEALTH_RETRIES="${S2_RETRIES:-20}" HEALTH_DELAY="${S2_DELAY:-3}" \
 		NDQ_CONFIG_FILE="$S2_CONF" \
-		NDQ_TOUCH_MODE_FILE="$NDQ_TOUCH_MODE_FILE" NDQ_TOUCH_STATUS_FILE="$NDQ_TOUCH_STATUS_FILE" \
-		NDQ_BACKLIGHT_CMD_FILE="$NDQ_BACKLIGHT_CMD_FILE" NDQ_BACKLIGHT_STATUS_FILE="$NDQ_BACKLIGHT_STATUS_FILE" \
+		NDQ_TOUCH_SYSFS="$NDQ_TOUCH_SYSFS" NDQ_BACKLIGHT_SYSFS="$NDQ_BACKLIGHT_SYSFS" \
 		sh "$APPLY_SCRIPT" start
 	) > "$WORK/s2.out" 2>&1
 	_rc=$?
@@ -892,7 +900,7 @@ for c in absent qc0 malformed emptyvalue emptyfile last0; do
 	[ "$rc" -eq 0 ] && [ "$S2_SECS" -le 2 ] && pass || fail "S2 $c: rc=$rc took ${S2_SECS}s (expected immediate exit 0)"
 	grep -q 'nothing to apply' "$WORK/s2.out" && ! grep -q 'never confirmed healthy' "$WORK/s2.out" && pass \
 		|| fail "S2 $c: did not take the fast exit: $(cat "$WORK/s2.out")"
-	[ ! -s "$NDQ_TOUCH_MODE_FILE" ] && [ ! -s "$NDQ_BACKLIGHT_CMD_FILE" ] && pass || fail "S2 $c: a display command file was written"
+	fake_untouched && pass || fail "S2 $c: a display sysfs file was written"
 	[ -f "$WORK/s2-marker-$c" ] && pass || fail "S2 $c: once-per-boot marker not created"
 done
 # qualification_complete=1 (last value wins) still goes through the health gates
@@ -903,71 +911,45 @@ ndq_render_config qualification_complete=1 touch_mode=irq-assist touch_trigger=p
 S2_RETRIES=2 S2_DELAY=1 s2_run "$WORK/s2-marker-qc1"; rc=$?
 [ "$rc" -eq 0 ] && grep -q 'never confirmed healthy' "$WORK/s2.out" && [ "$S2_SECS" -ge 2 ] && pass \
 	|| fail "S2 qc=1: did not reach the health gates (${S2_SECS}s): $(cat "$WORK/s2.out")"
-[ ! -s "$NDQ_TOUCH_MODE_FILE" ] && [ ! -s "$NDQ_BACKLIGHT_CMD_FILE" ] && pass || fail "S2 qc=1 unhealthy: a display command file was written"
+fake_untouched && pass || fail "S2 qc=1 unhealthy: a display sysfs file was written"
 # marker rerun stays a skip even with a qualified config
 s2_run "$WORK/s2-marker-qc1"; grep -q 'already ran this boot' "$WORK/s2.out" && [ "$S2_SECS" -le 2 ] && pass \
 	|| fail "S2 marker rerun is not a skip"
 echo $$ > "$GUPPY_PIDFILE"
 
-# --- regression test (Pinctrl/Display Baseline Closeout Mission,
-# 2026-08-03): the REAL default value of NDQ_BACKLIGHT_CMD_FILE/
-# NDQ_BACKLIGHT_STATUS_FILE - with NO override, exactly as a real boot
-# would source this library - must match the backlight driver's actual
-# registered debugfs directory name (NBLC_NAME in the patch), not a
-# guess at the driver's .c filename. This is the exact class of bug that
-# shipped live: every other test in this file overrides these two
-# variables to a fake path, so none of them would ever have caught a
-# wrong DEFAULT - this test deliberately does not override anything. ---
-BACKLIGHT_PATCH="$REPO_ROOT/scripts/build/patches/backlight-final-controller.patch"
-if [ -f "$BACKLIGHT_PATCH" ]; then
-	NBLC_NAME=$(sed -n 's/^+#define NBLC_NAME[[:space:]]*"\([^"]*\)".*/\1/p' "$BACKLIGHT_PATCH" | head -1)
-	if [ -z "$NBLC_NAME" ]; then
-		fail "could not extract NBLC_NAME from $BACKLIGHT_PATCH - test itself is broken, fix the sed pattern"
-	else
-		REAL_DEFAULTS=$(
-			unset NDQ_BACKLIGHT_CMD_FILE NDQ_BACKLIGHT_STATUS_FILE
-			# shellcheck disable=SC1090
-			. "$LIB"
-			printf '%s\n%s\n' "$NDQ_BACKLIGHT_CMD_FILE" "$NDQ_BACKLIGHT_STATUS_FILE"
-		)
-		EXPECTED_CMD="/sys/kernel/debug/$NBLC_NAME/command"
-		EXPECTED_STATUS="/sys/kernel/debug/$NBLC_NAME/status"
-		ACTUAL_CMD=$(echo "$REAL_DEFAULTS" | sed -n '1p')
-		ACTUAL_STATUS=$(echo "$REAL_DEFAULTS" | sed -n '2p')
-		if [ "$ACTUAL_CMD" = "$EXPECTED_CMD" ] && [ "$ACTUAL_STATUS" = "$EXPECTED_STATUS" ]; then
-			pass
-		else
-			fail "NDQ_BACKLIGHT_CMD_FILE/STATUS_FILE default(s) do not match the real driver's NBLC_NAME ('$NBLC_NAME'): got cmd='$ACTUAL_CMD' status='$ACTUAL_STATUS', expected cmd='$EXPECTED_CMD' status='$EXPECTED_STATUS'"
-		fi
-	fi
-else
-	echo "SKIP: $BACKLIGHT_PATCH not present"
-fi
+# --- the REAL defaults, with no override, exactly as a real boot sources
+# this library: the backlight class device path, and NDQ_TOUCH_SYSFS
+# resolved by the glob under NDQ_I2C_DEVICES (first <bus>-<addr> that has a
+# nebulaos_touch directory; empty when none has). ---
+REAL_BL=$(
+	unset NDQ_BACKLIGHT_SYSFS
+	# shellcheck disable=SC1090
+	. "$LIB"
+	printf '%s' "$NDQ_BACKLIGHT_SYSFS"
+)
+[ "$REAL_BL" = "/sys/class/backlight/nebulaos_backlight" ] && pass \
+	|| fail "NDQ_BACKLIGHT_SYSFS default is '$REAL_BL', expected /sys/class/backlight/nebulaos_backlight"
 
-# --- regression test: the touch-wake watcher's own asleep-detection,
-# exercised through the SAME real, unoverridden NDQ_BACKLIGHT_STATUS_FILE
-# default this mission's live bug broke - proves ndq_swc_backlight_is_asleep()
-# reads the exact path a real boot would use, and that a real "state: asleep"
-# line at that path is correctly detected. ---
-SWC_LIB="$REPO_ROOT/scripts/build/overlay/etc/nebulaos-display-sleep-wake-controller.sh"
-if [ -f "$SWC_LIB" ] && [ -n "${NBLC_NAME:-}" ]; then
-	REAL_STATUS_PATH="/sys/kernel/debug/$NBLC_NAME/status"
-	FAKE_REAL_STATUS_DIR="$WORK/real-path-sim/sys/kernel/debug/$NBLC_NAME"
-	mkdir -p "$FAKE_REAL_STATUS_DIR"
-	printf 'state: asleep\n' > "$FAKE_REAL_STATUS_DIR/status"
-	DETECTED=$(
-		unset NDQ_BACKLIGHT_STATUS_FILE
-		NDQ_BACKLIGHT_STATUS_FILE="$FAKE_REAL_STATUS_DIR/status"
-		export NDQ_BACKLIGHT_STATUS_FILE
-		# shellcheck disable=SC1090
-		. "$SWC_LIB"
-		ndq_swc_backlight_is_asleep && echo yes || echo no
-	)
-	[ "$DETECTED" = "yes" ] && pass \
-		|| fail "ndq_swc_backlight_is_asleep() did not detect 'state: asleep' at the real default-shaped path $REAL_STATUS_PATH"
-else
-	echo "SKIP: $SWC_LIB or NBLC_NAME not available"
-fi
+I2C_FAKE="$WORK/i2c-devices"
+mkdir -p "$I2C_FAKE/0-0010" "$I2C_FAKE/1-0048/nebulaos_touch" "$I2C_FAKE/i2c-1"
+RESOLVED=$(
+	unset NDQ_TOUCH_SYSFS
+	NDQ_I2C_DEVICES="$I2C_FAKE"
+	# shellcheck disable=SC1090
+	. "$LIB"
+	printf '%s' "$NDQ_TOUCH_SYSFS"
+)
+[ "$RESOLVED" = "$I2C_FAKE/1-0048/nebulaos_touch" ] && pass \
+	|| fail "NDQ_TOUCH_SYSFS default resolved to '$RESOLVED', expected $I2C_FAKE/1-0048/nebulaos_touch"
+rm -rf "$I2C_FAKE/1-0048"
+RESOLVED=$(
+	unset NDQ_TOUCH_SYSFS
+	NDQ_I2C_DEVICES="$I2C_FAKE"
+	# shellcheck disable=SC1090
+	. "$LIB"
+	printf '%s' "$NDQ_TOUCH_SYSFS"
+)
+[ -z "$RESOLVED" ] && pass || fail "NDQ_TOUCH_SYSFS default is '$RESOLVED' with no nebulaos_touch directory, expected empty"
 
 echo ""
 echo "$PASS passed, $FAIL failed"
