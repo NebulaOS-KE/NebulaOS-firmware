@@ -2412,6 +2412,7 @@ class ComponentTests(unittest.TestCase):
             echo '{"ok": true, "result": "APPLIED"}'
         """ % {"log": self.log})
         self.upload_dir = os.path.join(self.tmp, "uploads")          # G62: the "uploads" root
+        self.screen_report = os.path.join(self.tmp, "run", "nebulascreen-report.json")
         pkg = types.ModuleType("moonraker")
         pkg.__path__ = []
         comps = types.ModuleType("moonraker.components")
@@ -2469,7 +2470,8 @@ class ComponentTests(unittest.TestCase):
 
             def get(self, key, default=None):
                 return {"helper": test.helper,
-                        "uploads_dir": test.upload_dir}.get(key, default)
+                        "uploads_dir": test.upload_dir,
+                        "screen_report": test.screen_report}.get(key, default)
 
         class Provider(object):
             async def reboot(self):
@@ -2525,6 +2527,40 @@ class ComponentTests(unittest.TestCase):
 
     def argv(self):
         return open(self.log).read().splitlines()
+
+    # G82 stage 3: the screen's version report, read by the update supervisor.
+    def test_screen_report_recorded(self):
+        self.assertEqual(self.server.endpoints["/machine/nebulaos/screen/report"][0], 2)
+        res = self.call("/machine/nebulaos/screen/report",
+                        {"name": "nebulascreen", "version": "v0.9.1", "nebulaos_ui_api": 1})
+        self.assertEqual(res, {"result": "RECORDED"})
+        with open(self.screen_report) as fh:
+            text = fh.read()
+        rep = json.loads(text)
+        self.assertEqual((rep["name"], rep["version"], rep["nebulaos_ui_api"]),
+                         ("nebulascreen", "v0.9.1", 1))
+        self.assertIsInstance(rep["reported_at"], int)
+        # one key per line: the supervisor reads it with sed
+        self.assertIn('\n  "version": "v0.9.1"\n', text)
+        self.assertFalse(os.path.exists(self.screen_report + ".tmp"))
+        self.assertEqual(self.calls(), [])          # no helper involved
+
+    def test_screen_report_rejects_malformed(self):
+        for args in ({"name": "guppyscreen", "version": "v0.9.1", "nebulaos_ui_api": 1},
+                     {"name": "nebulascreen", "version": "v0.9.1\"; x", "nebulaos_ui_api": 1},
+                     {"name": "nebulascreen", "version": "", "nebulaos_ui_api": 1},
+                     {"name": "nebulascreen", "version": "v" * 80, "nebulaos_ui_api": 1}):
+            with self.assertRaises(Exception) as cm:
+                self.call("/machine/nebulaos/screen/report", args)
+            self.assertEqual(cm.exception.status_code, 400)
+        self.assertFalse(os.path.exists(self.screen_report))
+
+    def test_screen_report_replaces_previous(self):
+        for v in ("v0.9.0", "v0.9.1"):
+            self.call("/machine/nebulaos/screen/report",
+                      {"name": "nebulascreen", "version": v, "nebulaos_ui_api": 1})
+        with open(self.screen_report) as fh:
+            self.assertEqual(json.load(fh)["version"], "v0.9.1")
 
     def test_all_endpoints_registered_single_type(self):
         paths = set(self.server.endpoints)

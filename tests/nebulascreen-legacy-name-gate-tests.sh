@@ -2,8 +2,9 @@
 #
 # G82 (Run 15 stage 2b) grep gate: the image is NebulaScreen. No build script
 # or overlay file may use a GuppyScreen path or init script again, except the
-# few lines that exist precisely to migrate away from the old image or to
-# prove it is gone (the allow-list below - each entry is file + exact text).
+# few lines that exist precisely to migrate away from the old image, to
+# prove it is gone, or to refuse an old settings file inside a downloaded
+# release (the allow-list below - each entry is file + exact text).
 # Comments are ignored. Host tools (tools/hardware, tools/hwcap) are
 # deliberately dual-name - they talk to printers on older images - and are
 # not scanned.
@@ -23,7 +24,8 @@ ALLOW=$(printf '%s\t%s\n' \
 	scripts/build/06-verify.sh 'check_absent /etc/init.d/S58guppyscreen' \
 	scripts/build/06-verify.sh 'check_absent /opt/guppyscreen/guppyscreen' \
 	scripts/build/overlay/etc/init.d/S01persistent-datastore 'ns_migrate_config "$OLD_GUPPY_STATE/guppyconfig.json"' \
-	scripts/build/overlay/etc/init.d/S01persistent-datastore 'ns_remove_empty_placeholder "$PDATA/config/guppyscreen/guppyconfig.json"')
+	scripts/build/overlay/etc/init.d/S01persistent-datastore 'ns_remove_empty_placeholder "$PDATA/config/guppyscreen/guppyconfig.json"' \
+	scripts/build/overlay/usr/libexec/nebulaos/nebulascreen-release-check 'FORBIDDEN_NAMES = ("nebulascreen.json", "guppyconfig.json")')
 
 hits=$(grep -rnE --exclude="*.md" --exclude="*.txt" "$LEGACY" scripts build.sh manifests 2>/dev/null \
 	| grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' || true)

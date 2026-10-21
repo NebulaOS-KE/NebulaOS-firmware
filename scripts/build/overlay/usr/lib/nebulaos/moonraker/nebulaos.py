@@ -19,6 +19,8 @@ import asyncio
 import json
 import logging
 import os
+import re
+import time
 
 from ..common import RequestType
 
@@ -50,6 +52,13 @@ CLEANUP_TIMEOUT = 600.
 # downloads the wheels to resolve them) on the MIPS board.
 READINESS_TIMEOUT = 1800.
 READINESS_WARNING = "nebulaos_update_readiness"
+# G82 stage 3: NebulaScreen reports which build runs (machine.nebulaos.screen.
+# report, sent once connected). The update supervisor reads this file as
+# health stage 2 of a downloaded release. On tmpfs: a report never outlives
+# the boot it was made in.
+DEFAULT_SCREEN_REPORT = "/run/nebulaos/nebulascreen-report.json"
+SCREEN_NAME = "nebulascreen"
+SCREEN_VERSION_RE = re.compile(r"^[0-9A-Za-z][0-9A-Za-z._+-]{0,63}$")
 
 
 class NebulaOS:
@@ -62,6 +71,7 @@ class NebulaOS:
         self.server.register_notification("nebulaos:settings_changed")
         self.uploads_dir = config.get("uploads_dir", DEFAULT_UPLOADS_DIR)
         self.boot_upload_dir = os.path.join(self.uploads_dir, "boot-logo")
+        self.screen_report = config.get("screen_report", DEFAULT_SCREEN_REPORT)
         for sub in ("boot-logo", "mainboard-firmware", "system-image"):
             try:
                 os.makedirs(os.path.join(self.uploads_dir, sub), exist_ok=True)
@@ -118,6 +128,7 @@ class NebulaOS:
              self._upd_readiness),
             ("/machine/nebulaos/updates/check_readiness", RequestType.POST,
              self._upd_check_readiness),
+            ("/machine/nebulaos/screen/report", RequestType.POST, self._screen_report),
         ]
         for path, rtype, callback in routes:
             self.server.register_endpoint(path, rtype, callback)
@@ -413,6 +424,38 @@ class NebulaOS:
             self.server.send_event("nebulaos:settings_changed",
                                    {"domain": "updates", "result": result.get("result")})
         return result
+
+    # -- NebulaScreen version report (G82 stage 3) ------------------------------
+    # The screen says which build runs; the update supervisor compares it
+    # with the release it activated. Only a well-formed report is recorded,
+    # atomically (tmp + rename), so the supervisor never reads half a file.
+
+    def _write_screen_report(self, report: Dict[str, Any]) -> None:
+        os.makedirs(os.path.dirname(self.screen_report), exist_ok=True)
+        tmp = f"{self.screen_report}.tmp"
+        with open(tmp, "w") as fh:
+            json.dump(report, fh, indent=2, sort_keys=True)
+            fh.write("\n")
+        os.replace(tmp, self.screen_report)
+
+    async def _screen_report(self, web_request: WebRequest) -> Dict[str, Any]:
+        name = web_request.get_str("name")
+        version = web_request.get_str("version")
+        ui_api = web_request.get_int("nebulaos_ui_api")
+        if name != SCREEN_NAME:
+            raise self.server.error(f"INVALID_REPORT: unknown screen '{name}'", 400)
+        if not SCREEN_VERSION_RE.match(version):
+            raise self.server.error("INVALID_REPORT: malformed version", 400)
+        report = {"name": name, "version": version, "nebulaos_ui_api": ui_api,
+                  "reported_at": int(time.time())}
+        try:
+            await asyncio.get_running_loop().run_in_executor(
+                None, self._write_screen_report, report)
+        except OSError as exc:
+            logging.info(f"nebulaos: screen report not recorded: {exc}")
+            raise self.server.error(f"REPORT_NOT_RECORDED: {exc}", 500)
+        logging.info(f"nebulaos: NebulaScreen {version} reported (ui api {ui_api})")
+        return {"result": "RECORDED"}
 
 
 def load_component(config: ConfigHelper) -> NebulaOS:

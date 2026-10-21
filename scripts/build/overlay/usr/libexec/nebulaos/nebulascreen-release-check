@@ -1,0 +1,172 @@
+#!/usr/bin/python3
+"""Static check of a downloaded NebulaScreen release (G82 stage 3).
+
+The update supervisor runs this on /usr/data/nebulaos/apps/nebulascreen
+BEFORE a release is activated (health stage 1). Same rules as the release
+zip check of NebulaOS-guppyscreen/scripts/nebulascreen_release.py, applied to
+the extracted directory, plus the one thing only the printer knows: the
+image's own path/name contract level.
+
+    nebulascreen-release-check APP_DIR [--image-version /opt/nebulaos-version.json]
+
+Prints "PROBLEM: ..." lines and RELEASE_CHECK=PASS|FAIL; exit 0 = PASS.
+
+A release passes only when:
+  - release_info.json is a JSON object with project_name NebulaOS-nebulascreen,
+    project_owner coreflake1, a vMAJOR.MINOR.PATCH version and an integer
+    nebulaos_ui_api EQUAL to this image's "nebulaos_ui_api" (an image
+    without that field never accepts a release);
+  - nebulascreen and nebulabeep are executable, static, ELF32 little-endian
+    MIPS executables;
+  - themes/ holds at least one file;
+  - there is no symlink anywhere, no settings file (nebulascreen.json or
+    the old GuppyScreen name) and nothing outside those entries + LICENSE/NOTICE
+    (and the supervisor's own approval token).
+
+This file may be distributed under the terms of the GNU GPLv3 license.
+"""
+import json
+import os
+import re
+import stat
+import struct
+import sys
+
+PROJECT_NAME = "NebulaOS-nebulascreen"
+PROJECT_OWNER = "coreflake1"
+EXECUTABLES = ("nebulascreen", "nebulabeep")
+TOP_ENTRIES = EXECUTABLES + ("themes", "release_info.json", "LICENSE", "NOTICE")
+# Written by the update supervisor itself (the approval token S58 checks); the
+# supervisor removes any copy before it checks a new download.
+APPROVAL_FILE = ".nebulaos-approved"
+FORBIDDEN_NAMES = ("nebulascreen.json", "guppyconfig.json")
+VERSION_RE = re.compile(r"^v\d+\.\d+\.\d+([-.][0-9A-Za-z.-]+)?$")
+EM_MIPS = 8
+PT_INTERP = 3
+DEFAULT_IMAGE_VERSION = "/opt/nebulaos-version.json"
+
+
+def elf_problems(data, name):
+    """[] for a static ELF32 little-endian MIPS executable."""
+    if len(data) < 52 or data[:4] != b"\x7fELF":
+        return ["%s is not an ELF file" % name]
+    problems = []
+    if data[4] != 1:
+        problems.append("%s is not 32-bit" % name)
+    if data[5] != 1:
+        problems.append("%s is not little-endian" % name)
+    if problems:
+        return problems
+    e_type, e_machine = struct.unpack_from("<HH", data, 16)
+    if e_machine != EM_MIPS:
+        problems.append("%s is not MIPS (e_machine %d)" % (name, e_machine))
+    if e_type != 2:
+        problems.append("%s is not an executable (e_type %d)" % (name, e_type))
+    e_phoff, = struct.unpack_from("<I", data, 28)
+    e_phentsize, e_phnum = struct.unpack_from("<HH", data, 42)
+    for i in range(e_phnum):
+        off = e_phoff + i * e_phentsize
+        if off + 4 > len(data):
+            problems.append("%s has a truncated program header" % name)
+            break
+        p_type, = struct.unpack_from("<I", data, off)
+        if p_type == PT_INTERP:
+            problems.append("%s is dynamically linked (has an interpreter)" % name)
+            break
+    return problems
+
+
+def image_ui_api(path):
+    """The image's nebulaos_ui_api, or None when it states none."""
+    try:
+        with open(path) as fh:
+            value = json.load(fh).get("nebulaos_ui_api")
+    except (OSError, ValueError, AttributeError):
+        return None
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def check(app_dir, image_version=DEFAULT_IMAGE_VERSION):
+    """[] for a release that may be activated on this image."""
+    if not os.path.isdir(app_dir) or os.path.islink(app_dir):
+        return ["%s is not a directory" % app_dir]
+    problems = []
+    for root, dirs, files in os.walk(app_dir):
+        for name in dirs + files:
+            path = os.path.join(root, name)
+            rel = os.path.relpath(path, app_dir)
+            if os.path.islink(path):
+                problems.append("symlink in the release: %s" % rel)
+            if name in FORBIDDEN_NAMES:
+                problems.append("a settings file is in the release: %s" % rel)
+    for name in sorted(os.listdir(app_dir)):
+        if name not in TOP_ENTRIES and name != APPROVAL_FILE:
+            problems.append("unexpected entry: %s" % name)
+    for name in EXECUTABLES:
+        path = os.path.join(app_dir, name)
+        if os.path.islink(path) or not os.path.isfile(path):
+            problems.append("missing %s" % name)
+            continue
+        if not os.stat(path).st_mode & stat.S_IXUSR:
+            problems.append("%s is not executable" % name)
+        with open(path, "rb") as fh:
+            problems += elf_problems(fh.read(4096), name)
+    themes = os.path.join(app_dir, "themes")
+    if not os.path.isdir(themes) or os.path.islink(themes) or not any(
+            files for _r, _d, files in os.walk(themes)):
+        problems.append("no themes")
+    info = None
+    try:
+        with open(os.path.join(app_dir, "release_info.json")) as fh:
+            info = json.load(fh)
+    except OSError:
+        problems.append("missing release_info.json")
+    except ValueError:
+        problems.append("release_info.json is not valid JSON")
+    if info is not None and not isinstance(info, dict):
+        problems.append("release_info.json is not an object")
+    elif isinstance(info, dict):
+        if info.get("project_name") != PROJECT_NAME:
+            problems.append("release_info project_name is %r" % (info.get("project_name"),))
+        if info.get("project_owner") != PROJECT_OWNER:
+            problems.append("release_info project_owner is %r" % (info.get("project_owner"),))
+        if not VERSION_RE.match(str(info.get("version", ""))):
+            problems.append("release_info version is %r" % (info.get("version"),))
+        api = info.get("nebulaos_ui_api")
+        if not isinstance(api, int) or isinstance(api, bool):
+            problems.append("release_info has no integer nebulaos_ui_api")
+        else:
+            have = image_ui_api(image_version)
+            if have is None:
+                problems.append("this image states no nebulaos_ui_api (%s): "
+                                "it never accepts a downloaded release" % image_version)
+            elif have != api:
+                problems.append("release needs nebulaos_ui_api %d, this image provides %d"
+                                % (api, have))
+    return problems
+
+
+def main(argv):
+    args = list(argv)
+    image_version = DEFAULT_IMAGE_VERSION
+    if "--image-version" in args:
+        i = args.index("--image-version")
+        if i + 1 >= len(args):
+            print("usage: nebulascreen-release-check APP_DIR [--image-version FILE]",
+                  file=sys.stderr)
+            return 2
+        image_version = args[i + 1]
+        del args[i:i + 2]
+    if len(args) != 1:
+        print("usage: nebulascreen-release-check APP_DIR [--image-version FILE]",
+              file=sys.stderr)
+        return 2
+    problems = check(args[0], image_version)
+    for p in problems:
+        print("PROBLEM: %s" % p)
+    print("RELEASE_CHECK=%s" % ("FAIL" if problems else "PASS"))
+    return 1 if problems else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

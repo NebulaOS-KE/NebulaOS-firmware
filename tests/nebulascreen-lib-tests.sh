@@ -104,6 +104,28 @@ t "complete release: one bind per item" \
 t "never a whole-directory bind" '! grep -q "mount --bind $APP $OPT\$" "$NS_CALLS"'
 t "a clean start binds without unmounting anything" '! grep -q "^umount" "$NS_CALLS"'
 
+# G82 stage 3: with a state file, only the release the supervisor approved
+# (token in the app dir == token in the state, same version) is bound.
+AST="$WORK/approve-state.json"
+printf '{\n  "version": "v0.9.1"\n}\n' > "$APP/release_info.json"
+rm -f "$NS_CALLS"; : > "$AST"
+ns_activate "$APP" "$OPT" "$AST"
+t "unapproved release: nothing bound" '[ ! -e "$NS_CALLS" ]'
+printf '{\n  "approved_token": "tok-1",\n  "approved_version": "v0.9.1"\n}\n' > "$AST"
+ns_activate "$APP" "$OPT" "$AST"
+t "approved version but no token in the app dir: nothing bound" '[ ! -e "$NS_CALLS" ]'
+echo tok-2 > "$APP/.nebulaos-approved"
+ns_activate "$APP" "$OPT" "$AST"
+t "wrong token: nothing bound" '[ ! -e "$NS_CALLS" ]'
+echo tok-1 > "$APP/.nebulaos-approved"
+printf '{\n  "version": "v0.9.2"\n}\n' > "$APP/release_info.json"
+ns_activate "$APP" "$OPT" "$AST"
+t "token but another version: nothing bound" '[ ! -e "$NS_CALLS" ]'
+printf '{\n  "version": "v0.9.1"\n}\n' > "$APP/release_info.json"
+ns_activate "$APP" "$OPT" "$AST"
+t "approved release: bound" '[ "$(grep -c "^mount --bind" "$NS_CALLS")" = 3 ]'
+rm -f "$APP/.nebulaos-approved"; echo '{}' > "$APP/release_info.json"
+
 # A second start while the screen runs: items still bound -> nothing stacks.
 export NS_MOUNTS="$WORK/mounts"
 printf '/dev/x %s none rw 0 0\n' "$OPT/nebulascreen" > "$NS_MOUNTS"

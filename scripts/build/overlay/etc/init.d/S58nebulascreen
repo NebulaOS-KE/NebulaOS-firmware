@@ -30,7 +30,7 @@ start() {
 	if command -v ns_image_wins >/dev/null 2>&1; then
 		ns_image_wins "$NS_APP" "$NS_UPDATE_STATE" /opt/nebulaos-version.json \
 			/usr/share/nebulaos/nebulascreen/release_info.json
-		ns_activate "$NS_APP" "$NS_DIR"
+		ns_activate "$NS_APP" "$NS_DIR" "$NS_UPDATE_STATE"
 	fi
 	# OOM priority at birth (MEM-T07): expendable UI tier, explicit 0.
 	nebulaos_start_with_adj "$NEBULAOS_ADJ_NEBULASCREEN" \

@@ -352,7 +352,7 @@ stabilized_stage2() {
 REFRESH_TRIES="${REFRESH_TRIES:-12}"
 REFRESH_PAUSE="${REFRESH_PAUSE:-15}"
 refresh_update_info() {
-	# $1 = update-manager name (moonraker | klipper | mainsail)
+	# $1 = update-manager name (moonraker | klipper | mainsail | nebulascreen)
 	(
 		_t=0
 		while [ "$_t" -lt "$REFRESH_TRIES" ]; do
@@ -385,6 +385,9 @@ reconcile_update_info_on_boot() {
 	for _n in moonraker mainsail; do
 		[ "$(read_state_field "$_n" state)" = "rolled-back" ] && refresh_update_info "$_n"
 	done
+	case "$(read_state_field nebulascreen state)" in
+		rolled-back|factory-fallback) refresh_update_info nebulascreen ;;
+	esac
 	[ "$(read_stack_field state)" = "rolled-back" ] && refresh_update_info klipper
 	return 0
 }
@@ -475,7 +478,17 @@ cleanup_stale_staging() {
 	rm -rf "$NEBULAOS_ROOT/apps/mainsail.staging" "$NEBULAOS_ROOT/apps/mainsail.old" \
 		"$MAINSAIL_BACKUP.staging" "$MAINSAIL_BACKUP.old" \
 		"$MOONRAKER_ENV.staging" "$MOONRAKER_ENV.old" \
-		"$MOONRAKER_ENV_BACKUP.staging" "$MOONRAKER_ENV_BACKUP.old"
+		"$MOONRAKER_ENV_BACKUP.staging" "$MOONRAKER_ENV_BACKUP.old" \
+		"$NEBULAOS_ROOT/apps/nebulascreen.staging" \
+		"$NEBULAOS_ROOT/backups/nebulascreen/last-known-good.staging" \
+		"$NEBULAOS_ROOT/backups/nebulascreen/last-known-good.old"
+	# An interrupted restore into the screen's app dir: the dir moved aside
+	# but the new copy not yet in place. Put the old one back (S58 then runs
+	# the image's screen unless it is still approved; the poll sorts it out).
+	if [ ! -e "$NEBULAOS_ROOT/apps/nebulascreen" ] && [ -d "$NEBULAOS_ROOT/apps/nebulascreen.old" ]; then
+		mv "$NEBULAOS_ROOT/apps/nebulascreen.old" "$NEBULAOS_ROOT/apps/nebulascreen"
+	fi
+	rm -rf "$NEBULAOS_ROOT/apps/nebulascreen.old"
 }
 
 # Atomic-ish swap: build the full copy in a .staging sibling first, then
@@ -650,6 +663,396 @@ poll_mainsail_once() {
 	if [ "$current" != "$last_seen" ] && [ "$state" != "validating" ]; then
 		validate_mainsail
 	fi
+}
+
+# ==========================================================================
+# NebulaScreen: a downloaded release (G82 stage 3)
+# ==========================================================================
+#
+# Moonraker's update_manager (type: zip, managed_services: nebulascreen)
+# replaces /usr/data/nebulaos/apps/nebulascreen with a downloaded release and
+# restarts the screen. S58nebulascreen binds a release over the image's
+# /opt/nebulascreen files only when THIS component approved it (a random
+# token in the app dir and in state.json, /etc/nebulascreen-lib.sh); until
+# then the image's own screen runs. So the Mainsail-style detect-after-the-
+# fact is turned into a real two-stage validation here:
+#
+#   stage 1 (static, before activation): nebulascreen-release-check - project,
+#     owner, version, nebulaos_ui_api == this image's, static LE MIPS ELFs,
+#     themes, no symlink, no settings file, nothing unexpected;
+#   activation: approve + restart the screen - NEVER while the printer is busy
+#     (printing/paused, memguard marker or memory pressure, or Moonraker
+#     unreachable); a deferred activation is retried on later polls;
+#   stage 2 (health): within NS_HEALTH_TIMEOUT the screen runs from the bound
+#     release binary and reported the release's version
+#     (machine.nebulaos.screen.report -> [nebulaos] -> $NS_REPORT).
+#
+# A failure restores the last-known-good release (backups/nebulascreen/
+# last-known-good, taken after a release passed stage 2), and if that is
+# missing or unhealthy too, the image's own screen (the app dir reset to the
+# image seed, exactly as "the image wins" does). Every restart, including a
+# rollback's, waits for an idle printer: a rollback never interrupts a print
+# (G91 P4). The state is a state machine across polls, never a blocking wait,
+# so every deferral is honoured instead of timed out (G91 C1).
+#
+# state.json is shared with S58's image-wins stamp ("image_identity"): it is
+# only ever MERGED (python3), never rewritten from scratch here. After an
+# image install S58 rewrites it with just the stamp; the next poll then
+# bootstraps afresh and drops the previous image's last-known-good backup.
+
+NS_NAME="nebulascreen"
+NS_APP_DIR="${NS_APP_DIR:-$NEBULAOS_ROOT/apps/nebulascreen}"
+NS_OPT_DIR="${NS_OPT_DIR:-/opt/nebulascreen}"
+NS_S58="${NS_S58:-/etc/init.d/S58nebulascreen}"
+NS_PIDFILE="${NS_PIDFILE:-/var/run/nebulascreen.pid}"
+NEBULASCREEN_LIB="${NEBULASCREEN_LIB:-/etc/nebulascreen-lib.sh}"
+NS_RELEASE_CHECK="${NS_RELEASE_CHECK:-/usr/libexec/nebulaos/nebulascreen-release-check}"
+NS_IMAGE_VERSION="${NS_IMAGE_VERSION:-/opt/nebulaos-version.json}"
+NS_SEED_INFO="${NS_SEED_INFO:-/usr/share/nebulaos/nebulascreen/release_info.json}"
+NS_REPORT="${NS_REPORT:-$NEBULAOS_RUN_DIR/nebulascreen-report.json}"
+NS_SCREEN_LOG="${NS_SCREEN_LOG:-/opt/printer_data/logs/nebulascreen.log}"
+NS_BACKUP="$NEBULAOS_ROOT/backups/nebulascreen/last-known-good"
+NS_HEALTH_TIMEOUT="${NS_HEALTH_TIMEOUT:-180}"
+NS_SETTLE_SECONDS="${NS_SETTLE_SECONDS:-5}"
+NS_PYTHON="${NS_PYTHON:-python3}"
+# shellcheck disable=SC1090
+[ -r "$NEBULASCREEN_LIB" ] && . "$NEBULASCREEN_LIB"
+
+# Everything this component needs is on the image; an image without the
+# stage-2b screen layout has nothing to manage.
+ns_component_ready() {
+	command -v ns_release_complete >/dev/null 2>&1 || return 1
+	command -v "$NS_PYTHON" >/dev/null 2>&1 || return 1
+	[ -f "$NS_RELEASE_CHECK" ] && [ -f "$NS_SEED_INFO" ] && [ -e "$NS_S58" ]
+}
+
+ns_get() { read_state_field "$NS_NAME" "$1"; }
+
+# Merge KEY=VALUE pairs into state.json (atomic). Keys this file does not own
+# (image_identity) are kept; an unreadable file starts empty, which costs at
+# most a reset to the image's screen on the next boot (the safe direction).
+ns_set() {
+	_nsf=$(state_file "$NS_NAME")
+	mkdir -p "$(dirname "$_nsf")" 2>/dev/null
+	"$NS_PYTHON" -I -c '
+import json, os, sys
+path = sys.argv[1]
+try:
+    with open(path) as fh:
+        data = json.load(fh)
+    if not isinstance(data, dict):
+        data = {}
+except (OSError, ValueError):
+    data = {}
+for kv in sys.argv[2:]:
+    key, _, value = kv.partition("=")
+    data[key] = value
+tmp = "%s.tmp.%d" % (path, os.getpid())
+with open(tmp, "w") as fh:
+    json.dump(data, fh, indent=2, sort_keys=True)
+    fh.write("\n")
+    fh.flush()
+    os.fsync(fh.fileno())
+os.replace(tmp, path)
+' "$_nsf" component="$NS_NAME" "$@"
+}
+
+ns_set_state() { # STATE REASON [KEY=VALUE...]
+	_nss="$1" _nsr="$2"
+	shift 2
+	ns_set state="$_nss" last_failure_reason="$_nsr" \
+		last_transition_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$@"
+}
+
+# Why the screen may not be restarted now (echoed), or return 1 when idle.
+# Fail-closed (G91 P3): Moonraker unreachable counts as busy - nothing could
+# tell a running print apart, and the screen could not report anyway. A
+# Klippy that is not ready is not busy (no print can run).
+ns_busy_reason() {
+	if [ -e "$NEBULAOS_RUN_DIR/print-active" ]; then echo PRINTING; return 0; fi
+	if [ -e "$NEBULAOS_RUN_DIR/memguard/deny-maintenance" ]; then echo LOW_MEMORY; return 0; fi
+	if [ -e "$NEBULAOS_RUN_DIR/shed/nebulascreen" ]; then echo LOW_MEMORY; return 0; fi
+	if ! wget -q -O /dev/null --timeout=5 "$MOONRAKER_URL/server/info" 2>/dev/null; then
+		echo UNKNOWN
+		return 0
+	fi
+	_nsps=$(wget -q -O - --timeout=5 "$MOONRAKER_URL/printer/objects/query?print_stats=state" 2>/dev/null)
+	case "$_nsps" in
+		*'"state":"printing"'*|*'"state": "printing"'*) echo PRINTING; return 0 ;;
+		*'"state":"paused"'*|*'"state": "paused"'*) echo PAUSED; return 0 ;;
+	esac
+	return 1
+}
+
+# Logged once per reason, not every poll of a long print.
+ns_defer() { # REASON WHAT
+	[ "$(ns_get busy_reason)" = "$1" ] && return 0
+	log "$NS_NAME: $2 deferred ($1) - the screen is not restarted while the printer is busy; retried on a later poll"
+	ns_set busy_reason="$1"
+}
+
+# Moonraker still downloading/extracting (or unreachable: cannot tell).
+ns_update_manager_busy() {
+	_nsum=$(wget -q -O - --timeout=5 "$MOONRAKER_URL/machine/update/status" 2>/dev/null) || return 0
+	case "$_nsum" in
+		*'"busy":false'*|*'"busy": false'*) return 1 ;;
+	esac
+	return 0
+}
+
+# (python3, not stat: the image's BusyBox has no stat applet.)
+ns_fingerprint() {
+	"$NS_PYTHON" -I -c '
+import hashlib, os, sys
+h = hashlib.sha256()
+for root, dirs, files in os.walk(sys.argv[1]):
+    dirs.sort()
+    for name in sorted(dirs + files):
+        p = os.path.join(root, name)
+        try:
+            st = os.lstat(p)
+        except OSError:
+            continue
+        h.update(("%s %d %d %d\n" % (p, st.st_size, st.st_mtime_ns, st.st_ino)).encode())
+print(h.hexdigest())
+' "$NS_APP_DIR" 2>/dev/null
+}
+
+# Same file (device + inode): a bound path is the file it was bound from.
+ns_same_file() { # A B
+	"$NS_PYTHON" -I -c '
+import os, sys
+try:
+    a, b = os.stat(sys.argv[1]), os.stat(sys.argv[2])
+except OSError:
+    sys.exit(1)
+sys.exit(0 if (a.st_dev, a.st_ino) == (b.st_dev, b.st_ino) else 1)
+' "$1" "$2"
+}
+
+ns_is_image_seed() {
+	[ "$(ls -A "$NS_APP_DIR" 2>/dev/null)" = "release_info.json" ] \
+		&& cmp -s "$NS_APP_DIR/release_info.json" "$NS_SEED_INFO"
+}
+
+ns_new_token() {
+	cat /proc/sys/kernel/random/uuid 2>/dev/null \
+		|| "$NS_PYTHON" -I -c 'import uuid; print(uuid.uuid4())'
+}
+
+# Approve whatever release is in the app dir now: token file + state.
+ns_approve() { # VERSION [KEY=VALUE...]
+	_nsv="$1"
+	shift
+	_nstok=$(ns_new_token)
+	printf '%s\n' "$_nstok" > "$NS_APP_DIR/.nebulaos-approved.tmp" \
+		&& mv -f "$NS_APP_DIR/.nebulaos-approved.tmp" "$NS_APP_DIR/.nebulaos-approved"
+	ns_set approved_version="$_nsv" approved_token="$_nstok" "$@"
+}
+
+ns_stage1() { # DIR -> problems on stdout, rc 0 = pass
+	"$NS_PYTHON" -I "$NS_RELEASE_CHECK" "$1" --image-version "$NS_IMAGE_VERSION"
+}
+
+ns_restart_screen() {
+	log "$NS_NAME: restarting the screen ($NS_S58)"
+	rm -f "$NS_REPORT"
+	"$NS_S58" stop >/dev/null 2>&1
+	"$NS_S58" start >/dev/null 2>&1
+}
+
+# Stage 2: the screen process runs, from the release binary that is bound
+# right now (same file as the app dir's), and reported VERSION since the
+# last restart.
+ns_health_ok() { # VERSION
+	_nspid=$(cat "$NS_PIDFILE" 2>/dev/null)
+	[ -n "$_nspid" ] && [ -d "/proc/$_nspid" ] || return 1
+	ns_same_file "$NS_OPT_DIR/nebulascreen" "$NS_APP_DIR/nebulascreen" || return 1
+	[ "$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$NS_REPORT" 2>/dev/null | head -1)" = "$1" ]
+}
+
+ns_preserve_evidence() { # VERSION REASON [PROBLEMS]
+	_nsd="$NEBULAOS_ROOT/backups/$NS_NAME/failed-$(date -u +%Y%m%dT%H%M%SZ)"
+	[ -e "$_nsd" ] && _nsd="$_nsd-$$"
+	mkdir -p "$_nsd"
+	{
+		echo "failed_version=$1"
+		echo "reason=$2"
+		echo "detected_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+	} > "$_nsd/metadata.txt"
+	[ -n "${3:-}" ] && printf '%s\n' "$3" > "$_nsd/stage1-problems.txt"
+	cp "$NS_APP_DIR/release_info.json" "$_nsd/" 2>/dev/null
+	cp "$NS_REPORT" "$_nsd/screen-report.json" 2>/dev/null
+	tail -c 65536 "$NS_SCREEN_LOG" > "$_nsd/nebulascreen.log" 2>/dev/null
+	log "$NS_NAME: failure evidence preserved at $_nsd"
+}
+
+# A restart that is due (activation of a rollback target, or unbinding a
+# failed release) - only when the printer is idle.
+ns_pending_restart() {
+	[ "$(ns_get restart_pending)" = 1 ] || return 0
+	if _nsbr=$(ns_busy_reason); then
+		ns_defer "$_nsbr" "screen restart"
+		return 1
+	fi
+	ns_restart_screen
+	ns_set restart_pending=0 trial_started="$(date +%s)" busy_reason=
+	return 0
+}
+
+# The image's own screen: app dir back to the seed, nothing approved.
+ns_image_fallback() { # FAILED_VERSION REASON
+	log "$NS_NAME: falling back to the image's own screen ($2, $1)"
+	if ! ns_reset_to_image "$NS_APP_DIR" "$NS_SEED_INFO"; then
+		log "$NS_NAME: could not reset $NS_APP_DIR to the image seed"
+	fi
+	_nsseed=$(ns_release_version "$NS_APP_DIR")
+	ns_set_state factory-fallback "$2:$1" approved_version= approved_token= \
+		trial_version= busy_reason= known_good_version="$_nsseed" \
+		known_good_source=image last_seen_version="$_nsseed" restart_pending=1
+	refresh_update_info "$NS_NAME"
+	ns_pending_restart
+}
+
+# Back to the last-known-good release, else to the image's screen.
+ns_roll_back() { # FAILED_VERSION REASON
+	_nskg=$(ns_get known_good_version)
+	if [ "$(ns_get known_good_source)" = release ] && [ -d "$NS_BACKUP" ] \
+			&& [ "$(ns_release_version "$NS_BACKUP")" = "$_nskg" ] \
+			&& ns_stage1 "$NS_BACKUP" >/dev/null 2>&1; then
+		log "$NS_NAME: $2 on $1 - restoring the last-known-good release $_nskg"
+		atomic_directory_replace "$NS_BACKUP" "$NS_APP_DIR"
+		ns_approve "$_nskg"
+		ns_set_state rolling-back "$2:$1" trial_version="$_nskg" \
+			last_seen_version="$_nskg" busy_reason= restart_pending=1
+		ns_pending_restart && ns_judge_trial
+		return 0
+	fi
+	log "$NS_NAME: $2 on $1 - no usable last-known-good release"
+	ns_image_fallback "$1" "$2"
+}
+
+# A running trial (new release or rollback target): promote, wait, or fail.
+ns_judge_trial() {
+	_nsst=$(ns_get state)
+	_nstr=$(ns_get trial_version)
+	if ns_health_ok "$_nstr"; then
+		if [ "$_nsst" = validating ]; then
+			log "$NS_NAME: release $_nstr passed full validation - recording it as known-good"
+			ns_set_state healthy "" known_good_version="$_nstr" known_good_source=release \
+				last_seen_version="$_nstr" busy_reason=
+			atomic_directory_replace "$NS_APP_DIR" "$NS_BACKUP"
+		else
+			log "$NS_NAME: the restored release $_nstr is healthy"
+			ns_set_state rolled-back "$(ns_get last_failure_reason)" busy_reason=
+			refresh_update_info "$NS_NAME"
+		fi
+		return 0
+	fi
+	[ "$(ns_get restart_pending)" = 1 ] && return 0
+	_nsstart=$(ns_get trial_started)
+	[ $(( $(date +%s) - ${_nsstart:-0} )) -ge "$NS_HEALTH_TIMEOUT" ] || return 0
+	if _nsbr=$(ns_busy_reason); then
+		ns_defer "$_nsbr" "health judgement of $_nstr"
+		return 0
+	fi
+	if [ "$_nsst" = validating ]; then
+		ns_preserve_evidence "$_nstr" stage2_failed
+		ns_roll_back "$_nstr" stage2_failed
+	else
+		ns_preserve_evidence "$_nstr" stage2_failed_after_rollback
+		ns_image_fallback "$_nstr" previous_also_unhealthy
+	fi
+}
+
+# First observation, or the first poll after an image install (S58 then
+# rewrote state.json with only the image-wins stamp): the image's screen is
+# what is known to be good; a backup from before belongs to another image.
+ns_bootstrap() {
+	rm -rf "$NS_BACKUP" "$NS_BACKUP.staging" "$NS_BACKUP.old"
+	_nsseed=$(ns_release_version "$(dirname "$NS_SEED_INFO")")
+	ns_set_state healthy "" known_good_version="$_nsseed" known_good_source=image \
+		last_seen_version="$_nsseed" approved_version= approved_token= trial_version= \
+		restart_pending=0 busy_reason=
+	# Read-only data: do not ask Moonraker again on every poll.
+	[ -n "$(ns_get state)" ] || return 0
+	log "$NS_NAME: bootstrapped (the image's screen $_nsseed is known-good)"
+	refresh_update_info "$NS_NAME"
+}
+
+poll_nebulascreen_once() {
+	ns_component_ready || return 0
+	[ -n "$(ns_get state)" ] || ns_bootstrap
+	ns_pending_restart || return 0
+	_nsst=$(ns_get state)
+
+	if ns_release_approved "$NS_APP_DIR" "$(state_file "$NS_NAME")"; then
+		case "$_nsst" in
+			validating|rolling-back) ns_judge_trial ;;
+		esac
+		return 0
+	fi
+	if ns_is_image_seed; then
+		# The image's own screen; the normal state without a download.
+		return 0
+	fi
+
+	# Something new in the app dir: a download to check. Never while
+	# Moonraker is still writing it, never while it still moves.
+	ns_update_manager_busy && return 0
+	_nsfp=$(ns_fingerprint)
+	_nscur=$(ns_release_version "$NS_APP_DIR")
+	if [ "$_nsst" = pending ] && [ "$(ns_get pending_fingerprint)" = "$_nsfp" ]; then
+		: # unchanged since it passed stage 1 - only the busy check is left
+	else
+		sleep "$NS_SETTLE_SECONDS"
+		[ "$(ns_fingerprint)" = "$_nsfp" ] || return 0
+		rm -f "$NS_APP_DIR/.nebulaos-approved"
+		_nsfp=$(ns_fingerprint)
+		if ! ns_release_complete "$NS_APP_DIR"; then
+			log "$NS_NAME: ${_nscur:-an unnamed download} in $NS_APP_DIR is incomplete - not activated"
+			ns_preserve_evidence "${_nscur:-unknown}" incomplete_release
+			ns_roll_back "${_nscur:-unknown}" incomplete_release
+			return 0
+		fi
+		if ! _nsprob=$(ns_stage1 "$NS_APP_DIR"); then
+			log "$NS_NAME: stage 1 refused $_nscur: $(printf '%s' "$_nsprob" | grep '^PROBLEM' | tr '\n' ' ')"
+			ns_preserve_evidence "$_nscur" stage1_failed "$_nsprob"
+			ns_roll_back "$_nscur" stage1_failed
+			return 0
+		fi
+	fi
+	if _nsbr=$(ns_busy_reason); then
+		if [ "$_nsst" != pending ] || [ "$(ns_get trial_version)" != "$_nscur" ]; then
+			log "$NS_NAME: release $_nscur passed stage 1 - activation deferred ($_nsbr)"
+			ns_set_state pending "activation_deferred" trial_version="$_nscur" \
+				pending_fingerprint="$_nsfp" busy_reason="$_nsbr"
+		else
+			ns_defer "$_nsbr" "activation of $_nscur"
+		fi
+		return 0
+	fi
+	log "$NS_NAME: release $_nscur passed stage 1 - activating it"
+	ns_approve "$_nscur"
+	ns_set_state validating "" trial_version="$_nscur" pending_fingerprint= busy_reason= \
+		restart_pending=0 trial_started="$(date +%s)"
+	ns_restart_screen
+	ns_set trial_started="$(date +%s)"
+	ns_judge_trial
+}
+
+# A new supervisor process (boot): a trial that was running gets a fresh
+# health window - S58 has just started the approved release at boot, and
+# the report file (tmpfs) is from this boot.
+ns_reconcile_on_boot() {
+	case "$(ns_get state)" in
+		validating|rolling-back)
+			[ "$(ns_get restart_pending)" = 1 ] && return 0
+			log "$NS_NAME: a trial of $(ns_get trial_version) was running before this start - judging it afresh"
+			ns_set trial_started="$(date +%s)"
+			;;
+	esac
+	return 0
 }
 
 # Snapshots the current Moonraker venv as the new last-known-good pairing
@@ -946,6 +1349,9 @@ reconcile_stale_component_locks_on_boot() {
 		[ -e "$state_file_path" ] || continue
 		name=$(basename "$(dirname "$state_file_path")")
 		[ "$name" = "$STACK_NAME" ] && continue
+		# NebulaScreen keeps its trial across a restart (ns_reconcile_on_boot)
+		# and shares state.json with S58's image-wins stamp.
+		[ "$name" = "nebulascreen" ] && continue
 		state=$(read_state_field "$name" state)
 		[ "$state" = "validating" ] || continue
 		log "$name: found an interrupted transaction from a previous supervisor process (state=validating) - nothing on disk has been validated, so it will be re-validated from scratch"
@@ -1251,6 +1657,7 @@ poll_once() {
 	done
 
 	poll_mainsail_once
+	poll_nebulascreen_once
 	poll_readiness_once
 }
 
@@ -1286,6 +1693,7 @@ loop() {
 	cleanup_stale_staging
 	reconcile_stale_component_locks_on_boot
 	reconcile_klipper_stack_on_boot
+	ns_reconcile_on_boot
 	reconcile_update_info_on_boot
 	while true; do
 		poll_once
