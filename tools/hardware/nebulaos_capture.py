@@ -295,6 +295,19 @@ CAPTURE_PROFILES = {
     "update-log": (_UPDATE_LOG, False, None, 60),
     # G82 (Run 15 test): the GuppyScreen -> NebulaScreen settings migration,
     # read-only - the old file must be unchanged, the new one a copy of it.
+    # Run 16 kernel image checks (K1 log levels, G5 sysfs/no debugfs, G3
+    # early boot screen), read-only.
+    "kernel-run16": ("echo '== kernel'; uname -r; uname -v; "
+        "echo '== kernel messages at warning or worse (raw levels 0-4)'; dmesg -r | grep -E '^<[0-4]>' ; "
+        "echo '== debugfs mounted?'; grep -c ' debugfs ' /proc/mounts; "
+        "echo '== touch sysfs (G5)'; for f in /sys/bus/i2c/devices/*/nebulaos_touch/*; do echo \"$f=$(cat $f 2>&1)\"; done; "
+        "echo '== backlight sysfs'; for f in brightness actual_brightness bl_power; do "
+        "echo \"$f=$(cat /sys/class/backlight/nebulaos_backlight/$f 2>&1)\"; done; "
+        "echo '== display apply / watcher log'; grep -hE 'display-qualified|sleep-wake|nebulaos-backlight' /opt/printer_data/logs/system.log 2>/dev/null | tail -n 15; "
+        "echo '== boot display (G3)'; grep -h nebulaos-boot-display /opt/printer_data/logs/system.log 2>/dev/null | tail -n 5; "
+        "ls -l /run/nebulaos-boot-display.drawn 2>&1; "
+        "echo '== boot script timing'; grep -E 'S00|S01' /run/nebulaos-boot-scripts.log",
+        False, None, 60),
     "screen-migration": ("D=/usr/data/nebulaos; for f in $D/guppyscreen/guppyconfig.json "
         "$D/nebulascreen/nebulascreen.json /opt/nebulascreen/nebulascreen.json "
         "/opt/printer_data/config/nebulascreen/nebulascreen.json; do "
