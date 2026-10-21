@@ -3,7 +3,10 @@
 # nebulaos-boot-display - userspace boot display (GUI/service readiness
 # mission, 2026-10-09). Shell only: Python never runs on the boot path.
 #
-#   boot     S01splash: show the configured mode (logo | blank)
+#   draw     S01persistent-datastore, right after /usr/data is mounted: show
+#            the configured mode as early as possible (G3)
+#   boot     S01splash: show it unless "draw" already did, then schedule the
+#            late re-render
 #
 # The "console" mode (a text boot log on the LCD) was removed (D10,
 # 2026-10-11): once the framebuffer console had taken over the display,
@@ -22,6 +25,9 @@ NBD_FB="${NBD_FB:-/dev/fb0}"
 NBD_FB_SYSFS="${NBD_FB_SYSFS:-/sys/class/graphics/fb0}"
 NBD_RENDER_DELAY="${NBD_RENDER_DELAY:-120}"
 NBD_OSCONFIG="${NBD_OSCONFIG:-/usr/libexec/nebulaos/nebulaos-osconfig}"
+# G3: "draw" leaves this marker (tmpfs, this boot only) so "boot" does not
+# write the same picture a second time.
+NBD_DRAWN="${NBD_DRAWN:-/run/nebulaos-boot-display.drawn}"
 
 nbd_log() {
 	echo "nebulaos-boot-display: $*"
@@ -97,12 +103,24 @@ nbd_blank() {
 		&& nbd_log "blank: screen cleared"
 }
 
+nbd_show() {
+	case "$(nbd_mode)" in
+		logo) nbd_logo ;;
+		blank) nbd_blank ;;
+	esac
+}
+
 case "${1:-}" in
+	draw)
+		nbd_show
+		{ : > "$NBD_DRAWN"; } 2>/dev/null
+		exit 0 ;;
 	boot)
-		case "$(nbd_mode)" in
-			logo) nbd_logo ;;
-			blank) nbd_blank ;;
-		esac
+		if [ -e "$NBD_DRAWN" ]; then
+			nbd_log "already shown right after /usr/data mounted"
+		else
+			nbd_show
+		fi
 		# Refresh a missing/stale render long after boot, at the lowest priority.
 		if [ -x "$NBD_OSCONFIG" ]; then
 			( sleep "$NBD_RENDER_DELAY"; nice -n 19 "$NBD_OSCONFIG" boot-display render --if-stale ) \
@@ -110,5 +128,5 @@ case "${1:-}" in
 		fi
 		exit 0 ;;
 esac
-echo "usage: nebulaos-boot-display boot" >&2
+echo "usage: nebulaos-boot-display draw|boot" >&2
 exit 64

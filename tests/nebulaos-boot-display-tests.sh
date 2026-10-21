@@ -22,7 +22,8 @@ trap 'rm -rf "$T"' EXIT
 STRIDE=40; YRES=6; FRAMES=3
 setup() {
 	rm -rf "$T/b"; mkdir -p "$T/b/boot/cache" "$T/b/sys"
-	export NBD_BOOT_DIR="$T/b/boot" NBD_FB="$T/b/fb" NBD_FB_SYSFS="$T/b/sys" NBD_OSCONFIG="$T/b/none"
+	export NBD_BOOT_DIR="$T/b/boot" NBD_FB="$T/b/fb" NBD_FB_SYSFS="$T/b/sys" NBD_OSCONFIG="$T/b/none" \
+		NBD_DRAWN="$T/b/drawn"
 	echo "10,$((YRES * FRAMES))" > "$NBD_FB_SYSFS/virtual_size"
 	echo 32 > "$NBD_FB_SYSFS/bits_per_pixel"
 	echo "$STRIDE" > "$NBD_FB_SYSFS/stride"
@@ -65,6 +66,26 @@ setup; render; sed -i 's/^YRES=.*/YRES="6;reboot"/' "$NBD_BOOT_DIR/cache/splash.
 check "malformed meta: nothing drawn" '[ "$(frame $YRES K)" -eq 0 ]'
 setup; render; echo "garbage" > "$NBD_FB_SYSFS/pan"; sh "$NBD" boot >/dev/null
 check "unreadable pan: nothing drawn" '[ "$(cat "$NBD_FB" | tr -d K | wc -c)" -eq 0 ]'
+
+# --- G3: early draw right after /usr/data mounts ----------------------------------
+setup; render; sh "$NBD" draw >/dev/null
+check "draw shows the logo" '[ "$(frame $YRES R)" -eq 0 ]'
+check "draw leaves the this-boot marker" '[ -e "$NBD_DRAWN" ]'
+head -c $((STRIDE * YRES)) /dev/zero | tr '\0' 'Z' > "$NBD_BOOT_DIR/cache/splash.raw"
+sh "$NBD" boot >/dev/null
+check "boot after draw does not draw a second time" '[ "$(frame $YRES R)" -eq 0 ]'
+setup; render; sh "$NBD" boot >/dev/null
+check "boot without an early draw still draws" '[ "$(frame $YRES R)" -eq 0 ]'
+setup; sh "$NBD" draw >/dev/null; rc=$?
+check "draw with nothing rendered: rc 0, nothing drawn" '[ $rc -eq 0 ] && [ "$(frame $YRES K)" -eq 0 ]'
+S01P="$OVERLAY/etc/init.d/S01persistent-datastore"
+mount_line=$(grep -n "restore_saved_clock$" "$S01P" | tail -1 | cut -d: -f1)
+draw_line=$(grep -n '"\$NEBULAOS_BOOT_DISPLAY" draw' "$S01P" | cut -d: -f1)
+bind_line=$(grep -n 'mount --bind "\$PDATA" /opt/printer_data' "$S01P" | cut -d: -f1)
+check "S01persistent-datastore draws right after the /usr/data mount" \
+	'[ -n "$draw_line" ] && [ -n "$mount_line" ] && [ "$draw_line" -gt "$mount_line" ] && [ "$draw_line" -lt "$bind_line" ]'
+check "the early draw can never fail S01 (no set -e path, output discarded)" \
+	'grep -q "\"\$NEBULAOS_BOOT_DISPLAY\" draw >/dev/null 2>&1" "$S01P"'
 
 # --- mode selection --------------------------------------------------------------
 setup; render; : > "$NBD_FB_SYSFS/mode"; echo 'MODE="blank"' > "$NBD_BOOT_DIR/display.env"; sh "$NBD" boot >/dev/null
