@@ -40,7 +40,16 @@ start() {
 
 stop() {
 	echo "Stopping nebulascreen"
+	_pid=$(cat "$PIDFILE" 2>/dev/null)
 	start-stop-daemon -K -p "$PIDFILE" && rm -f "$PIDFILE"
+	# Wait (at most 5 s) for the process to end: a running binary keeps its
+	# bind busy. Then drop the release binds so restart re-activates cleanly.
+	_t=0
+	while [ -n "$_pid" ] && kill -0 "$_pid" 2>/dev/null && [ "$_t" -lt 50 ]; do
+		sleep 0.1
+		_t=$((_t + 1))
+	done
+	command -v ns_deactivate >/dev/null 2>&1 && ns_deactivate "$NS_DIR"
 }
 
 case "$1" in

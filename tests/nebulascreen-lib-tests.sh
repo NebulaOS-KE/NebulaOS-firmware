@@ -102,8 +102,23 @@ ns_activate "$APP" "$OPT"
 t "complete release: one bind per item" \
 	'[ "$(grep -c "^mount --bind" "$NS_CALLS")" = 3 ]'
 t "never a whole-directory bind" '! grep -q "mount --bind $APP $OPT\$" "$NS_CALLS"'
-t "stale bind replaced (umount before mount)" \
-	'[ "$(sed -n 1p "$NS_CALLS")" = "umount $OPT/nebulascreen" ]'
+t "a clean start binds without unmounting anything" '! grep -q "^umount" "$NS_CALLS"'
+
+# A second start while the screen runs: items still bound -> nothing stacks.
+export NS_MOUNTS="$WORK/mounts"
+printf '/dev/x %s none rw 0 0\n' "$OPT/nebulascreen" > "$NS_MOUNTS"
+rm -f "$NS_CALLS"
+ns_activate "$APP" "$OPT"
+t "already bound: no second bind (no stacking, no mixed release)" '[ ! -e "$NS_CALLS" ]'
+ns_deactivate "$OPT"
+t "deactivate unbinds only what is bound" \
+	'[ "$(cat "$NS_CALLS")" = "umount $OPT/nebulascreen" ]'
+: > "$NS_MOUNTS"; rm -f "$NS_CALLS"
+ns_deactivate "$OPT"
+t "deactivate with nothing bound does nothing" '[ ! -e "$NS_CALLS" ]'
+t "S58 stop waits for the process, then deactivates" \
+	'grep -q "kill -0" "$REPO_ROOT/scripts/build/overlay/etc/init.d/S58nebulascreen" && grep -q "ns_deactivate \"\$NS_DIR\"" "$REPO_ROOT/scripts/build/overlay/etc/init.d/S58nebulascreen"'
+unset NS_MOUNTS
 
 # --- the image wins -------------------------------------------------------
 VJ="$WORK/opt/nebulaos-version.json"

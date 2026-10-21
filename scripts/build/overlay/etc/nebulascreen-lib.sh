@@ -14,6 +14,7 @@
 
 NS_MOUNT="${NS_MOUNT:-mount}"
 NS_UMOUNT="${NS_UMOUNT:-umount}"
+NS_MOUNTS="${NS_MOUNTS:-/proc/self/mounts}"
 NS_PYTHON="${NS_PYTHON:-python3}"
 # The binaries and data of a NebulaScreen release (G82 per-item binds: a
 # whole-directory bind would hide the config file's own bind).
@@ -82,9 +83,16 @@ ns_release_complete() { # APP_DIR
 	return 0
 }
 
+ns_is_mounted() { # PATH - a mount point (a file bind counts)
+	awk -v p="$1" '$2 == p { found = 1 } END { exit !found }' "$NS_MOUNTS" 2>/dev/null
+}
+
 # Per-item binds of a downloaded release over the image's copies in OPT_DIR.
 # All or nothing: an incomplete release leaves the image's own files in use.
-# A stale bind (after Moonraker re-extracted the zip) is replaced.
+# Only from a clean state: when any item is still bound (a second start while
+# the screen runs - a bound running binary cannot be unmounted) nothing is
+# done, so binds never stack or mix two releases. ns_deactivate (S58 stop,
+# after the process ended) clears them; restart activates afresh.
 ns_activate() { # APP_DIR OPT_DIR
 	ns_release_complete "$1" || return 0
 	for _ns_i in $NS_ITEMS; do
@@ -92,13 +100,26 @@ ns_activate() { # APP_DIR OPT_DIR
 			ns_log "the image has no $2/$_ns_i - release not activated"
 			return 0
 		}
+		if ns_is_mounted "$2/$_ns_i"; then
+			ns_log "$2/$_ns_i is already bound - release left as it is until the screen is restarted"
+			return 0
+		fi
 	done
 	for _ns_i in $NS_ITEMS; do
-		"$NS_UMOUNT" "$2/$_ns_i" 2>/dev/null
 		"$NS_MOUNT" --bind "$1/$_ns_i" "$2/$_ns_i" 2>/dev/null \
 			|| ns_log "bind of $1/$_ns_i failed"
 	done
 	ns_log "release from $1 active"
+	return 0
+}
+
+# Removes the per-item binds (S58 stop, once the screen has exited), so the
+# next start shows the image's files or binds the current release afresh.
+ns_deactivate() { # OPT_DIR
+	for _ns_i in $NS_ITEMS; do
+		ns_is_mounted "$1/$_ns_i" || continue
+		"$NS_UMOUNT" "$1/$_ns_i" 2>/dev/null || ns_log "could not unbind $1/$_ns_i"
+	done
 	return 0
 }
 
