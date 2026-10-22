@@ -18,7 +18,7 @@
 # Every other profile (request, point_of_no_return, git) and the lock /
 # memory / trial reasons live in nebulaos_osconfig.common.busy_state, CLI
 # /usr/libexec/nebulaos/nebulaos-busy. Both read the same facts the same way;
-# tests/nebulaos-busy-tests.sh holds them to the same answers.
+# tests/nebulaos-busy-tests.py holds them to the same answers.
 #
 #   nebulaos_busy_fast PROFILE   echoes the reason and returns 0 when busy,
 #                                returns 1 (nothing echoed) when not busy

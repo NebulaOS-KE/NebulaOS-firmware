@@ -237,11 +237,20 @@ class ZAdjustConfigTests(unittest.TestCase):
                 return
         self.skipTest("no extensions checkout with nebulaos_z_adjust.py here")
 
+    def test_pause_marks_after_pause_base(self):
+        stripped = [l.strip() for l in macro("PAUSE").splitlines()]
+        base = stripped.index("PAUSE_BASE")
+        mark = stripped.index("NEBULAOS_Z_ADJUST MARK=1")
+        self.assertGreater(mark, base)
+
     def test_resume_reapplies_after_resume_base(self):
         body = macro("RESUME").splitlines()
         stripped = [l.strip() for l in body]
         base = next(i for i, l in enumerate(stripped) if l.startswith("RESUME_BASE"))
-        apply = stripped.index("NEBULAOS_Z_ADJUST APPLY=1")
+        # RESUME=1 adds only screen changes made while paused (never an
+        # absolute APPLY: that would drop Mainsail / print-file offsets).
+        self.assertNotIn("NEBULAOS_Z_ADJUST APPLY=1", stripped)
+        apply = stripped.index("NEBULAOS_Z_ADJUST RESUME=1")
         self.assertGreater(apply, base)
         # in the same branch: only when the resume really happened
         self.assertEqual(body[apply][:len(body[apply]) - len(body[apply].lstrip())],
