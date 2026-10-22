@@ -209,5 +209,46 @@ class PinnedBedMeshTests(unittest.TestCase):
         self.assertNotIn("set_mesh", remove)                    # REMOVE never unloads
 
 
+CALIBRATION_CFG = os.path.join(os.path.dirname(PRINT_CFG), "calibration.cfg")
+EXTENSIONS = [os.path.join(REPO, "..", "NebulaOS-klipper-extensions"),
+              os.path.join(REPO, "vendor", "nebulaos-klipper-extensions")]
+
+
+class ZAdjustConfigTests(unittest.TestCase):
+    """G92: [nebulaos_z_adjust] in the image-owned calibration.cfg, and RESUME
+    re-applies the saved adjustment after the upstream resume (C4)."""
+
+    def test_section_with_module_defaults(self):
+        lines = open(CALIBRATION_CFG).read().splitlines()
+        i = lines.index("[nebulaos_z_adjust]")
+        body = []
+        for line in lines[i + 1:]:
+            if not line.strip() or line.startswith("["):
+                break
+            body.append(line)
+        self.assertEqual(body, ["#filename: /opt/printer_data/config/z_offset_adjust.json",
+                                "#max_adjust: 2.0"])           # module defaults, not set here
+        for root in EXTENSIONS:
+            mod = os.path.join(root, "extras", "nebulaos_z_adjust.py")
+            if os.path.exists(mod):
+                src = open(mod).read()
+                self.assertIn('"/opt/printer_data/config/z_offset_adjust.json"', src)
+                self.assertIn("config.getfloat('max_adjust', 2.0", src)
+                return
+        self.skipTest("no extensions checkout with nebulaos_z_adjust.py here")
+
+    def test_resume_reapplies_after_resume_base(self):
+        body = macro("RESUME").splitlines()
+        stripped = [l.strip() for l in body]
+        base = next(i for i, l in enumerate(stripped) if l.startswith("RESUME_BASE"))
+        apply = stripped.index("NEBULAOS_Z_ADJUST APPLY=1")
+        self.assertGreater(apply, base)
+        # in the same branch: only when the resume really happened
+        self.assertEqual(body[apply][:len(body[apply]) - len(body[apply].lstrip())],
+                         body[base][:len(body[base]) - len(body[base].lstrip())])
+        between = [l for l in stripped[base + 1:apply] if l and not l.startswith("#")]
+        self.assertEqual(between, [])
+
+
 if __name__ == "__main__":
     unittest.main()
