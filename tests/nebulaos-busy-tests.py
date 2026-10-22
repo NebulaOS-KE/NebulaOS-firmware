@@ -11,7 +11,8 @@
 #     restart/recovery profiles: the supervisorctl shim, the update
 #     supervisor).
 # Scenarios S19-S27 of the design (_scratch/run16/G91-update-design.md) plus
-# the profile table and the memguard marker rule (R3).
+# the profile table, the memguard marker rule (R3) and the shim gate (step 4:
+# klipper only, Klippy dead -> allowed, timing).
 #
 # Usage: python3 tests/nebulaos-busy-tests.py
 import http.server
@@ -576,6 +577,90 @@ class BusyTests(unittest.TestCase):
         reply = json.loads(out.getvalue())
         self.assertEqual((rc, reply["ok"], reply["busy"], reply["reason"], reply["profile"]),
                          (0, True, True, "PAUSED", "git"))
+
+    # -- step 4: the supervisorctl shim ------------------------------------------------
+
+    def shim(self, action, service):
+        initd = os.path.join(self.tmp, "init.d")
+        os.makedirs(initd, exist_ok=True)
+        calls = os.path.join(self.tmp, "init.calls")
+        for name in ("S55klipper", "S58nebulascreen"):
+            path = os.path.join(initd, name)
+            with open(path, "w") as fh:
+                fh.write('#!/bin/sh\necho "%s $1" >> "%s"\n' % (name, calls))
+            os.chmod(path, 0o755)
+        if os.path.exists(calls):
+            os.unlink(calls)
+        env = self.shell_env()
+        env.update({"NEBULAOS_BUSY_LIB": BUSY_LIB, "SUPERVISORCTL_INITD": initd})
+        env.pop("NB_TIMEOUT")                       # the shim's own budget
+        t0 = time.monotonic()
+        p = subprocess.run(["sh", SHIM, action, service], capture_output=True, text=True,
+                           env=env, timeout=30)
+        took = time.monotonic() - t0
+        ran = open(calls).read().split() if os.path.exists(calls) else []
+        return p.returncode, p.stderr, ran, took
+
+    def test_shim_refuses_klipper_restart_while_printing(self):
+        self.status(print_stats={"state": "printing"})
+        for action in ("restart", "stop"):
+            rc, err, ran, took = self.shim(action, "klipper")
+            self.assertEqual(rc, 1)
+            self.assertIn("NebulaOS refused: %s klipper - Not possible while a print is running. "
+                          "(PRINTING)" % action, err)
+            self.assertEqual(ran, [])                   # refused BEFORE stop
+            self.assertLess(took, 2.0)
+        rc, err, ran, took = self.shim("restart", "nebulascreen")   # never gated (RC1)
+        self.assertEqual((rc, ran), (0, ["S58nebulascreen", "restart"]))
+        rc, err, ran, took = self.shim("start", "klipper")          # start is not gated
+        self.assertEqual((rc, ran), (0, ["S55klipper", "start"]))
+
+    def test_shim_paused_and_active(self):
+        self.status(print_stats={"state": "paused"})
+        self.assertEqual(self.shim("restart", "klipper")[0], 1)
+        self.status(heater_bed={"target": 55.0})
+        rc, err, ran, _ = self.shim("restart", "klipper")
+        self.assertEqual(rc, 1)
+        self.assertIn("(ACTIVE)", err)
+        self.status(nebulaos_calibration={"busy": True})    # not in the restart profile
+        self.assertEqual(self.shim("restart", "klipper")[0], 0)
+
+    def test_shim_klippy_dead_restart_allowed(self):
+        # v3.6 note 1 / S19: a crashed Klippy can always be restarted
+        self.marker("print-active")
+        self.mr.klippy_state = "shutdown"
+        rc, err, ran, took = self.shim("restart", "klipper")
+        self.assertEqual((rc, ran), (0, ["S55klipper", "restart"]))
+        self.mr.klippy_state = "disconnected"
+        self.klippy_alive(False)
+        rc, err, ran, took = self.shim("restart", "klipper")
+        self.assertEqual((rc, ran), (0, ["S55klipper", "restart"]))
+        self.assertLess(took, 2.0)
+        self.moonraker_down()                              # Moonraker gone too
+        rc, err, ran, took = self.shim("restart", "klipper")
+        self.assertEqual((rc, ran), (0, ["S55klipper", "restart"]))
+        self.assertLess(took, 2.0)
+
+    def test_shim_idle_allowed(self):
+        self.status(print_stats={"state": "standby"})
+        rc, err, ran, took = self.shim("restart", "klipper")
+        self.assertEqual((rc, ran, err), (0, ["S55klipper", "restart"], ""))
+        self.assertLess(took, 2.0)
+
+    def test_shim_hung_query_counts_as_busy_within_budget(self):
+        # N3: a check that cannot read a live, ready Klippy refuses, and the
+        # worst case stays inside the budget (Moonraker kills it at 6 s).
+        self.mr.query_fails = True
+        rc, err, ran, took = self.shim("restart", "klipper")
+        self.assertEqual((rc, ran), (1, []))
+        self.assertIn("(UNKNOWN)", err)
+        self.mr.query_fails = False
+        self.mr.hang = 3                                   # Moonraker does not answer
+        self.klippy_socket("hang")                         # nor does Klippy
+        rc, err, ran, took = self.shim("restart", "klipper")
+        self.assertEqual((rc, ran), (1, []))
+        self.assertLess(took, 2.5)
+        self.mr.hang = 0
 
 
 if __name__ == "__main__":

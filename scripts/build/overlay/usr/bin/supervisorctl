@@ -92,7 +92,8 @@ print_usage() {
 
 get_script_path() {
   service="$1"
-  script_path="$(ls -1 /etc/init.d/S[0-9][0-9]${service}_service /etc/init.d/S[0-9][0-9]${service}* 2>/dev/null|head -1)"
+  initd="${SUPERVISORCTL_INITD:-/etc/init.d}"  # NebulaOS: test seam
+  script_path="$(ls -1 $initd/S[0-9][0-9]${service}_service $initd/S[0-9][0-9]${service}* 2>/dev/null|head -1)"
   echo "$script_path"
 }
 
@@ -123,6 +124,39 @@ restart() {
   fi
 }
 
+# G91 step 4 (design v3.1/v3.6): Moonraker's update_manager restarts Klipper
+# through this shim after a pull (pip may take minutes in between), and
+# Mainsail's service "restart klipper" lands here too. Neither may cut a
+# print: restart/stop of `klipper` - and ONLY klipper; nebulascreen and the
+# rest are never gated - is refused while the shared busy check
+# (/etc/nebulaos-busy.sh, restart profile) says printing, paused, heating or
+# moving, or cannot read the state of a live, ready Klippy (a hung query
+# never lets a restart through, N3). A Klippy that is not running or not
+# ready can always be restarted (S19): the check reads klippy_state and the
+# Klippy pid first. Shell only, before `stop`, well inside Moonraker's 6 s
+# budget for this command. The reason goes to stderr, exit 1. A user who
+# really needs Klipper back during a print uses FIRMWARE_RESTART or the
+# emergency stop, which do not come through here.
+NEBULAOS_BUSY_LIB="${NEBULAOS_BUSY_LIB:-/etc/nebulaos-busy.sh}"
+
+refuse_if_klipper_busy() {
+  [ "$2" = "klipper" ] || return 0
+  [ -r "$NEBULAOS_BUSY_LIB" ] || return 0
+  NB_TIMEOUT="${NB_TIMEOUT:-1}" NB_SOCKET_TIMEOUT="${NB_SOCKET_TIMEOUT:-0.5}"
+  # shellcheck disable=SC1090
+  . "$NEBULAOS_BUSY_LIB"
+  reason=$(nebulaos_busy_fast restart) || return 0
+  case "$reason" in
+    PRINTING) text="Not possible while a print is running." ;;
+    PAUSED) text="Not possible while a print is paused." ;;
+    ACTIVE) text="Not possible while the printer is moving or heating." ;;
+    *) text="Printer state unknown - not possible right now." ;;
+  esac
+  echo "NebulaOS refused: $1 klipper - $text ($reason)" >&2
+  logger -t supervisorctl "NebulaOS refused: $1 klipper ($reason)" 2>/dev/null
+  exit 1
+}
+
 main() {
   # echo "$0 $@" >> /tmp/supervisorctl.log
   action="$1"; shift
@@ -142,9 +176,11 @@ main() {
       start "$1"
       ;;
     stop)
+      refuse_if_klipper_busy stop "$1"
       stop "$1"
       ;;
     restart)
+      refuse_if_klipper_busy restart "$1"
       restart "$1"
       ;;
     *)
