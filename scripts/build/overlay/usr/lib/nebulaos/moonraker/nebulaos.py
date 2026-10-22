@@ -65,6 +65,15 @@ SCREEN_VERSION_RE = re.compile(r"^[0-9A-Za-z][0-9A-Za-z._+-]{0,63}$")
 # handling and shows its own popup from the HTTP error.
 REFUSAL_PREFIX = "!! NebulaOS refused: "
 EXIT_REFUSED = 3
+# G98: the busy check as an endpoint (the screen asks it before its own
+# Restart Klipper / Restart MCU) - only these two profiles are offered.
+BUSY_ENDPOINT_PROFILES = ("restart", "request")
+# The Python check's own timeouts are 3 s per request; a hung Klippy costs
+# one of them. Bounded here so a stuck helper never holds the screen.
+BUSY_TIMEOUT = 15.
+# G98: a refusal relayed by a NebulaOS process outside Moonraker (the
+# supervisorctl shim): one line, printable, bounded.
+NOTIFY_MAX = 200
 
 
 class NebulaOS:
@@ -122,6 +131,9 @@ class NebulaOS:
              self._ack_clean_reset),
             ("/machine/nebulaos/system/ack_notice", RequestType.POST,
              self._ack_notice),
+            ("/machine/nebulaos/system/busy", RequestType.GET, self._system_busy),
+            ("/machine/nebulaos/system/notify_refused", RequestType.POST,
+             self._notify_refused),
             ("/machine/nebulaos/image/list", RequestType.GET, self._image_list),
             ("/machine/nebulaos/image/status", RequestType.GET, self._image_status),
             ("/machine/nebulaos/image/check", RequestType.POST, self._image_check),
@@ -327,6 +339,47 @@ class NebulaOS:
         state = await self._exec(["system", "busy", "--profile", profile], READ_TIMEOUT)
         if state.get("busy"):
             raise self._refused(str(state.get("reason")), str(state.get("message", "")))
+
+    # G98: the shared busy check for a client that decides itself (the
+    # screen, before its own Restart Klipper / Restart MCU, which go through
+    # Klippy's RESTART/FIRMWARE_RESTART and not through the shim). Async, as
+    # _refuse_if_busy. profile=restart follows G95: a hung Klippy is not
+    # busy, and a check that itself fails or times out counts as not busy
+    # too (the restart is the way out); profile=request fails closed.
+    async def _system_busy(self, web_request: WebRequest) -> Dict[str, Any]:
+        profile = web_request.get_str("profile", "request")
+        if profile not in BUSY_ENDPOINT_PROFILES:
+            raise self.server.error(
+                f"INVALID_PROFILE: profile must be one of {', '.join(BUSY_ENDPOINT_PROFILES)}",
+                400)
+        try:
+            state = await self._exec(["system", "busy", "--profile", profile], BUSY_TIMEOUT)
+        except Exception as exc:
+            logging.info(f"nebulaos: busy check failed ({profile}): {exc}")
+            if profile == "restart":
+                return {"busy": False, "reason": None, "message": "", "klippy": "unknown",
+                        "profile": profile}
+            return {"busy": True, "reason": "UNKNOWN",
+                    "message": "Printer state unknown - not possible right now.",
+                    "klippy": "unknown", "profile": profile}
+        return {"busy": bool(state.get("busy")), "reason": state.get("reason"),
+                "message": str(state.get("message") or ""), "klippy": state.get("klippy"),
+                "profile": profile}
+
+    # G98: the supervisorctl shim refused a Klipper restart (Mainsail's
+    # service restart, or an update_manager restart); Moonraker shows that
+    # only as console.error. This puts the same "!! NebulaOS refused: ..."
+    # line into Mainsail's console (red line + toast). Nothing else happens.
+    async def _notify_refused(self, web_request: WebRequest) -> Dict[str, Any]:
+        raw = web_request.get_str("message")
+        text = " ".join("".join(c if c.isprintable() else " " for c in raw).split())
+        if not text:
+            raise self.server.error("INVALID_MESSAGE: empty", 400)
+        if text.startswith("NebulaOS refused:"):
+            text = text[len("NebulaOS refused:"):].strip()
+        text = text[:NOTIFY_MAX]
+        self.server.send_event("server:gcode_response", f"{REFUSAL_PREFIX}{text}")
+        return {"result": "SENT"}
 
     async def _reboot_or_undo(self, undo: List[str]) -> None:
         machine = self.server.lookup_component("machine")

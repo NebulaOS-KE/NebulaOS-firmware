@@ -2948,6 +2948,55 @@ class ComponentTests(unittest.TestCase):
         self.call("/machine/nebulaos/system/swap_slot")
         self.assertEqual(self.reboots, 1)
 
+    def test_g98_busy_endpoint(self):
+        # G98: the screen asks before its own Restart Klipper / Restart MCU
+        self.assertEqual(self.server.endpoints["/machine/nebulaos/system/busy"][0], 1)
+        self.set_busy("PRINTING")
+        res = self.call("/machine/nebulaos/system/busy", {"profile": "restart"})
+        self.assertEqual((res["busy"], res["reason"], res["message"], res["profile"]),
+                         (True, "PRINTING", "text for PRINTING", "restart"))
+        self.assertIn("klippy", res)
+        self.assertEqual(self.argv()[:4], ["system", "busy", "--profile", "restart"])
+        self.assertEqual(self.server.events, [])          # a question, not a refusal
+        self.set_busy(None)
+        res = self.call("/machine/nebulaos/system/busy", {"profile": "request"})
+        self.assertEqual((res["busy"], res["reason"]), (False, None))
+        with self.assertRaises(Exception) as cm:
+            self.call("/machine/nebulaos/system/busy", {"profile": "git"})
+        self.assertEqual(cm.exception.status_code, 400)
+        # the check itself fails: restart = allowed (G95), request = fail closed
+        real_exec = self.comp._exec
+
+        async def broken(args, timeout, stdin=None):
+            raise self.server.error("nebulaos-osconfig system busy timed out", 504)
+        self.comp._exec = broken
+        self.assertFalse(self.call("/machine/nebulaos/system/busy",
+                                   {"profile": "restart"})["busy"])
+        res = self.call("/machine/nebulaos/system/busy", {"profile": "request"})
+        self.assertEqual((res["busy"], res["reason"]), (True, "UNKNOWN"))
+        self.comp._exec = real_exec
+        import inspect
+        self.assertTrue(inspect.iscoroutinefunction(self.comp._system_busy))
+
+    def test_g98_notify_refused_console_line(self):
+        res = self.call("/machine/nebulaos/system/notify_refused",
+                        {"message": "restart klipper - Not possible while a print is running."})
+        self.assertEqual(res, {"result": "SENT"})
+        self.assertEqual(self.server.events, [(
+            "server:gcode_response",
+            "!! NebulaOS refused: restart klipper - Not possible while a print is running.")])
+        self.server.events.clear()
+        self.call("/machine/nebulaos/system/notify_refused",
+                  {"message": "NebulaOS refused: x\n!! y\x1b" + "z" * 300})
+        line = self.server.events[0][1]
+        self.assertTrue(line.startswith("!! NebulaOS refused: x !! y"), line)
+        self.assertNotIn("\n", line)
+        self.assertLessEqual(len(line), len(self.mod.REFUSAL_PREFIX) + self.mod.NOTIFY_MAX)
+        with self.assertRaises(Exception) as cm:
+            self.call("/machine/nebulaos/system/notify_refused", {"message": " \n "})
+        self.assertEqual(cm.exception.status_code, 400)
+        self.assertEqual(self.calls(), [])                # no helper involved
+
     def test_busy_check_is_async_and_request_profile(self):
         # review 10: never block Moonraker's event loop - the check is the
         # helper run through asyncio's subprocess API.

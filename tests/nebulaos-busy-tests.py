@@ -89,6 +89,8 @@ class Moonraker(object):
         self.query_fails = False
         self.um_busy = False
         self.hang = 0
+        self.posts = []
+        self.post_hang = 0
         fake = self
 
         class Handler(http.server.BaseHTTPRequestHandler):
@@ -100,6 +102,21 @@ class Moonraker(object):
                     self.answer()
                 except (BrokenPipeError, ConnectionResetError):
                     pass                    # the client gave up (a timeout test)
+
+            def do_POST(self):
+                length = int(self.headers.get("Content-Length") or 0)
+                body = self.rfile.read(length).decode()
+                if fake.post_hang:
+                    time.sleep(fake.post_hang)
+                fake.posts.append((self.path, self.headers.get("Content-Type"), body))
+                try:
+                    data = b'{"result": {"result": "SENT"}}'
+                    self.send_response(200)
+                    self.send_header("Content-Length", str(len(data)))
+                    self.end_headers()
+                    self.wfile.write(data)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
 
             def answer(self):
                 if fake.hang:
@@ -623,6 +640,30 @@ class BusyTests(unittest.TestCase):
         self.assertEqual((rc, ran), (0, ["S58nebulascreen", "restart"]))
         rc, err, ran, took = self.shim("start", "klipper")          # start is not gated
         self.assertEqual((rc, ran), (0, ["S55klipper", "start"]))
+
+    def test_g98_shim_refusal_posts_a_console_line(self):
+        # G98: a refused Klipper restart also reaches Mainsail's console
+        # through the [nebulaos] component (best effort, never blocks)
+        self.status(print_stats={"state": "printing"})
+        rc, err, ran, took = self.shim("restart", "klipper")
+        self.assertEqual((rc, ran), (1, []))
+        self.assertEqual(len(self.mr.posts), 1)
+        path, ctype, body = self.mr.posts[0]
+        self.assertEqual((path, ctype), ("/machine/nebulaos/system/notify_refused",
+                                         "application/json"))
+        self.assertEqual(json.loads(body),
+                         {"message": "restart klipper - Not possible while a print is running."})
+        self.mr.posts.clear()
+        self.status(print_stats={"state": "standby"})            # allowed: no line
+        self.assertEqual(self.shim("restart", "klipper")[0], 0)
+        self.assertEqual(self.mr.posts, [])
+        self.status(print_stats={"state": "paused"})             # the relay hangs
+        self.mr.post_hang = 3
+        rc, err, ran, took = self.shim("stop", "klipper")
+        self.assertEqual((rc, ran), (1, []))
+        self.assertIn("(PAUSED)", err)
+        self.assertLess(took, 3.0)
+        self.mr.post_hang = 0
 
     def test_shim_paused_and_active(self):
         self.status(print_stats={"state": "paused"})

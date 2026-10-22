@@ -157,7 +157,20 @@ refuse_if_klipper_busy() {
   esac
   echo "NebulaOS refused: $1 klipper - $text ($reason)" >&2
   logger -t supervisorctl "NebulaOS refused: $1 klipper ($reason)" 2>/dev/null
+  notify_refused "$1 klipper - $text"
   exit 1
+}
+
+# G98: the refusal as a "!! NebulaOS refused: ..." line in Mainsail's console
+# (the [nebulaos] component relays it as a gcode response). Best effort: 1 s,
+# output discarded, the result never changes the refusal. Moonraker runs this
+# shim asynchronously, so it can answer while it waits for us.
+notify_refused() {
+  wget -q -T "${NB_NOTIFY_TIMEOUT:-1}" -O /dev/null \
+    --header "Content-Type: application/json" \
+    --post-data "{\"message\": \"$1\"}" \
+    "${NB_MOONRAKER:-http://127.0.0.1:7125}/machine/nebulaos/system/notify_refused" \
+    </dev/null >/dev/null 2>&1 || true
 }
 
 main() {
