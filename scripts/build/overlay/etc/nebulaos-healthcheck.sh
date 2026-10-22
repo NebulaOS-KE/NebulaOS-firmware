@@ -12,6 +12,17 @@
 #
 # Usage: nebulaos-healthcheck.sh stage1 <klipper|moonraker|mainsail> <path>
 #        nebulaos-healthcheck.sh stage2
+#
+# stage2 exit codes (G91 C1 fix, 2026-10-22):
+#   0  healthy, no print running
+#   1  unhealthy (or Moonraker not answering)
+#   3  a print is running (printing/paused) and every other check passed
+#   4  a print is running and another check failed
+# A running print is never a health failure: the update supervisor defers its
+# judgement of the Klipper stack until the print has ended (3 and 4), and
+# never rolls back or restarts Klipper under it. Before, "printing" counted as
+# a failure, so a print started within ~4 min of an app update made the
+# supervisor roll back and restart Klipper under it (G91 inventory C1).
 
 MOONRAKER_URL="http://127.0.0.1:7125"
 
@@ -116,13 +127,21 @@ stage2_stack() {
 			log "WARNING stage2: a heater target is non-zero - not necessarily a health failure, but recorded for the caller to judge"
 			;;
 	esac
+	printing=false
 	case "$stats" in
-		*'"state":"printing"'*)
-			log "WARNING stage2: a print is currently active - caller must not treat this boot/update window as safe to act on"
-			ok=false
+		*'"state":"printing"'*|*'"state": "printing"'*|*'"state":"paused"'*|*'"state": "paused"'*)
+			printing=true
 			;;
 	esac
 
+	if [ "$printing" = "true" ]; then
+		if [ "$ok" = "true" ]; then
+			log "DEFERRED stage2: a print is running (every other check passed) - judged after the print"
+			return 3
+		fi
+		log "DEFERRED stage2: a print is running and a check failed (see above) - judged after the print"
+		return 4
+	fi
 	if [ "$ok" = "true" ]; then
 		log "PASS stage2: full stack healthy"
 		return 0

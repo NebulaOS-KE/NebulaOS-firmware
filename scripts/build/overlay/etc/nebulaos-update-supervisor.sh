@@ -25,11 +25,18 @@
 # which is why known_good_commit is tracked here rather than snapshotting
 # whole directory copies.
 #
-# Restart safety: never restarts a service while a print is active/paused
-# (read-only Moonraker query, checked immediately before every restart -
-# same printer-safety invariant as every other disruptive action in this
-# project) - a deferred restart just waits and rechecks rather than
-# skipping validation outright.
+# Restart safety (G91 C1 fix, 2026-10-22): Klipper is never restarted,
+# reset, unmounted or recomposed under a print. The shared busy check
+# (/etc/nebulaos-busy.sh, recovery profile: printing, paused, heaters or
+# motion active; Klippy not ready = not busy) runs before every such step,
+# and a busy printer DEFERS the step to a later poll - a state across polls,
+# never a bounded wait whose result could be ignored. Health stage 2 reports
+# a running print as "deferred" (exit 3/4), never as a failure, so a print
+# started right after an app update is not mistaken for a broken stack. The
+# whole rollback transaction (git reset, recompose, umount, restart) is
+# deferred as one unit (state "rollback-pending") and re-run when idle. A
+# Moonraker-only rollback may run during a print (N4): it never touches
+# Klipper, and the screen needs Moonraker.
 #
 # NebulaOS mutable-runtime closure mission (2026-07-27), Phase D: Moonraker
 # source and virtualenv are now one versioned release unit, not two
@@ -125,6 +132,10 @@ PAIR_SETTLE_SECONDS="${PAIR_SETTLE_SECONDS:-15}"
 
 [ -f "$COMPOSE_LIB" ] && . "$COMPOSE_LIB"
 [ -f "$CHELPER_LIB" ] && . "$CHELPER_LIB"
+# G91: the shared busy check (fast shell variant).
+BUSY_LIB="${BUSY_LIB:-/etc/nebulaos-busy.sh}"
+# shellcheck disable=SC1090
+[ -f "$BUSY_LIB" ] && . "$BUSY_LIB"
 
 log() {
 	echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) nebulaos-update-supervisor: $1"
@@ -202,36 +213,35 @@ write_state() {
 	mv "$tmp" "$f"
 }
 
-# Read-only query, never combined with a restart in the same step - a
-# printing/paused state means "wait", not "skip validation".
 # Markers published by nebulaos-memguard (MEM-T12/T14). Absent means normal.
 NEBULAOS_RUN_DIR="${NEBULAOS_RUN_DIR:-/run/nebulaos}"
 
-print_is_active() {
-	# MEM-T16: memguard's print state is sticky across a dead or restarting
-	# Moonraker; trust it first, so an unreachable Moonraker never reads as
-	# "not printing".
-	[ -e "$NEBULAOS_RUN_DIR/print-active" ] && return 0
-	stats=$(wget -q -O - --timeout=5 "$MOONRAKER_URL/printer/objects/query?print_stats=state" 2>/dev/null)
-	case "$stats" in
-		*'"state":"printing"'*|*'"state":"paused"'*) return 0 ;;
-		*) return 1 ;;
-	esac
+# G91: why Klipper may not be restarted or rolled back now (the reason is
+# echoed, rc 0), rc 1 when it may. The shared check's recovery profile:
+# PRINTING, PAUSED, ACTIVE; a positive "Klippy not ready" is not busy (a
+# broken stack can always be rolled back); an unreadable state is busy only
+# with memguard's print-active marker (N3). Without the shared check (an
+# image that lacks it) memguard's sticky marker decides.
+klipper_busy_reason() {
+	if command -v nebulaos_busy_fast >/dev/null 2>&1; then
+		nebulaos_busy_fast recovery
+		return
+	fi
+	[ -e "$NEBULAOS_RUN_DIR/print-active" ] || return 1
+	echo PRINTING
+	return 0
 }
 
-# Waits (bounded) for any active print to finish before a disruptive
-# restart - never forces a restart mid-print.
-wait_for_print_idle() {
-	tries=0
-	while print_is_active; do
-		tries=$((tries + 1))
-		if [ "$tries" -ge 90 ]; then
-			log "print still active after $((tries * 10))s - deferring restart, will re-check next poll cycle"
-			return 1
-		fi
-		sleep 10
-	done
-	return 0
+print_is_active() {
+	klipper_busy_reason >/dev/null
+}
+
+# A deferral is logged once per (key, reason), not on every poll of a print.
+SUP_DEFER_LAST=
+sup_defer_log() { # KEY MESSAGE
+	[ "$SUP_DEFER_LAST" = "$1" ] && return 0
+	SUP_DEFER_LAST=$1
+	log "$2"
 }
 
 # Real bug found live (Moonraker paired-rollback test, 2026-07-27): a
@@ -279,7 +289,12 @@ restart_component() {
 		log "$1: restart deferred - memguard reports memory pressure"
 		return 1
 	fi
-	wait_for_print_idle || return 1
+	# G91: never restart Klipper under a print; the caller defers to a later
+	# poll. A Moonraker restart never touches Klipper (N4).
+	if [ "$1" != moonraker ] && _rcb=$(klipper_busy_reason); then
+		log "$1: restart deferred ($_rcb) - Klipper is never restarted under a print; retried on a later poll"
+		return 1
+	fi
 	log "$1: restarting via $init_script"
 	safe_stop_start "$1"
 	# Real bug found live (first rollback test, 2026-07-26): Klipper
@@ -308,11 +323,17 @@ restart_component() {
 # failing AFTER a prior success is a real, new problem (e.g. crashed right
 # after starting), not startup variance, and should still be caught
 # quickly.
+#
+# G91: stage 2 exits 3 (healthy, print running) or 4 (print running, a check
+# failed) while a print runs - passed straight up, never retried or judged
+# here. Returns 0 ready, 1 not ready in time, 3/4 a print is running.
 wait_for_initial_ready() {
 	tries=0
 	max_tries="$READY_POLL_TRIES"
 	while [ "$tries" -lt "$max_tries" ]; do
-		"$HEALTHCHECK" stage2 && return 0
+		"$HEALTHCHECK" stage2
+		_wir=$?
+		case "$_wir" in 0|3|4) return "$_wir" ;; esac
 		tries=$((tries + 1))
 		sleep "$READY_POLL_INTERVAL"
 	done
@@ -323,17 +344,27 @@ wait_for_initial_ready() {
 # ready - fails fast on any bad sample here, since by this point the
 # system has already proven it can start; a failure now is a real
 # regression, not startup timing.
+# Same return codes as wait_for_initial_ready (a sample that sees a print
+# returns 3/4 at once).
 stabilized_stage2() {
-	wait_for_initial_ready || return 1
+	wait_for_initial_ready
+	_ss2=$?
+	[ "$_ss2" -eq 0 ] || return "$_ss2"
 	i=0
 	while [ "$i" -lt "$STABILIZE_SAMPLES" ]; do
 		sleep "$STABILIZE_INTERVAL"
-		if ! "$HEALTHCHECK" stage2; then
-			return 1
-		fi
+		"$HEALTHCHECK" stage2
+		_ss2=$?
+		[ "$_ss2" -eq 0 ] || return "$_ss2"
 		i=$((i + 1))
 	done
 	return 0
+}
+
+# Stage 2 verdict for Moonraker: a running print seen through Moonraker with
+# every other check passing (3) proves Moonraker works; 4 is a failure.
+moonraker_stage2_ok() { # RC
+	[ "$1" -eq 0 ] || [ "$1" -eq 3 ]
 }
 
 # Preserves the failed commit + relevant logs under backups/<name>/failed-*
@@ -419,20 +450,33 @@ preserve_failure_evidence() {
 # underneath for the rest of this boot, and leaves the update lock in place
 # so S05nebulaos-activate stays on immutable on every future boot too, until
 # a human clears it - never silently re-attempts the same broken version.
+#
+# G91: for the Klipper stack the whole fallback (umount + restart) is refused
+# while the printer is busy - returns 1 with nothing done, and the caller
+# defers it to a later poll. Moonraker (N4) and Mainsail (static files) never
+# touch a print.
 factory_fallback() {
 	# $1=component
 	info=$(component_info "$1")
 	opt_path=$(echo "$info" | cut -d'|' -f3)
+	init_script=$(echo "$info" | cut -d'|' -f2)
+	case "$1" in
+		moonraker|mainsail) ;;
+		*)
+			if _ffb=$(klipper_busy_reason); then
+				log "$1: factory fallback deferred ($_ffb) - never under a print; retried on a later poll"
+				return 1
+			fi
+			;;
+	esac
 	log "$1: falling back to factory/immutable copy at $opt_path (both new and previous versions failed validation)"
 	if awk -v t="$opt_path" '$2==t {found=1} END{exit !found}' /proc/mounts; then
 		umount "$opt_path" 2>/dev/null
 	fi
-	init_script=$(echo "$info" | cut -d'|' -f2)
 	# Mainsail has no managed service (static files served directly by
 	# nginx, no restart needed for the fallback content to take effect) -
 	# component_info's mainsail entry deliberately leaves this field empty.
 	[ -n "$init_script" ] || return 0
-	wait_for_print_idle
 	safe_stop_start "$1"
 }
 
@@ -800,22 +844,24 @@ ns_set_state() { # STATE REASON [KEY=VALUE...]
 }
 
 # Why the screen may not be restarted now (echoed), or return 1 when idle.
-# Fail-closed (G91 P3): Moonraker unreachable counts as busy - nothing could
-# tell a running print apart, and the screen could not report anyway. A
-# Klippy that is not ready is not busy (no print can run).
+# G91: the print reasons come from the shared busy check (restart profile:
+# PRINTING, PAUSED, ACTIVE, and UNKNOWN for a live Klippy whose state cannot
+# be read; a Klippy that is not ready is not busy - no print can run). On top,
+# for the screen: memory pressure, and Moonraker unreachable (fail-closed,
+# P3 - the screen reports its health through Moonraker, so it could not be
+# judged anyway).
 ns_busy_reason() {
-	if [ -e "$NEBULAOS_RUN_DIR/print-active" ]; then echo PRINTING; return 0; fi
+	if command -v nebulaos_busy_fast >/dev/null 2>&1; then
+		nebulaos_busy_fast restart && return 0
+	elif [ -e "$NEBULAOS_RUN_DIR/print-active" ]; then
+		echo PRINTING; return 0
+	fi
 	if [ -e "$NEBULAOS_RUN_DIR/memguard/deny-maintenance" ]; then echo LOW_MEMORY; return 0; fi
 	if [ -e "$NEBULAOS_RUN_DIR/shed/nebulascreen" ]; then echo LOW_MEMORY; return 0; fi
 	if ! wget -q -O /dev/null --timeout=5 "$MOONRAKER_URL/server/info" 2>/dev/null; then
 		echo UNKNOWN
 		return 0
 	fi
-	_nsps=$(wget -q -O - --timeout=5 "$MOONRAKER_URL/printer/objects/query?print_stats=state" 2>/dev/null)
-	case "$_nsps" in
-		*'"state":"printing"'*|*'"state": "printing"'*) echo PRINTING; return 0 ;;
-		*'"state":"paused"'*|*'"state": "paused"'*) echo PAUSED; return 0 ;;
-	esac
 	return 1
 }
 
@@ -1293,18 +1339,25 @@ validate_klipper_stack() {
 	"$HEALTHCHECK" stage1 "$KLIPPER_APP" "$NEBULAOS_ROOT/apps/$KLIPPER_APP" || stage1_ok=false
 
 	if [ "$stage1_ok" = "true" ]; then
-		restart_component "$KLIPPER_APP" || {
-			log "$STACK_NAME: restart deferred (print active) - will re-check next poll cycle"
-			write_stack_state "$kg_k" "$kg_e" "$new_k" "$new_e" "validating" "restart_deferred"
+		if ! restart_component "$KLIPPER_APP"; then
+			stack_defer_validation "$kg_k" "$kg_e" "restart_deferred"
 			return
-		}
-		if stabilized_stage2; then
+		fi
+		stabilized_stage2
+		_vks=$?
+		if [ "$_vks" -eq 0 ]; then
 			# BOTH halves have now passed together. Only here is a pair
 			# recorded as known-good.
 			log "$STACK_NAME: the new pair (klipper $new_k, extensions $new_e) passed full validation - recording as the known-good pair"
 			write_stack_state "$new_k" "$new_e" "$new_k" "$new_e" "healthy" ""
 			stack_cache_chelper
 			rm -f "$LOCKDIR/$STACK_NAME.lock"
+			return
+		fi
+		if [ "$_vks" -eq 3 ] || [ "$_vks" -eq 4 ]; then
+			# G91 C1: a print started after the restart. Never a rollback
+			# under it: judged again after the print.
+			stack_defer_validation "$kg_k" "$kg_e" "stage2_deferred_print"
 			return
 		fi
 		reason="stage2_failed"
@@ -1318,14 +1371,46 @@ validate_klipper_stack() {
 	stack_roll_back "$kg_k" "$kg_e" "$reason:$new_k+$new_e"
 }
 
+# G91: a validation that cannot finish now (restart refused, or a print
+# started after the restart). Nothing is judged: last_seen goes back to the
+# known-good pair, so the next poll sees the delta again and re-validates once
+# the printer is idle. The lock is released - this process changed nothing on
+# disk (the new pair was put there by the update itself).
+stack_defer_validation() { # KG_K KG_E REASON
+	sup_defer_log "stack-validation:$3" "$STACK_NAME: validation deferred ($3) - the new pair is judged after the print; nothing rolled back"
+	write_stack_state "$1" "$2" "$1" "$2" "deferred" "$3"
+	rm -f "$LOCKDIR/$STACK_NAME.lock"
+}
+
+# G91 C1: the whole rollback transaction (git reset, recompose, umount,
+# restart) is deferred as one unit while the printer is busy. The lock stays
+# (S05 keeps the immutable copy if the printer reboots meanwhile) and the
+# next idle poll runs stack_roll_back again from the top - every step of it
+# is idempotent.
+stack_rollback_pending() { # KG_K KG_E REASON WHY
+	sup_defer_log "stack-rollback:$4" "$STACK_NAME: rollback deferred ($4) - nothing is reset or restarted under a print; it runs on the first idle poll"
+	mkdir -p "$LOCKDIR"
+	: > "$LOCKDIR/$STACK_NAME.lock"
+	write_stack_state "$1" "$2" "$(stack_head "$KLIPPER_APP")" "$(stack_head "$EXTENSIONS_APP")" \
+		"rollback-pending" "$3"
+}
+
 # Shared rollback tail for every failure path above.
 stack_roll_back() {
 	kg_k="$1"; kg_e="$2"; reason="$3"
 
+	if _srb=$(klipper_busy_reason); then
+		stack_rollback_pending "$kg_k" "$kg_e" "$reason" "$_srb"
+		return
+	fi
+
 	if [ -z "$kg_k" ] || [ -z "$kg_e" ]; then
 		log "$STACK_NAME: no complete known-good pair exists yet (first-ever validation failed) - going straight to factory-fallback rather than restore a half-known pair"
 		preserve_failure_evidence "$KLIPPER_APP" "$kg_k" "no_known_good_pair"
-		factory_fallback "$KLIPPER_APP"
+		if ! factory_fallback "$KLIPPER_APP"; then
+			stack_rollback_pending "$kg_k" "$kg_e" "$reason" "fallback_deferred"
+			return
+		fi
 		write_stack_state "$kg_k" "$kg_e" "$kg_k" "$kg_e" "factory-fallback" "$reason;no_known_good_pair"
 		return
 	fi
@@ -1333,13 +1418,26 @@ stack_roll_back() {
 	if ! restore_known_good_pair "$kg_k" "$kg_e"; then
 		log "$STACK_NAME: the known-good pair could not be restored and recomposed - falling back to the immutable copy"
 		preserve_failure_evidence "$KLIPPER_APP" "$kg_k" "restore_or_recompose_failed"
-		factory_fallback "$KLIPPER_APP"
+		if ! factory_fallback "$KLIPPER_APP"; then
+			stack_rollback_pending "$kg_k" "$kg_e" "$reason" "fallback_deferred"
+			return
+		fi
 		write_stack_state "$kg_k" "$kg_e" "$kg_k" "$kg_e" "factory-fallback" "$reason;restore_failed"
 		return
 	fi
 
-	restart_component "$KLIPPER_APP"
-	if stabilized_stage2; then
+	if ! restart_component "$KLIPPER_APP"; then
+		stack_rollback_pending "$kg_k" "$kg_e" "$reason" "restart_deferred"
+		return
+	fi
+	stabilized_stage2
+	_srs=$?
+	if [ "$_srs" -eq 3 ] || [ "$_srs" -eq 4 ]; then
+		# A print started on the restored pair: judged after it.
+		stack_rollback_pending "$kg_k" "$kg_e" "$reason" "stage2_deferred_print"
+		return
+	fi
+	if [ "$_srs" -eq 0 ]; then
 		log "$STACK_NAME: the restored pair re-validated healthy"
 		# last_seen must reflect what is ACTUALLY on disk now (the restored
 		# pair), not the rejected commits - recording the rejected ones here
@@ -1351,7 +1449,10 @@ stack_roll_back() {
 		rm -f "$LOCKDIR/$STACK_NAME.lock"
 	else
 		preserve_failure_evidence "$KLIPPER_APP" "$kg_k" "stage2_failed_after_pair_rollback"
-		factory_fallback "$KLIPPER_APP"
+		if ! factory_fallback "$KLIPPER_APP"; then
+			stack_rollback_pending "$kg_k" "$kg_e" "$reason" "fallback_deferred"
+			return
+		fi
 		write_stack_state "$kg_k" "$kg_e" "$kg_k" "$kg_e" "factory-fallback" "$reason;previous_pair_also_unhealthy"
 	fi
 }
@@ -1480,8 +1581,21 @@ poll_klipper_stack_once() {
 		return 0
 	fi
 	[ "$state" = "validating" ] && return 0
+	# G91: a rollback deferred by a print runs on the first idle poll.
+	if [ "$state" = "rollback-pending" ]; then
+		stack_roll_back "$(read_stack_field known_good_klipper_commit)" \
+			"$(read_stack_field known_good_extensions_commit)" \
+			"$(read_stack_field last_failure_reason)"
+		return 0
+	fi
 
 	if [ "$cur_k" = "$seen_k" ] && [ "$cur_e" = "$seen_e" ]; then
+		return 0
+	fi
+	# G91 C1: never start a validation (recompose + Klipper restart) under a
+	# print; the delta stays and is validated on the first idle poll.
+	if _pkb=$(klipper_busy_reason); then
+		sup_defer_log "stack-validation:$_pkb" "$STACK_NAME: change detected (klipper $cur_k, extensions $cur_e) - validation deferred ($_pkb), it runs after the print"
 		return 0
 	fi
 
@@ -1549,38 +1663,13 @@ validate_component() {
 	if ! "$HEALTHCHECK" stage1 "$name" "$path"; then
 		log "$name: stage1 FAILED on new commit $new_commit - reverting to $known_good"
 		preserve_failure_evidence "$name" "$new_commit" "stage1_failed"
-		if [ "$name" = "moonraker" ] && ! moonraker_restore_env; then
-			log "$name: no paired venv backup exists yet - going straight to factory-fallback rather than restore a mismatched pair"
-			preserve_failure_evidence "$name" "$known_good" "no_env_backup_available"
-			factory_fallback "$name"
-			write_state "$name" "$known_good" "$known_good" "factory-fallback" "stage1_failed:$new_commit;no_env_backup_available"
-			return
-		fi
-		git -C "$path" reset --hard "$known_good" >/dev/null 2>&1
-		restart_component "$name"
-		if stabilized_stage2; then
-			log "$name: reverted version re-validated healthy"
-			write_state "$name" "$known_good" "$known_good" "rolled-back" "stage1_failed:$new_commit"
-			refresh_update_info "$name"
-			rm -f "$LOCKDIR/$name.lock"
-		else
-			preserve_failure_evidence "$name" "$known_good" "stage2_failed_after_stage1_rollback"
-			factory_fallback "$name"
-			# last_seen_commit must reflect the persistent repo's ACTUAL
-			# current HEAD (known_good, since it was reset above), not
-			# new_commit - real bug found live: recording new_commit here
-			# left state.json out of sync with git's real state, so the
-			# very next poll saw current(known_good) != last_seen(new_commit)
-			# and mistook the already-failed-over state for a fresh update,
-			# re-triggering validation and eventually overwriting this
-			# factory-fallback state with a false "healthy" while /opt/klipper
-			# was still the unmounted immutable copy, not the persistent one.
-			write_state "$name" "$known_good" "$known_good" "factory-fallback" "stage1_failed:$new_commit;previous_also_unhealthy"
-		fi
+		component_roll_back "$name" "stage1_failed:$new_commit"
 		return
 	fi
 
-	if stabilized_stage2; then
+	stabilized_stage2
+	_vcs=$?
+	if moonraker_stage2_ok "$_vcs"; then
 		log "$name: new commit $new_commit passed full validation - recording as known-good"
 		write_state "$name" "$new_commit" "$new_commit" "healthy" ""
 		# Snapshot the venv as the new paired backup ONLY after the source
@@ -1597,24 +1686,56 @@ validate_component() {
 
 	log "$name: stage2 FAILED on new commit $new_commit - reverting to $known_good"
 	preserve_failure_evidence "$name" "$new_commit" "stage2_failed"
+	component_roll_back "$name" "stage2_failed:$new_commit"
+}
+
+# The per-component rollback (Moonraker): paired venv + source back to the
+# known-good commit, restart, re-validate; factory-fallback if that fails
+# too. A Moonraker-only rollback may run during a print (G91 N4: it never
+# touches Klipper, and the screen needs Moonraker). A restart deferred by
+# memguard's memory pressure leaves state "rollback-pending"; the next poll
+# runs this again from the top (every step is idempotent) - the deferral is
+# honoured, never ignored (G91 C1).
+component_roll_back() { # NAME REASON (<why>:<failed commit>)
+	name="$1"; reason="$2"
+	info=$(component_info "$name")
+	path=$(echo "$info" | cut -d'|' -f1)
+	known_good=$(read_state_field "$name" known_good_commit)
+	mkdir -p "$LOCKDIR"
+	: > "$LOCKDIR/$name.lock"
 	if [ "$name" = "moonraker" ] && ! moonraker_restore_env; then
 		log "$name: no paired venv backup exists yet - going straight to factory-fallback rather than restore a mismatched pair"
 		preserve_failure_evidence "$name" "$known_good" "no_env_backup_available"
 		factory_fallback "$name"
-		write_state "$name" "$known_good" "$known_good" "factory-fallback" "stage2_failed:$new_commit;no_env_backup_available"
+		write_state "$name" "$known_good" "$known_good" "factory-fallback" "$reason;no_env_backup_available"
 		return
 	fi
 	git -C "$path" reset --hard "$known_good" >/dev/null 2>&1
-	restart_component "$name"
-	if stabilized_stage2; then
+	if ! restart_component "$name"; then
+		sup_defer_log "$name-rollback" "$name: rollback restart deferred - retried on a later poll"
+		write_state "$name" "$known_good" "$known_good" "rollback-pending" "$reason"
+		return
+	fi
+	stabilized_stage2
+	_crs=$?
+	if moonraker_stage2_ok "$_crs"; then
 		log "$name: reverted version re-validated healthy"
-		write_state "$name" "$known_good" "$known_good" "rolled-back" "stage2_failed:$new_commit"
+		write_state "$name" "$known_good" "$known_good" "rolled-back" "$reason"
 		refresh_update_info "$name"
 		rm -f "$LOCKDIR/$name.lock"
 	else
-		preserve_failure_evidence "$name" "$known_good" "stage2_failed_after_stage2_rollback"
+		preserve_failure_evidence "$name" "$known_good" "${reason%%:*}_then_stage2_failed_after_rollback"
 		factory_fallback "$name"
-		write_state "$name" "$known_good" "$known_good" "factory-fallback" "stage2_failed:$new_commit;previous_also_unhealthy"
+		# last_seen_commit must reflect the persistent repo's ACTUAL
+		# current HEAD (known_good, since it was reset above), not the
+		# failed commit - real bug found live: recording the failed one
+		# left state.json out of sync with git's real state, so the very
+		# next poll saw current(known_good) != last_seen and mistook the
+		# already-failed-over state for a fresh update, re-triggering
+		# validation and eventually overwriting this factory-fallback state
+		# with a false "healthy" while /opt/klipper was still the unmounted
+		# immutable copy, not the persistent one.
+		write_state "$name" "$known_good" "$known_good" "factory-fallback" "$reason;previous_also_unhealthy"
 	fi
 }
 
@@ -1650,7 +1771,8 @@ ensure_moonraker_alive() {
 		return 0
 	fi
 	log "moonraker: process not running (pidfile stale or missing) - restarting independent of any git change"
-	wait_for_print_idle || return 0
+	# G91 N4: starting Moonraker never touches a print (and the screen needs
+	# it during one) - no print check, and no 15-minute wait in the poll.
 	init_script=$(echo "$info" | cut -d'|' -f2)
 	"$init_script" start
 }
@@ -1705,6 +1827,11 @@ poll_once() {
 		# a human must clear $LOCKDIR/$name.lock (and re-run
 		# S05nebulaos-activate or reboot) to re-enable the persistent copy.
 		if [ -e "$LOCKDIR/$name.lock" ] && [ "$state" = "factory-fallback" ]; then
+			continue
+		fi
+		# G91: a rollback whose restart was deferred runs again.
+		if [ "$state" = "rollback-pending" ]; then
+			component_roll_back "$name" "$(read_state_field "$name" last_failure_reason)"
 			continue
 		fi
 

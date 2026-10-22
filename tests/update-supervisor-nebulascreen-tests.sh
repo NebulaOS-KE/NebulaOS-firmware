@@ -28,6 +28,10 @@ fail() { echo "FAIL: $1"; FAIL=$((FAIL + 1)); }
 pass() { PASS=$((PASS + 1)); }
 t() { if eval "$2"; then pass; else fail "$1"; fi; }
 
+# G91: the real shared busy check (fast shell variant); Klippy's pidfile and
+# socket are the sandbox's (absent unless a test says so).
+export BUSY_LIB="$OV/etc/nebulaos-busy.sh" NB_KLIPPY_PIDFILE="$WORK/klippy.pid" \
+	NB_KLIPPY_SOCK="$WORK/klippy.sock"
 export NEBULAOS_UPDATE_SUPERVISOR_NO_AUTORUN=1 \
 	NEBULAOS_ROOT="$WORK/data/nebulaos" NEBULAOS_RUN_DIR="$WORK/run" \
 	MOONRAKER_URL="http://moonraker.test" \
@@ -218,8 +222,12 @@ wget() {
 	echo "$_url" >> "$WORK/wget.calls"
 	[ -z "${MR_DOWN:-}" ] || return 1
 	case "$_url" in
-		*/server/info) [ -z "${SERVER_INFO_DOWN:-}" ]; return ;;
-		*print_stats=state) printf '{"result":{"status":{"print_stats":{"state":"%s"}}}}' "$PRINT_STATE" ;;
+		*/server/info)
+			[ -z "${SERVER_INFO_DOWN:-}" ] || return 1
+			printf '{"result":{"klippy_state":"%s","klippy_connected":true}}' "${KLIPPY_STATE:-ready}" ;;
+		*/printer/objects/query*)
+			printf '{"result":{"eventtime":1.0,"status":{"print_stats":{"state":"%s"},"idle_timeout":{"state":"Idle"},"extruder":{"target":%s},"heater_bed":{"target":0.0}}}}' \
+				"$PRINT_STATE" "${EXTRUDER_TARGET:-0.0}" ;;
 		*/machine/update/status) printf '{"result":{"busy":%s}}' "$UM_BUSY" ;;
 		*/machine/update/refresh?name=nebulascreen)
 			# Moonraker without the section: no such updater
@@ -362,6 +370,13 @@ PRINT_STATE=paused; t "busy: paused" '[ "$(ns_busy_reason)" = PAUSED ]'
 PRINT_STATE=printing; t "busy: printing" '[ "$(ns_busy_reason)" = PRINTING ]'
 PRINT_STATE=standby; t "idle: standby" '! ns_busy_reason >/dev/null'
 MR_DOWN=1; t "busy: Moonraker unreachable (fail-closed)" '[ "$(ns_busy_reason)" = UNKNOWN ]'; MR_DOWN=
+# G91: the shared check - heating counts, a Klippy that is not ready does not
+# (even with memguard's sticky marker, R3), an unreadable live Klippy does.
+EXTRUDER_TARGET=210.0; t "busy: heating (ACTIVE)" '[ "$(ns_busy_reason)" = ACTIVE ]'; EXTRUDER_TARGET=
+: > "$NEBULAOS_RUN_DIR/print-active"
+t "busy: print-active marker with a ready Klippy" '[ "$(ns_busy_reason)" = PRINTING ]'
+KLIPPY_STATE=shutdown; t "idle: Klippy shut down overrides the marker" '! ns_busy_reason >/dev/null'
+rm -f "$NEBULAOS_RUN_DIR/print-active"; KLIPPY_STATE=
 
 # --- the screen never reports: rollback, but never under a print -------------
 rm -f "$WORK/refreshes"
