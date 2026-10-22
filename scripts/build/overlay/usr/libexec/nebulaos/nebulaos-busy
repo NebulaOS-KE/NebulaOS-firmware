@@ -1,0 +1,46 @@
+#!/usr/bin/python3
+# nebulaos-busy - the G91 shared busy check for shell callers and SSH.
+#
+#   nebulaos-busy [--profile request|point_of_no_return|git|restart|recovery]
+#                 [--holder TOKEN]
+#
+# Prints BUSY=<reason> (PRINTING PAUSED ACTIVE CALIBRATING UPDATING
+# LOW_MEMORY UNKNOWN) or BUSY=no, then MESSAGE=<text> and KLIPPY=<state>.
+# exit 0 = not busy (go ahead), 1 = busy, 64 = usage. The same check as
+# nebulaos_osconfig.common.busy_state (the [nebulaos] component and the
+# osconfig verbs); /etc/nebulaos-busy.sh is the fast shell variant of the
+# restart/recovery profiles (supervisorctl shim, update supervisor).
+import os
+import sys
+
+sys.path.insert(0, os.environ.get("NEBULAOS_OSCONFIG_PYTHONPATH",
+                                  "/usr/lib/nebulaos/python"))
+from nebulaos_osconfig import common  # noqa: E402
+
+
+def main(argv):
+    profile, holder = "request", None
+    it = iter(argv)
+    for arg in it:
+        if arg in ("--profile", "--holder"):
+            value = next(it, None)
+            if value is None:
+                break
+            if arg == "--profile":
+                profile = value
+            else:
+                holder = value
+        else:
+            break
+    else:
+        if profile in common.PROFILES:
+            state = common.busy_state(profile, holder)
+            sys.stdout.write("BUSY=%s\nMESSAGE=%s\nKLIPPY=%s\n" % (
+                state["reason"] or "no", state["message"], state["klippy"]))
+            return 1 if state["busy"] else 0
+    sys.stderr.write("usage: nebulaos-busy [--profile %s] [--holder TOKEN]\n"
+                     % "|".join(sorted(common.PROFILES)))
+    return 64
+
+
+sys.exit(main(sys.argv[1:]))

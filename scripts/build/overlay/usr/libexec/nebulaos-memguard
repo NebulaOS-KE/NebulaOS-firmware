@@ -19,11 +19,17 @@
 #   ZU ZL   zram mem_used_total, mem_limit, bytes    /sys/block/zram0/mm_stat 3,4
 #   SOME10 FULL10  PSI memory avg10 (integer %; 0 without CONFIG_PSI)
 #   PRINT   Moonraker print_stats.state printing|paused (5 s; a failed query
-#           keeps the previous value - a dead Moonraker never reads "idle")
+#           keeps the previous value - a dead Moonraker never reads "idle" -
+#           unless Klippy is positively not ready: Moonraker says error or
+#           shutdown, or no Klippy process runs (G91 R3: a crashed Klippy
+#           must not leave a sticky "printing" behind)
+#   ACT     G91 N6, same query: idle_timeout "Printing" or a heater target
+#           above 0 in any of the last 3 samples (~15 s; idle_timeout drops
+#           to Ready 0.5 s after the motion queue drains)
 #   MAINT   update lock present, or Moonraker update_manager busy (5 s)
 #
 # Markers (/run/nebulaos):
-#   print-active, maintenance-active, memguard/state
+#   print-active, klipper-active, maintenance-active, memguard/state
 #
 # Test seam: NEBULAOS_MEMGUARD_NO_AUTORUN=1 sources the functions without
 # running; MG_PROC/MG_SYS/MG_RUN/MG_LOCKS/MG_LOG redirect every path.
@@ -74,6 +80,7 @@ NEBULAOS_OOM_POLICY="${NEBULAOS_OOM_POLICY:-/etc/nebulaos-oom-policy.sh}"
 [ -r "$NEBULAOS_OOM_POLICY" ] && . "$NEBULAOS_OOM_POLICY"
 
 MA=0 ZU=0 ZL=0 SOME10=0 FULL10=0 PRINT=0 MAINT=0 STATE=NORMAL NOW=0
+ACT=0 ACT_H1=0 ACT_H2=0 ACT_H3=0
 LEVEL=0 ENTER_CNT=0 EXIT_SINCE= LAST_ESCALATE=-1000 P4_SINCE= EXHAUSTED_LOGGED=0
 
 # G60 (2026-10-16): routine per-process oom_score_adj changes filled the
@@ -134,13 +141,62 @@ mg_http() {
 	wget -q -T 2 -O - "$MG_MOONRAKER$1" 2>/dev/null
 }
 
+# G91 N6: one query for the print state and the activity sample.
+MG_PRINT_QUERY="/printer/objects/query?print_stats=state&idle_timeout=state&extruder=target&heater_bed=target"
+
+# The value after "KEY": in _r (first match after OBJECT), quotes and
+# spaces stripped, in _v.
+mg_json_field() { # OBJECT KEY
+	_v=${_r#*\"$1\":}
+	[ "$_v" = "$_r" ] && { _v=; return 0; }
+	_v=${_v%%\}*}
+	case "$_v" in *\"$2\":*) ;; *) _v=; return 0 ;; esac
+	_v=${_v#*\"$2\":}
+	_v=${_v%%,*}
+	_v=${_v# }
+	_v=${_v#\"}
+	_v=${_v%\"}
+}
+
+mg_act_sample() { # 0|1 -> ACT = any of the last 3 samples
+	ACT_H3=$ACT_H2 ACT_H2=$ACT_H1 ACT_H1=$1
+	ACT=0
+	[ "$ACT_H1$ACT_H2$ACT_H3" = 000 ] || ACT=1
+}
+
 mg_poll_print_state() {
-	_r=$(mg_http "/printer/objects/query?print_stats=state") || return 0
+	_r=$(mg_http "$MG_PRINT_QUERY")
 	case "$_r" in
-	*'"state":"printing"'* | *'"state": "printing"'* | *'"state":"paused"'* | *'"state": "paused"'*) PRINT=1 ;;
-	*'"state"'*) PRINT=0 ;;
-	*) ;;  # no usable answer: keep the previous value (sticky)
+	*'"print_stats"'*'"state"'*)
+		mg_json_field print_stats state
+		case "$_v" in printing | paused) PRINT=1 ;; *) PRINT=0 ;; esac
+		_a=0
+		mg_json_field idle_timeout state
+		[ "$_v" = Printing ] && _a=1
+		for _h in extruder heater_bed; do
+			mg_json_field "$_h" target
+			case "$_v" in *[1-9]*) _a=1 ;; esac
+		done
+		mg_act_sample "$_a"
+		return 0
+		;;
 	esac
+	# No usable answer. Sticky - unless Klippy is positively not ready (R3).
+	mg_pid_of klippy.pid
+	if [ -z "$_p" ]; then
+		PRINT=0
+		mg_act_sample 0; mg_act_sample 0; mg_act_sample 0
+		return 0
+	fi
+	_r=$(mg_http "/server/info") || return 0
+	case "$_r" in
+	*'"klippy_state":"error"'* | *'"klippy_state": "error"'* | \
+	*'"klippy_state":"shutdown"'* | *'"klippy_state": "shutdown"'*)
+		PRINT=0
+		mg_act_sample 0; mg_act_sample 0; mg_act_sample 0
+		;;
+	esac
+	return 0
 }
 
 mg_poll_maint_state() {
@@ -163,6 +219,7 @@ mg_marker() { # name 0|1
 
 mg_publish() {
 	mg_marker print-active "$PRINT"
+	mg_marker klipper-active "$ACT"
 	mg_marker maintenance-active "$MAINT"
 	echo "$STATE" > "$MG_RUN/memguard/state.tmp" && mv -f "$MG_RUN/memguard/state.tmp" "$MG_RUN/memguard/state"
 }

@@ -6,6 +6,8 @@
 #   nebulaos-osconfig system swap-slot|keep-slot
 #   nebulaos-osconfig system ack-notice --id ID
 #   nebulaos-osconfig system storage | cleanup-plan [--videos]   (read-only, walk the drive)
+#   nebulaos-osconfig system busy --profile request|point_of_no_return|git|restart|recovery
+#                                 [--holder TOKEN]   (G91 busy check, read-only)
 #   nebulaos-osconfig system cleanup-creality [--videos]
 #   nebulaos-osconfig image list|status|ack
 #   nebulaos-osconfig image check --file ID
@@ -37,7 +39,8 @@
 #
 # stdout: exactly one JSON object, {"ok": true, ...} or
 # {"ok": false, "error": CODE, "message": ...}. exit 0 ok, 1 invalid input
-# (nothing written), 2 operation failed, 64 usage.
+# (nothing written), 2 operation failed, 3 refused because the printer is busy
+# (G91: CODE is the busy reason, "refused": true; nothing changed), 64 usage.
 import json
 import sys
 
@@ -68,7 +71,7 @@ READ_ONLY = {("system", "info"), ("network", "status"),
              ("wifi", "status"), ("mcu", "status"), ("mcu", "list"),
              ("image", "list"), ("image", "status"), ("logs", "status"),
              ("settings", "status"), ("system", "storage"), ("system", "cleanup-plan"),
-             ("updates", "readiness")}
+             ("updates", "readiness"), ("system", "busy")}
 
 # G27 (2026-10-12): every change is one line in the system log (persistent
 # system.log), success or failure. Read-only verbs are not logged (the screen
@@ -151,6 +154,9 @@ def _dispatch(argv):
     if (domain, verb) == ("updates", "readiness"):
         _opts(rest, {})
         return updates.readiness()
+    if (domain, verb) == ("system", "busy"):
+        o = _opts(rest, {"profile": True, "holder": True})
+        return common.busy_state(o.get("profile") or "request", o.get("holder"))
     if (domain, verb) in READ_ONLY:
         _opts(rest, {})
         if verb != "status" and (domain, verb) not in _STATUS_ALIASES:
@@ -280,6 +286,9 @@ def main(argv=None):
     except common.OsConfigError as exc:
         out = dict({"ok": False, "error": exc.code, "message": exc.message}, **exc.extra)
         code = common.EXIT_INVALID if exc.invalid else common.EXIT_FAILED
+        if exc.refused:
+            out["refused"] = True
+            code = common.EXIT_REFUSED
         if exc.code == "USAGE":
             code = 64
     except Exception as exc:  # never a traceback instead of the JSON contract

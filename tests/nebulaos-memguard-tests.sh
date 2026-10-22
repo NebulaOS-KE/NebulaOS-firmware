@@ -46,6 +46,8 @@ HTTP_REPLY=""
 mg_http() { [ -n "$HTTP_REPLY" ] && { printf '%s' "$HTTP_REPLY"; return 0; }; return 1; }
 
 # --- (a) print state is sticky across a failed Moonraker query --------------
+# (while a Klippy process runs - G91 R3 below)
+fakeproc 100 python3 -700;      echo 100 > "$MG_PIDDIR/klippy.pid"
 PRINT=0
 HTTP_REPLY='{"result":{"status":{"print_stats":{"state":"printing"}}}}'
 mg_poll_print_state; expect "printing -> PRINT=1" "$PRINT" 1
@@ -57,6 +59,53 @@ HTTP_REPLY='{"result":{"status":{"print_stats":{"state":"standby"}}}}'
 mg_poll_print_state; expect "successful standby clears PRINT" "$PRINT" 0
 HTTP_REPLY=""
 mg_poll_print_state; expect "failed query keeps PRINT=0" "$PRINT" 0
+
+# G91 R3: a positive "Klippy not ready" clears the sticky marker - Moonraker
+# says error/shutdown, or no Klippy process runs at all. Moonraker
+# "disconnected"/"startup" with Klippy alive (Moonraker restarted mid-print)
+# stays sticky.
+mg_http() {
+	case "$1" in
+	/server/info*) [ -n "$INFO_REPLY" ] && { printf '%s' "$INFO_REPLY"; return 0; }; return 1 ;;
+	esac
+	[ -n "$HTTP_REPLY" ] && { printf '%s' "$HTTP_REPLY"; return 0; }; return 1
+}
+INFO_REPLY=""
+PRINT=1 HTTP_REPLY=""
+INFO_REPLY='{"result": {"klippy_state": "startup", "klippy_connected": true}}'
+mg_poll_print_state; expect "Moonraker says startup, Klippy alive: sticky" "$PRINT" 1
+INFO_REPLY='{"result":{"klippy_state":"disconnected"}}'
+mg_poll_print_state; expect "Moonraker disconnected, Klippy alive: sticky" "$PRINT" 1
+INFO_REPLY='{"result": {"klippy_state": "shutdown"}}'
+mg_poll_print_state; expect "Klippy shutdown: PRINT cleared" "$PRINT" 0
+PRINT=1 INFO_REPLY='{"result":{"klippy_state":"error"}}'
+mg_poll_print_state; expect "Klippy error: PRINT cleared" "$PRINT" 0
+PRINT=1 INFO_REPLY=""
+rm -f "$MG_PIDDIR/klippy.pid"
+mg_poll_print_state; expect "no Klippy process, Moonraker silent: PRINT cleared" "$PRINT" 0
+echo 100 > "$MG_PIDDIR/klippy.pid"
+
+# G91 N6: activity in the same query - idle_timeout "Printing" or a heater
+# target; any of the last 3 samples (5 s each) -> klipper-active.
+ACT=0 ACT_H1=0 ACT_H2=0 ACT_H3=0
+HTTP_REPLY='{"result": {"status": {"print_stats": {"state": "standby"}, "idle_timeout": {"state": "Printing"}, "extruder": {"target": 0.0}, "heater_bed": {"target": 0.0}}}}'
+mg_poll_print_state; expect "idle_timeout Printing -> ACT" "$ACT" 1
+HTTP_REPLY='{"result":{"status":{"print_stats":{"state":"standby"},"idle_timeout":{"state":"Ready"},"extruder":{"target":0.0},"heater_bed":{"target":0.0}}}}'
+mg_poll_print_state; expect "1 sample later: still ACT" "$ACT" 1
+mg_poll_print_state; expect "2 samples later: still ACT" "$ACT" 1
+mg_poll_print_state; expect "3 idle samples: ACT cleared" "$ACT" 0
+HTTP_REPLY='{"result":{"status":{"print_stats":{"state":"standby"},"idle_timeout":{"state":"Idle"},"extruder":{"target":0.0},"heater_bed":{"target":60.0}}}}'
+mg_poll_print_state; expect "bed target 60 -> ACT" "$ACT" 1
+expect "heating alone is not PRINT" "$PRINT" 0
+HTTP_REPLY='{"result":{"status":{"print_stats":{"state":"standby"},"idle_timeout":{"state":"Idle"},"extruder":{"target":215.0},"heater_bed":{"target":0.0}}}}'
+mg_poll_print_state; expect "extruder target 215 -> ACT" "$ACT" 1
+STATE=NORMAL MAINT=0; mg_publish
+[ -e "$MG_RUN/klipper-active" ] && pass "klipper-active marker written" || fail "klipper-active marker missing"
+ACT=0; mg_publish
+[ ! -e "$MG_RUN/klipper-active" ] && pass "klipper-active removed" || fail "klipper-active not removed"
+PRINT=1 HTTP_REPLY="" INFO_REPLY='{"result":{"klippy_state":"shutdown"}}' ACT=1 ACT_H1=1
+mg_poll_print_state; expect "Klippy shutdown also clears ACT" "$ACT" 0
+INFO_REPLY="" PRINT=0 HTTP_REPLY=""
 
 # maintenance: a lock file, or Moonraker busy while not printing
 mg_poll_maint_state; expect "no lock, no answer -> MAINT=0" "$MAINT" 0

@@ -1644,6 +1644,10 @@ check /usr/lib/nebulaos/python/nebulaos_osconfig/system.py
 check /usr/lib/nebulaos/python/nebulaos_osconfig/wifi.py
 check /usr/libexec/nebulaos/nebulaos-clean-reset
 check /usr/libexec/nebulaos/nebulaos-slot-swap
+# G91: the shared busy check (CLI + the fast shell variant the supervisorctl
+# shim and the update supervisor source).
+check /usr/libexec/nebulaos/nebulaos-busy
+check /etc/nebulaos-busy.sh
 check /usr/lib/nebulaos/python/nebulaos_osconfig/image.py
 check /usr/lib/nebulaos/python/nebulaos_osconfig/poweronlogo.py
 check /usr/lib/nebulaos/python/nebulaos_osconfig/logs.py
