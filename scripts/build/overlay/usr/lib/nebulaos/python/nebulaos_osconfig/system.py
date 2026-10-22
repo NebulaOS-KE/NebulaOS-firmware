@@ -162,7 +162,15 @@ def _slot_swap(target):
 
 
 def swap_slot():
-    """Next boot from the other slot (A <-> B), whichever is running."""
+    """Next boot from the other slot (A <-> B), whichever is running.
+
+    G91: refused while the printer is busy (request profile: a pending trial
+    of the running slot counts - the fallback slot is never left while the
+    new one is unconfirmed, S36). A switch into a slot that has not confirmed
+    itself on this printer (system/slot-confirmed-<slot> missing or for other
+    content) writes a TRIAL record, so S99nebulaos-image-trial checks it and
+    falls back once (S30, S37). Creality's firmware never runs that check, so
+    a switch into a Creality slot writes none."""
     current = boot_slot()
     if current not in ("A", "B"):
         raise common.OsConfigError("SLOT_UNKNOWN",
@@ -172,14 +180,34 @@ def swap_slot():
     if not image.slot_bootable(target):
         raise common.OsConfigError("SLOT_EMPTY", "slot %s holds no system (an image install "
                                    "into it did not finish); install an image first" % target)
-    _slot_swap(target)
-    return {"result": "ARMED", "next_boot": target, "from": current, "applies": "next boot"}
+    common.refuse_if_busy("request")
+    trial = None
+    if not image.slot_confirmed(target):
+        kname, _ = image.uimage_name(image._read_head(image.SLOTS[target]["kernel"]))
+        kind = image.system_kind(kname)
+        if kind != "creality":
+            trial = {"from": current, "to": target, "reason": "slot_switch", "system": kind,
+                     "file": None, "version": None, "started": int(time.time())}
+            image.write_trial(trial)
+    try:
+        _slot_swap(target)
+    except common.OsConfigError:
+        if trial:
+            image.remove_trial()
+        raise
+    return {"result": "ARMED", "next_boot": target, "from": current, "applies": "next boot",
+            "trial": bool(trial)}
 
 
 def keep_slot():
-    """Undo swap_slot: next boot from the running slot again."""
+    """Undo swap_slot: next boot from the running slot again (and drop the
+    TRIAL record that switch wrote)."""
     current = boot_slot()
     if current not in ("A", "B"):
         raise common.OsConfigError("SLOT_UNKNOWN", "cannot tell which slot is running")
     _slot_swap(current)
+    from . import image
+    trial, _ = common.read_json(image.TRIAL)
+    if trial and trial.get("from") == current and trial.get("to") != current:
+        image.remove_trial()
     return {"result": "DISARMED", "next_boot": current}

@@ -59,6 +59,12 @@ READINESS_WARNING = "nebulaos_update_readiness"
 DEFAULT_SCREEN_REPORT = "/run/nebulaos/nebulascreen-report.json"
 SCREEN_NAME = "nebulascreen"
 SCREEN_VERSION_RE = re.compile(r"^[0-9A-Za-z][0-9A-Za-z._+-]{0,63}$")
+# G91: a refusal because the printer is busy (helper exit 3, or the busy
+# check below) is shown in Mainsail as a red console line / toast with this
+# prefix; NebulaScreen keeps these lines out of its Klipper-error and M600
+# handling and shows its own popup from the HTTP error.
+REFUSAL_PREFIX = "!! NebulaOS refused: "
+EXIT_REFUSED = 3
 
 
 class NebulaOS:
@@ -162,6 +168,8 @@ class NebulaOS:
         if not result.pop("ok", False):
             code = result.get("error", "FAILED")
             message = result.get("message", "")
+            if proc.returncode == EXIT_REFUSED:
+                raise self._refused(code, message)
             status = 400 if proc.returncode in (1, 64) else 500
             raise self.server.error(f"{code}: {message}", status)
         return result
@@ -211,15 +219,15 @@ class NebulaOS:
     # they are refused while printing like the other partition writes.
     async def _bd_image(self, web_request: WebRequest) -> Dict[str, Any]:
         filename = web_request.get_str("filename")
-        await self._refuse_while_printing()
+        await self._refuse_if_busy()
         return await self._write("boot-display", "set-image", "--file", filename)
 
     async def _bd_reset_image(self, web_request: WebRequest) -> Dict[str, Any]:
-        await self._refuse_while_printing()
+        await self._refuse_if_busy()
         return await self._write("boot-display", "reset-image")
 
     async def _bd_restore_original_logo(self, web_request: WebRequest) -> Dict[str, Any]:
-        await self._refuse_while_printing()
+        await self._refuse_if_busy()
         return await self._write("boot-display", "restore-original-logo")
 
     # G61 (2026-10-16): the boot logo page - list, preview, add from USB, delete.
@@ -262,7 +270,7 @@ class NebulaOS:
                                 STORAGE_TIMEOUT)
 
     async def _cleanup_creality(self, web_request: WebRequest) -> Dict[str, Any]:
-        await self._refuse_while_printing()
+        await self._refuse_if_busy()
         return await self._write("system", "cleanup-creality", *self._videos_args(web_request),
                                  timeout=CLEANUP_TIMEOUT)
 
@@ -304,17 +312,21 @@ class NebulaOS:
     # Both arm the next boot and reboot at once. Refused while a print is
     # active; if the reboot cannot be started, the change is disarmed again.
 
-    async def _refuse_while_printing(self) -> None:
-        kapis = self.server.lookup_component("klippy_apis", None)
-        if kapis is None:
-            return
-        try:
-            res = await kapis.query_objects({"print_stats": ["state"]})
-        except Exception:
-            return      # Klipper not ready: nothing can be printing
-        state = (res.get("print_stats") or {}).get("state")
-        if state in ("printing", "paused"):
-            raise self.server.error("PRINTING: not possible while a print is active", 409)
+    # G91: the shared busy check (nebulaos_osconfig.common.busy_state, the
+    # same answer as nebulaos-busy and the osconfig verbs), run as the helper
+    # verb `system busy` - an async subprocess, so Moonraker's event loop is
+    # never blocked (the check itself asks Moonraker/Klippy over HTTP/the
+    # socket). Profile "request": printing, paused, heating/moving, a
+    # calibration, another update or a pending image trial, low memory, or a
+    # live Klippy whose state cannot be read. Klippy not ready is not busy.
+    def _refused(self, reason: str, message: str) -> Exception:
+        self.server.send_event("server:gcode_response", f"{REFUSAL_PREFIX}{message}")
+        return self.server.error(f"{reason}: {message}", 409)
+
+    async def _refuse_if_busy(self, profile: str = "request") -> None:
+        state = await self._exec(["system", "busy", "--profile", profile], READ_TIMEOUT)
+        if state.get("busy"):
+            raise self._refused(str(state.get("reason")), str(state.get("message", "")))
 
     async def _reboot_or_undo(self, undo: List[str]) -> None:
         machine = self.server.lookup_component("machine")
@@ -326,7 +338,7 @@ class NebulaOS:
             raise self.server.error(f"REBOOT_FAILED: {exc}; nothing was changed", 500)
 
     async def _clean_reset(self, web_request: WebRequest) -> Dict[str, Any]:
-        await self._refuse_while_printing()
+        await self._refuse_if_busy()
         result = await self._write("system", "clean-reset")
         await self._reboot_or_undo(["system", "cancel-clean-reset"])
         return result
@@ -346,7 +358,7 @@ class NebulaOS:
         return await self._write("image", "check", "--file", web_request.get_str("file"))
 
     async def _image_install(self, web_request: WebRequest) -> Dict[str, Any]:
-        await self._refuse_while_printing()
+        # image install refuses itself (busy check + maintenance lock): exit 3
         return await self._write("image", "install", "--file", web_request.get_str("file"),
                                  "--sha256", web_request.get_str("sha256"))
 
@@ -362,7 +374,7 @@ class NebulaOS:
         return await self._write("system", "ack-notice", "--id", web_request.get_str("id"))
 
     async def _swap_slot(self, web_request: WebRequest) -> Dict[str, Any]:
-        await self._refuse_while_printing()
+        # swap-slot refuses itself (busy check, pending trial): exit 3
         result = await self._write("system", "swap-slot")
         await self._reboot_or_undo(["system", "keep-slot"])
         return result
@@ -383,7 +395,7 @@ class NebulaOS:
         lock = self.write_locks.setdefault("mcu", asyncio.Lock())
         if lock.locked():
             raise self.server.error("BUSY: an MCU flash is already running", 409)
-        await self._refuse_while_printing()
+        await self._refuse_if_busy()
         return await self._write("mcu", "flash", "--file", file_id, "--sha256", sha,
                                  timeout=MCU_FLASH_TIMEOUT)
 

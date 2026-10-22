@@ -8,6 +8,10 @@
 # previous slot ONCE and the printer reboots. The record is removed before
 # that switch, so it can never loop. Limit: a kernel that does not start at all
 # never gets here (the bootloader counts no boots) - that needs USB recovery.
+# G91 (2026-10-22): a switch into a slot that never confirmed itself writes a
+# trial record too (system swap-slot); the verdict waits while a print runs
+# (never a switch + reboot under it) and the record stays meanwhile, so a
+# power cut re-runs the trial; a screen memguard shed for memory counts as up.
 
 TRIAL=/usr/data/nebulaos/system/image-update-trial.json
 OSCONFIG=/usr/libexec/nebulaos/nebulaos-osconfig

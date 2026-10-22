@@ -89,6 +89,10 @@ class Env(object):
             "NEBULAOS_MCU_CLI": os.path.join(self.bin, "nebulaos-mcu"),
             "NEBULAOS_MCU_GUARD_STATE": os.path.join(self.tmp, "guard.state"),
             "NEBULAOS_MCU_MANAGED_FLAG": os.path.join(self.tmp, "data", "mcu", "managed"),
+            # G91 busy check: never the host's Moonraker, Klippy or pidfile.
+            "NEBULAOS_MOONRAKER_BASE": "http://127.0.0.1:9",
+            "NEBULAOS_KLIPPY_PIDFILE": os.path.join(self.tmp, "klippy.pid"),
+            "NEBULAOS_KLIPPY_SOCK": os.path.join(self.tmp, "klippy.sock"),
         })
         if PYLIB not in sys.path:
             sys.path.insert(0, PYLIB)
@@ -120,6 +124,21 @@ class Env(object):
 
     def cleanup(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
+
+
+def fake_busy(common, reasons):
+    """Make common.busy_state answer from a list (one item per call, the
+    last one repeats): None = not busy, else a reason. Returns the call log
+    (profile, holder)."""
+    calls = []
+    seq = list(reasons)
+
+    def busy_state(profile, holder=None, facts=None):
+        calls.append((profile, holder))
+        reason = seq.pop(0) if len(seq) > 1 else seq[0]
+        return common.busy_result(profile, reason)
+    common.busy_state = busy_state
+    return calls
 
 
 class NetworkValidationTests(unittest.TestCase):
@@ -1068,6 +1087,9 @@ class SystemResetSlotTests(unittest.TestCase):
         self.cmdline("/dev/mmcblk0p7")
         self.assertEqual(self.s.swap_slot()["next_boot"], "B")
         self.assertEqual(open(self.log).read().split(), ["A", "B", "B"])
+        # (the switch into the unconfirmed slot B left a trial; booted into
+        # B it would run - here it is simply cleared)
+        os.unlink(self.e.image.TRIAL)
         self.cmdline("/dev/sda1")
         with self.assertRaises(self.e.common.OsConfigError) as cm:
             self.s.swap_slot()
@@ -1979,7 +2001,10 @@ class ImageTests(unittest.TestCase):
         m.JOB_DIR = os.path.join(t, "job")
         m.JOB_STATE = os.path.join(m.JOB_DIR, "state.json")
         m.TRIAL = os.path.join(t, "trial.json")
+        self.e.common.IMAGE_TRIAL = m.TRIAL
         m.LAST = os.path.join(t, "last.json")
+        m.CONFIRMED_DIR = os.path.join(t, "confirmed")
+        m.SHED_SCREEN = os.path.join(t, "shed-nebulascreen")
         self.cmdline("B")
 
     def tearDown(self):
@@ -2152,27 +2177,216 @@ class ImageTests(unittest.TestCase):
         self.assertEqual((trial["from"], trial["to"], trial["system"]), ("B", "A", "nebulaos"))
         self.assertFalse(os.listdir(self.i.WORK_PARENT))           # work dir cleaned
 
-    def test_print_started_during_install_delays_the_switch(self):
-        # G88: a print that starts while the image is being written must end
-        # before the slot switch and reboot.
-        archive, _, _ = self.package()
-        seen = []
+    # -- G91 step 5: refuse at the request, stop at the points of no return ----
 
-        def printing():
-            seen.append(os.path.exists(self.calls))       # switched already?
-            if len(seen) <= 2:
-                st = json.load(open(self.i.JOB_STATE))
-                self.assertEqual(st.get("phase"), "writing" if not seen[:-1] else "waiting_for_print")
-            return len(seen) <= 2
-        old_printing, old_wait = self.i.updates._printing, self.i.PRINT_WAIT
-        self.i.updates._printing, self.i.PRINT_WAIT = printing, 0
+    def test_install_refused_while_busy(self):
+        # S1/S2: printing or paused -> refused at once, nothing started,
+        # the maintenance lock released again.
+        archive, _, _ = self.package()
+        sha = self.i.sha256_file(archive)
+        import subprocess as sp
+        started, old = [], sp.Popen
+        sp.Popen = lambda *a, **k: started.append(a[0])
         try:
-            self.i.run_job("upload/nebula.img", self.i.sha256_file(archive))
+            for reason in ("PRINTING", "PAUSED", "ACTIVE", "CALIBRATING", "LOW_MEMORY", "UNKNOWN"):
+                calls = fake_busy(self.e.common, [reason])
+                with self.assertRaises(self.e.common.Refused) as cm:
+                    self.i.install("upload/nebula.img", sha)
+                self.assertEqual(cm.exception.code, reason)
+                self.assertEqual(calls[0][0], "request")
+                self.assertIsNone(self.e.common.lock_holder(self.e.common.MAINTENANCE_LOCK))
+            self.assertEqual(started, [])
+            self.assertFalse(os.path.exists(self.i.JOB_STATE))
         finally:
-            self.i.updates._printing, self.i.PRINT_WAIT = old_printing, old_wait
-        self.assertEqual(seen, [False, False, False])     # no switch while printing
-        self.assertEqual(json.load(open(self.i.JOB_STATE))["state"], "restarting")
-        self.assertEqual(open(self.calls).read().split("\n")[:2], ["swap A", "reboot"])
+            sp.Popen = old
+
+    def test_install_refusal_through_the_cli_is_exit_3(self):
+        archive, _, _ = self.package()
+        fake_busy(self.e.common, ["PRINTING"])
+        out, old = io.StringIO(), sys.stdout
+        sys.stdout = out
+        try:
+            rc = self.e.cli.main(["image", "install", "--file", "upload/nebula.img",
+                                  "--sha256", self.i.sha256_file(archive)])
+        finally:
+            sys.stdout = old
+        reply = json.loads(out.getvalue())
+        self.assertEqual(rc, 3)
+        self.assertEqual((reply["error"], reply["refused"]), ("PRINTING", True))
+        self.assertEqual(reply["message"], "Not possible while a print is running.")
+
+    def test_double_tap_refused_by_the_maintenance_lock(self):
+        # S6: a second install (or an MCU flash, a second screen/Mainsail
+        # tab) while the maintenance lock is held: UPDATING, nothing started.
+        archive, _, _ = self.package()
+        import subprocess as sp
+        started, old = [], sp.Popen
+        holder = self.e.common.MaintenanceLock("other-job").acquire()
+        sp.Popen = lambda *a, **k: started.append((a[0], k.get("pass_fds")))
+        try:
+            with self.assertRaises(self.e.common.Refused) as cm:
+                self.i.install("upload/nebula.img", self.i.sha256_file(archive))
+            self.assertEqual(cm.exception.code, "UPDATING")
+            self.assertEqual(cm.exception.message, "Another update is running.")
+            holder.release()
+            fake_busy(self.e.common, [None])
+            self.i.install("upload/nebula.img", self.i.sha256_file(archive))
+            argv, fds = started[0]
+            self.assertEqual(argv[1:3], ["image", "worker"])
+            self.assertEqual(argv[-2], "--holder")
+            self.assertTrue(argv[-1].startswith("image-"))
+            self.assertEqual(len(fds), 1)                # the lock handed to the worker
+        finally:
+            sp.Popen = old
+            holder.release()
+
+    def test_maintenance_lock_holder_is_excluded(self):
+        # R1: the job's own lock never makes its own checks busy.
+        c = self.e.common
+        lock = c.MaintenanceLock("image-1").acquire()
+        try:
+            facts = {"klippy": "not_ready", "update_manager_busy": False}
+            self.assertFalse(c.busy_state("point_of_no_return", "image-1", facts)["busy"])
+            self.assertEqual(c.busy_state("point_of_no_return", "image-2", facts)["reason"],
+                             "UPDATING")
+            self.assertEqual(c.busy_state("request", None, facts)["reason"], "UPDATING")
+            self.assertFalse(c.busy_state("recovery", None, facts)["busy"])   # never a lock
+        finally:
+            lock.release()
+        self.assertIsNone(c.lock_holder(c.MAINTENANCE_LOCK))
+
+    def test_stop_point_1_print_started_during_the_write(self):
+        # S3: a print started from Mainsail while the image was written: stop
+        # before the marker write, the written slot blanked, no switch, no
+        # reboot, no trial; the check excludes the job's own lock.
+        archive, _, _ = self.package()
+        calls = fake_busy(self.e.common, ["PRINTING"])
+        self.i.run_job("upload/nebula.img", self.i.sha256_file(archive), "image-7")
+        st = json.load(open(self.i.JOB_STATE))
+        self.assertEqual((st["state"], st["phase"], st["error"]), ("failed", "stopped_print", "PRINTING"))
+        self.assertTrue(st["stopped"] and st["target_cleared"])
+        self.assertIn("Nothing was changed on the running system", st["message"])
+        self.assertEqual(calls, [("point_of_no_return", "image-7")])
+        self.assertFalse(os.path.exists(self.calls))                 # no swap, no reboot
+        self.assertFalse(os.path.exists(self.i.TRIAL))
+        self.assertEqual(open(os.path.join(self.dev, "mmcblk0p5"), "rb").read(64), b"\x00" * 64)
+        self.assertFalse(self.i.slot_bootable("A"))
+        self.assertNotIn("waiting_for_print", open(self.i.__file__).read())   # G88 phase gone
+
+    def test_stop_point_2_marker_put_back(self):
+        # Busy after the marker write: marker back to the running slot (read
+        # back by the swap tool), TRIAL deleted, written slot blanked.
+        archive, _, _ = self.package()
+        fake_busy(self.e.common, [None, "PAUSED"])
+        self.i.run_job("upload/nebula.img", self.i.sha256_file(archive), "image-7")
+        st = json.load(open(self.i.JOB_STATE))
+        self.assertEqual((st["state"], st["phase"], st["error"]), ("failed", "stopped_print", "PAUSED"))
+        self.assertEqual(open(self.calls).read().split(), ["swap", "A", "swap", "B"])   # no reboot
+        self.assertFalse(os.path.exists(self.i.TRIAL))
+        self.assertFalse(self.i.slot_bootable("A"))
+
+    def test_stop_point_2_marker_cannot_be_put_back(self):
+        # The swap back fails: keep marker + TRIAL, no reboot, no blanking -
+        # the new system starts at the next power-on, protected by the trial.
+        archive, kernel, _ = self.package()
+        write_exe(os.path.join(self.e.bin, "swap"),
+                  'echo "swap $1" >> "%s"\n[ "$1" = B ] && exit 2\nexit 0\n' % self.calls)
+        fake_busy(self.e.common, [None, "PRINTING"])
+        self.i.run_job("upload/nebula.img", self.i.sha256_file(archive), "image-7")
+        st = json.load(open(self.i.JOB_STATE))
+        self.assertEqual((st["state"], st["phase"]), ("finished", "next_power_on"))
+        self.assertIn("next power-on", st["message"])
+        self.assertNotIn("reboot", open(self.calls).read())
+        self.assertEqual(json.load(open(self.i.TRIAL))["to"], "A")
+        self.assertEqual(open(os.path.join(self.dev, "mmcblk0p5"), "rb").read(len(kernel)), kernel)
+
+    def test_writing_a_slot_drops_its_confirmation(self):
+        # v3.3: the record goes as soon as the install writes the slot; a
+        # passed trial records the slot's header (name + CRCs + superblock).
+        archive, _, _ = self.package()
+        open(os.path.join(self.dev, "mmcblk0p5"), "r+b").write(self.kernel()[:64])
+        self.assertTrue(self.i.confirm_slot("A"))
+        self.assertTrue(self.i.slot_confirmed("A"))
+        fake_busy(self.e.common, ["PRINTING"])        # stops after writing
+        self.i.run_job("upload/nebula.img", self.i.sha256_file(archive), "image-7")
+        self.assertFalse(os.path.exists(os.path.join(self.i.CONFIRMED_DIR, "slot-confirmed-A")))
+        fake_busy(self.e.common, [None])
+        self.i.run_job("upload/nebula.img", self.i.sha256_file(archive), "image-7")
+        self.assertFalse(self.i.slot_confirmed("A"))
+        self.cmdline("A")
+        self.i._klipper_ready = lambda: True
+        self.i._gui_running = lambda: True
+        self.assertEqual(self.i.trial()["result"], "CONFIRMED")
+        rec = json.load(open(os.path.join(self.i.CONFIRMED_DIR, "slot-confirmed-A")))
+        self.assertEqual(rec["kernel_name"], "Linux-6.6.157-rt79")
+        self.assertTrue(self.i.slot_confirmed("A"))
+
+    def test_slot_rewritten_outside_image_py_is_unconfirmed(self):
+        # S37: flash-spare-slot.sh / the hardware tool / USB recovery rewrote
+        # the slot: the header no longer matches the record.
+        open(os.path.join(self.dev, "mmcblk0p5"), "r+b").write(self.kernel()[:64])
+        self.i.confirm_slot("A")
+        self.assertTrue(self.i.slot_confirmed("A"))
+        head = bytearray(self.kernel()[:64])
+        head[4:8] = b"\x12\x34\x56\x78"                          # another header CRC
+        open(os.path.join(self.dev, "mmcblk0p5"), "r+b").write(bytes(head))
+        self.assertFalse(self.i.slot_confirmed("A"))
+        self.i.confirm_slot("A")
+        self.rootfs("mmcblk0p7", {}, mkfs=9)                      # rootfs rewritten alone
+        self.assertFalse(self.i.slot_confirmed("A"))
+        fake_busy(self.e.common, [None])
+        write_exe(os.environ["NEBULAOS_SLOT_SWAP"], 'echo "swap $1" >> "%s"\n' % self.calls)
+        self.e.system.SLOT_SWAP = os.environ["NEBULAOS_SLOT_SWAP"]
+        out = self.e.system.swap_slot()
+        self.assertTrue(out["trial"])
+        t = json.load(open(self.i.TRIAL))
+        self.assertEqual((t["from"], t["to"], t["reason"]), ("B", "A", "slot_switch"))
+
+    def test_switch_into_unconfirmed_slot_writes_trial(self):
+        # S30: a manual switch into a slot that never confirmed itself.
+        write_exe(os.environ["NEBULAOS_SLOT_SWAP"], 'echo "swap $1" >> "%s"\n' % self.calls)
+        self.e.system.SLOT_SWAP = os.environ["NEBULAOS_SLOT_SWAP"]
+        open(os.path.join(self.dev, "mmcblk0p5"), "r+b").write(self.kernel()[:64])
+        fake_busy(self.e.common, [None])
+        self.assertTrue(self.e.system.swap_slot()["trial"])
+        self.assertEqual(json.load(open(self.i.TRIAL))["to"], "A")
+        self.e.system.keep_slot()                                 # undone: trial gone
+        self.assertFalse(os.path.exists(self.i.TRIAL))
+        self.i.confirm_slot("A")                                  # confirmed: no trial
+        self.assertFalse(self.e.system.swap_slot()["trial"])
+        self.assertFalse(os.path.exists(self.i.TRIAL))
+        self.e.system.keep_slot()
+        # a Creality slot never runs the check: no trial
+        self.i.unconfirm_slot("A")
+        open(os.path.join(self.dev, "mmcblk0p5"), "r+b").write(self.kernel("Linux-4.4.94")[:64])
+        self.assertFalse(self.e.system.swap_slot()["trial"])
+
+    def test_pending_trial_refuses_install_and_switch(self):
+        # S36 / v3.2: while the running slot is on trial (or its verdict
+        # waits for a print) an install and a slot switch are refused.
+        archive, _, _ = self.package()
+        self.cmdline("A")
+        open(self.mounts, "w").write("/dev/mmcblk0p7 / squashfs ro 0 0\n")
+        open(os.path.join(self.dev, "mmcblk0p6"), "r+b").write(self.kernel()[:64])
+        self.trial_file(frm="B", to="A")
+        facts = {"klippy": "ready", "status": {}, "update_manager_busy": False}
+        real = self.e.common.busy_state
+        self.e.common.klippy_facts = lambda timeout=None: facts
+        st = real("request")
+        self.assertEqual((st["reason"], st["message"]),
+                         ("UPDATING", self.e.common.TRIAL_MESSAGE))
+        self.assertFalse(real("point_of_no_return")["busy"])     # only the request profile
+        t = json.load(open(self.i.TRIAL))
+        t["postponed"] = True
+        json.dump(t, open(self.i.TRIAL, "w"))
+        self.assertEqual(real("request")["message"], self.e.common.TRIAL_POSTPONED_MESSAGE)
+        with self.assertRaises(self.e.common.Refused) as cm:
+            self.i.install("upload/nebula.img", self.i.sha256_file(archive))
+        self.assertEqual(cm.exception.code, "UPDATING")
+        with self.assertRaises(self.e.common.Refused):
+            self.e.system.swap_slot()
+        self.cmdline("B")                      # a trial for the OTHER slot is not pending here
+        self.assertFalse(real("request")["busy"])
 
     def test_creality_image_arms_no_trial(self):
         # Creality's firmware never runs the fallback check: no trial, and a
@@ -2309,6 +2523,68 @@ class ImageTests(unittest.TestCase):
         self.assertEqual(self.i.trial()["result"], "NOT_STARTED")
         self.assertFalse(os.path.exists(self.calls))
 
+    def test_trial_verdict_postponed_while_printing(self):
+        # S8 + v2.3: Klipper never came up in time, but a print runs (the
+        # recovery check says so): no switch, no reboot until it ends; TRIAL
+        # stays (marked postponed) meanwhile; then judged again.
+        self.cmdline("A")
+        self.trial_file()
+        self.i.TRIAL_SECONDS, self.i.TRIAL_POLL = 0, 0
+        ready = []
+        self.i._klipper_ready = lambda: bool(ready)
+        self.i._gui_running = lambda: True
+        seen = []
+
+        def busy_state(profile, holder=None, facts=None):
+            seen.append((profile, os.path.exists(self.i.TRIAL),
+                         json.load(open(self.i.TRIAL)).get("postponed")))
+            self.assertFalse(os.path.exists(self.calls))          # nothing switched yet
+            return self.e.common.busy_result(profile, "PRINTING" if len(seen) < 3 else None)
+        self.e.common.busy_state = busy_state
+        self.assertEqual(self.i.trial()["result"], "ROLLED_BACK")
+        self.assertEqual([x[0] for x in seen], ["recovery"] * 3)
+        self.assertTrue(seen[1][1] and seen[1][2])                 # TRIAL kept, postponed
+        self.assertEqual(open(self.calls).read().split(), ["swap", "B", "reboot"])
+
+    def test_trial_postponed_then_confirmed(self):
+        self.cmdline("A")
+        self.trial_file()
+        self.i.TRIAL_SECONDS, self.i.TRIAL_POLL = 0, 0
+        state = {"n": 0}
+        self.i._klipper_ready = lambda: state["n"] >= 2
+        self.i._gui_running = lambda: True
+
+        def busy_state(profile, holder=None, facts=None):
+            state["n"] += 1
+            return self.e.common.busy_result(profile, "PAUSED" if state["n"] < 2 else None)
+        self.e.common.busy_state = busy_state
+        self.assertEqual(self.i.trial()["result"], "CONFIRMED")
+        self.assertFalse(os.path.exists(self.calls))
+        self.assertFalse(os.path.exists(self.i.TRIAL))
+
+    def test_trial_counts_a_shed_screen_as_up(self):
+        # S7: Klipper ready, the screen stopped by memguard for memory.
+        self.cmdline("A")
+        self.trial_file()
+        self.i._klipper_ready = lambda: True
+        self.i._gui_running = lambda: False
+        open(self.i.SHED_SCREEN, "w").close()
+        self.assertEqual(self.i.trial()["result"], "CONFIRMED")
+        self.assertIn("memguard", json.load(open(self.i.LAST))["note"])
+
+    def test_trial_fallback_never_without_busy_check(self):
+        # S26: a new image whose Moonraker never starts: Klipper not ready via
+        # Moonraker, the recovery check (Klippy socket) says not printing ->
+        # fallback once.
+        self.cmdline("A")
+        self.trial_file()
+        self.i.TRIAL_SECONDS, self.i.TRIAL_POLL = 0, 0
+        self.i._klipper_ready = lambda: False
+        self.i._gui_running = lambda: False
+        calls = fake_busy(self.e.common, [None])
+        self.assertEqual(self.i.trial()["result"], "ROLLED_BACK")
+        self.assertEqual(calls, [("recovery", None)])
+
 
 class CliContractTests(unittest.TestCase):
     def setUp(self):
@@ -2406,6 +2682,19 @@ class ComponentTests(unittest.TestCase):
             [ "$3" = --stdin ] && cat > "%(log)s.stdin"
             echo "$1 $2" >> "%(log)s.all"
             case "$1 $2" in
+              "system busy")
+                # G91: the busy check (file: the reason, absent = not busy)
+                r=$(cat "%(log)s.busy" 2>/dev/null)
+                if [ -n "$r" ]; then
+                  printf '{"ok": true, "busy": true, "reason": "%%s", "message": "text for %%s", "profile": "%%s"}\n' "$r" "$r" "$4"
+                else
+                  printf '{"ok": true, "busy": false, "reason": null, "message": "", "profile": "%%s"}\n' "$4"
+                fi
+                exit 0 ;;
+              "image install"|"system swap-slot")
+                # verbs that refuse themselves: exit 3
+                r=$(cat "%(log)s.busy" 2>/dev/null)
+                [ -n "$r" ] && { printf '{"ok": false, "error": "%%s", "message": "text for %%s", "refused": true}\n' "$r" "$r"; exit 3; } ;;
               "display set-brightness") echo '{"ok": false, "error": "INVALID_BRIGHTNESS", "message": "m"}'; exit 1 ;;
               "network set-ipv4") echo '{"ok": false, "error": "GATEWAY_UNREACHABLE_REVERTED", "message": "m"}'; exit 2 ;;
             esac
@@ -2628,19 +2917,49 @@ class ComponentTests(unittest.TestCase):
         self.assertEqual(self.call("/machine/nebulaos/system/clean_reset"), {"result": "APPLIED"})
         self.call("/machine/nebulaos/system/swap_slot")
         self.assertEqual(self.reboots, 2)
-        self.assertEqual(self.calls(), ["system clean-reset", "system swap-slot"])
+        # clean reset: the shared busy check first; swap-slot checks itself
+        self.assertEqual(self.calls(), ["system busy", "system clean-reset", "system swap-slot"])
+
+    def set_busy(self, reason):
+        if reason:
+            open(self.log + ".busy", "w").write(reason)
+        elif os.path.exists(self.log + ".busy"):
+            os.unlink(self.log + ".busy")
 
     def test_refused_while_printing(self):
-        for state in ("printing", "paused"):
-            self.print_state = state
-            for p in ("system/clean_reset", "system/swap_slot"):
+        # G91: every refusal comes from the shared check (async helper call,
+        # or the verb's own exit 3): HTTP 409 with the reason, and a
+        # "!! NebulaOS refused:" line for Mainsail's console/toast.
+        for reason in ("PRINTING", "PAUSED", "ACTIVE", "UPDATING"):
+            self.set_busy(reason)
+            for p in ("system/clean_reset", "system/swap_slot", "image/install",
+                      "boot_display/image", "cleanup/creality"):
+                self.server.events.clear()
                 with self.assertRaises(Exception) as cm:
-                    self.call("/machine/nebulaos/" + p)
-                self.assertEqual(cm.exception.status_code, 409)
-        self.assertEqual((self.reboots, self.calls()), (0, []))
-        self.print_state = None          # Klipper down: allowed
+                    self.call("/machine/nebulaos/" + p, {"file": "upload/x.img", "sha256": "0" * 64,
+                                                         "filename": "a.png"})
+                self.assertEqual(cm.exception.status_code, 409, p)
+                self.assertTrue(str(cm.exception).startswith(reason + ":"), str(cm.exception))
+                self.assertEqual(self.server.events,
+                                 [("server:gcode_response", "!! NebulaOS refused: text for " + reason)])
+        self.assertEqual(self.reboots, 0)
+        self.assertEqual(sorted(set(self.calls())), ["image install", "system busy", "system swap-slot"])
+        self.set_busy(None)              # e.g. Klipper down: not busy, allowed
         self.call("/machine/nebulaos/system/swap_slot")
         self.assertEqual(self.reboots, 1)
+
+    def test_busy_check_is_async_and_request_profile(self):
+        # review 10: never block Moonraker's event loop - the check is the
+        # helper run through asyncio's subprocess API.
+        import inspect
+        self.assertTrue(inspect.iscoroutinefunction(self.comp._refuse_if_busy))
+        src = inspect.getsource(self.mod.NebulaOS._refuse_if_busy)
+        self.assertIn('"system", "busy", "--profile", profile', src)
+        self.assertNotIn("subprocess.run", open(COMPONENT).read())
+        self.call("/machine/nebulaos/boot_display/reset_image")
+        self.assertEqual(self.calls()[0], "system busy")
+        self.assertEqual(inspect.signature(self.comp._refuse_if_busy).parameters["profile"].default,
+                         "request")
 
     def test_failed_reboot_disarms(self):
         self.reboot_fails = True
@@ -2671,13 +2990,14 @@ class ComponentTests(unittest.TestCase):
         self.assertEqual(self.server.events[-1][1]["domain"], "mcu")
 
     def test_mcu_flash_refused_while_printing_or_busy(self):
-        for state in ("printing", "paused"):
-            self.print_state = state
+        for reason in ("PRINTING", "PAUSED"):
+            self.set_busy(reason)
             with self.assertRaises(Exception) as cm:
                 self.call("/machine/nebulaos/mcu/flash", {"file": "upload/a.bin", "sha256": "0" * 64})
             self.assertEqual(cm.exception.status_code, 409)
-        self.assertEqual(self.calls(), [])
-        self.print_state = "standby"
+        self.assertEqual(set(self.calls()), {"system busy"})
+        self.set_busy(None)
+        os.unlink(self.log + ".all")
 
         async def busy():
             lock = self.comp.write_locks.setdefault("mcu", asyncio.Lock())

@@ -139,8 +139,8 @@ def _dispatch(argv):
         _opts(rest, {})
         return image.trial()
     if (domain, verb) == ("image", "worker"):
-        o = _opts(rest, {"file": True, "sha256": True})
-        image.run_job(o.get("file"), o.get("sha256"))
+        o = _opts(rest, {"file": True, "sha256": True, "holder": True})
+        image.run_job(o.get("file"), o.get("sha256"), o.get("holder"))
         return {"result": "DONE"}
     # Read-only verbs with their own function (not the domain's status):
     # list-images and preview used to fall through to bootdisplay.status, so

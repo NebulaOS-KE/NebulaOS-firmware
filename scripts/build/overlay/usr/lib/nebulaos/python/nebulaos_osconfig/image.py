@@ -13,6 +13,18 @@
 #   - Older versions may be installed. Creality images are accepted.
 #   - One automatic fallback after an install: the new slot boots as a trial;
 #     S99nebulaos-image-trial confirms it, or switches back once.
+#   - G91 (2026-10-22): refused at the request while the printer is busy
+#     (common.busy_state, request profile - a pending trial of the running
+#     slot counts), under the one maintenance lock. Two stop points instead of
+#     G88's "wait for the print": before the marker write (stop, blank the
+#     written slot) and after it, before the reboot (marker back, read back,
+#     TRIAL deleted, slot blanked; if the marker cannot be put back, nothing
+#     more is touched and the new system starts at the next power-on). The
+#     trial verdict waits while a print runs. A slot confirms itself by its
+#     first passed trial: system/slot-confirmed-<slot>, keyed on the slot's
+#     uImage header (name + CRCs) and squashfs superblock, deleted when an
+#     install starts writing that slot. Every switch into an unconfirmed slot
+#     writes a TRIAL record (system.swap_slot).
 #
 #   image list                      .img files from the sources
 #   image check --file ID           open the package, report what it holds
@@ -35,7 +47,7 @@ import subprocess
 import sys
 import time
 
-from . import common, system, updates
+from . import common, system
 from .common import invalid, OsConfigError
 
 SEVENZA = os.environ.get("NEBULAOS_7ZA", "/usr/bin/7za")
@@ -49,7 +61,7 @@ MAX_ENTRIES = 2000
 WORK_PARENT = os.environ.get("NEBULAOS_IMAGE_WORK", os.path.join(common.NEBULAOS_ROOT, "system", "image-work"))
 JOB_DIR = os.path.join(common.RUN_DIR, "image-update")
 JOB_STATE = os.path.join(JOB_DIR, "state.json")
-TRIAL = os.environ.get("NEBULAOS_IMAGE_TRIAL", os.path.join(common.NEBULAOS_ROOT, "system", "image-update-trial.json"))
+TRIAL = common.IMAGE_TRIAL     # read by common.busy_state too (pending trial = UPDATING)
 LAST = os.environ.get("NEBULAOS_IMAGE_LAST", os.path.join(common.NEBULAOS_ROOT, "system", "image-update-last.json"))
 DEV_DIR = os.environ.get("NEBULAOS_DEV_DIR", "/dev")
 SYS_BLOCK = os.environ.get("NEBULAOS_SYS_BLOCK", "/sys/class/block")
@@ -57,9 +69,12 @@ PROC_MOUNTS = os.environ.get("NEBULAOS_PROC_MOUNTS", "/proc/mounts")
 SLOT_SWAP = os.environ.get("NEBULAOS_SLOT_SWAP", "/usr/libexec/nebulaos/nebulaos-slot-swap")
 REBOOT = os.environ.get("NEBULAOS_REBOOT", "/sbin/reboot")
 OSCONFIG = os.environ.get("NEBULAOS_OSCONFIG", "/usr/libexec/nebulaos/nebulaos-osconfig")
-# G88 (Run 15): how often the finished install re-checks a print that started
-# while it was writing (seconds).
-PRINT_WAIT = float(os.environ.get("NEBULAOS_IMAGE_PRINT_WAIT", "30"))
+# G91: slot-confirmed records (system/slot-confirmed-<slot>).
+CONFIRMED_DIR = os.environ.get("NEBULAOS_SLOT_CONFIRMED_DIR",
+                               os.path.join(common.NEBULAOS_ROOT, "system"))
+SHED_SCREEN = os.path.join(common.RUN_DIR, "shed", "nebulascreen")
+STOPPED_MESSAGE = ("Stopped: %s Nothing was changed on the running system. "
+                   "Install again after that.")
 MOONRAKER_INFO = os.environ.get("NEBULAOS_MOONRAKER_INFO", "http://127.0.0.1:7125/server/info")
 PROC_DIR = os.environ.get("NEBULAOS_PROC_DIR", "/proc")
 TRIAL_SECONDS = int(os.environ.get("NEBULAOS_IMAGE_TRIAL_SECONDS", "300"))
@@ -155,6 +170,62 @@ def _rootfs_id(dev):
     if len(head) < 48 or head[:4] != SQUASHFS_MAGIC:
         return ""
     return head[8:12].hex() + head[40:48].hex()
+
+
+# -- slot-confirmed records (G91 v3.3) -------------------------------------------------
+
+def slot_key(slot):
+    """What identifies the system in a slot: the kernel's uImage header name
+    and CRCs plus the rootfs superblock. None when the kernel partition holds
+    no U-Boot image (blank, or unreadable here)."""
+    head = _read_head(SLOTS[slot]["kernel"])
+    name, _ = uimage_name(head)
+    if name is None:
+        return None
+    return {"kernel_name": name, "header_crc": head[4:8].hex(), "data_crc": head[24:28].hex(),
+            "rootfs": _rootfs_id(SLOTS[slot]["rootfs"])}
+
+
+def _confirmed_path(slot):
+    return os.path.join(CONFIRMED_DIR, "slot-confirmed-%s" % slot)
+
+
+def slot_confirmed(slot):
+    """True only when the slot's recorded confirmation matches what is in the
+    slot now - a slot rewritten by anything (flash-spare-slot.sh, the
+    hardware tool, USB recovery) is unconfirmed again."""
+    key = slot_key(slot)
+    rec, _ = common.read_json(_confirmed_path(slot))
+    if not key or not rec:
+        return False
+    return all(rec.get(k) == v for k, v in key.items())
+
+
+def confirm_slot(slot):
+    key = slot_key(slot)
+    if key:
+        key.update(slot=slot, confirmed_at=int(time.time()))
+        common.atomic_write_json(_confirmed_path(slot), key)
+    return bool(key)
+
+
+def unconfirm_slot(slot):
+    try:
+        os.unlink(_confirmed_path(slot))
+        common.fsync_dir(CONFIRMED_DIR)
+    except FileNotFoundError:
+        pass
+
+
+def write_trial(record):
+    common.atomic_write_json(TRIAL, record)
+
+
+def remove_trial():
+    try:
+        os.unlink(TRIAL)
+    except FileNotFoundError:
+        pass
 
 
 def _job_active():
@@ -621,8 +692,17 @@ def _write_payload(work, payload_dir, rec, dev, label, progress, share):
         raise OsConfigError("WRITE_VERIFY_FAILED", "%s read back differently from the partition" % name)
 
 
-def run_job(file_id, sha256):
-    """The background install (nebulaos-osconfig image worker)."""
+def _stop_check(holder):
+    """P2: the busy check at a point of no return (the job's own lock is
+    excluded). The busy state, or None when the job may go on."""
+    state = common.busy_state("point_of_no_return", holder)
+    return state if state["busy"] else None
+
+
+def run_job(file_id, sha256, holder=None):
+    """The background install (nebulaos-osconfig image worker). holder: the
+    maintenance-lock token install() took for this job (the worker inherits
+    the lock's fd and holds it until it exits)."""
     started = int(time.time())
     base = {"file": file_id, "started": started}
     work = None
@@ -630,6 +710,12 @@ def run_job(file_id, sha256):
 
     def progress(percent, phase="writing"):
         _state(state="running", phase=phase, percent=percent, **base)
+
+    def stopped(busy, cleared):
+        # The screen ends its modal on "failed" and shows the message.
+        _state(state="failed", phase="stopped_print", error=busy["reason"],
+               message=STOPPED_MESSAGE % busy["message"], stopped=True,
+               target_cleared=cleared, **base)
 
     try:
         progress(1, "checking")
@@ -656,18 +742,20 @@ def run_job(file_id, sha256):
         if rc != 0:
             raise OsConfigError("INVALID_IMAGE", "the package could not be unpacked")
         touched = parts["kernel"]
+        # Whatever confirmed this slot before is gone from here on.
+        unconfirm_slot(target)
         _write_payload(work, info["payload_dir"], info["images"]["kernel"], parts["kernel"],
                        "kernel", progress, (30, 35))
         _write_payload(work, info["payload_dir"], info["images"]["rootfs"], parts["rootfs"],
                        "rootfs", progress, (35, 95))
-        # G88: the printing check ran when the job started; writing takes
-        # minutes, and a print may have started since. Never switch slots and
-        # reboot under a running print - wait for it to end first. Waiting
-        # BEFORE the switch keeps a power cut during the wait on the
-        # current slot.
-        while updates._printing():
-            _state(state="running", phase="waiting_for_print", percent=96, **base)
-            time.sleep(PRINT_WAIT)
+        # G91 stop point 1 (replaces G88's wait): writing takes minutes and
+        # a print may have started since the request. Never switch slots
+        # under it: stop, blank the written slot (a kept, never-booted slot
+        # could later be switched into without a trial), release the lock.
+        busy = _stop_check(holder)
+        if busy:
+            stopped(busy, _blank_kernel(touched))
+            return
         progress(96, "switching")
         kname, _ = uimage_name(_read_head(parts["kernel"]))
         kind = system_kind(kname)
@@ -693,6 +781,26 @@ def run_job(file_id, sha256):
             touched = None      # fully written and verified: it may still be swapped to
             raise OsConfigError("SLOT_SWAP_FAILED", "the new slot is written but could not be "
                                 "selected; the printer stays on the current version")
+        # G91 stop point 2: the marker points at the new slot; re-check right
+        # before the reboot. Busy: marker back to the running slot (the swap
+        # tool reads it back), TRIAL deleted, written slot blanked. If the
+        # marker cannot be put back, touch nothing more and do not reboot:
+        # the TRIAL record protects the next power-on. What is left is the
+        # few-ms window between this check and /sbin/reboot (S33, accepted).
+        busy = _stop_check(holder)
+        if busy:
+            rc, _, _ = common.run([SLOT_SWAP, running], 30)
+            if rc == 0:
+                remove_trial()
+                touched = None
+                stopped(busy, _blank_kernel(parts["kernel"]))
+                return
+            touched = None
+            _state(state="finished", phase="next_power_on", percent=100, target=target,
+                   system=kind, version=info["version"], error=busy["reason"],
+                   message="Install finished; the printer will start the new system at the "
+                           "next power-on. (%s)" % busy["message"], **base)
+            return
         _state(state="restarting", phase="restarting", percent=100, target=target,
                system=kind, version=info["version"], **base)
         common.run([REBOOT], 30)
@@ -717,10 +825,25 @@ def install(file_id, sha256):
         raise invalid("BUSY", "an image install is already running")
     resolve(file_id)
     target_partitions(system.boot_slot())     # refuse early, before the job starts
-    _state(state="running", phase="starting", percent=0, file=file_id, started=int(time.time()))
-    subprocess.Popen([OSCONFIG, "image", "worker", "--file", file_id, "--sha256", sha256],
-                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                     stderr=subprocess.DEVNULL, start_new_session=True, close_fds=True)
+    # G91: one maintenance lock (a second install, an MCU flash ... is
+    # refused UPDATING), then the request busy check; the worker inherits the
+    # lock and holds it until it exits.
+    started = int(time.time())
+    token = "image-%d-%d" % (started, os.getpid())
+    lock = common.MaintenanceLock(token).acquire()
+    try:
+        common.refuse_if_busy("request", holder=token)
+        _state(state="running", phase="starting", percent=0, file=file_id, started=started)
+        subprocess.Popen([OSCONFIG, "image", "worker", "--file", file_id, "--sha256", sha256,
+                          "--holder", token],
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True, close_fds=True,
+                         pass_fds=(lock.fd,))
+    finally:
+        # Close, never LOCK_UN: the worker shares this open file and the
+        # lock with it. Refused before the worker started: closing frees it.
+        os.close(lock.fd)
+        lock.fd = None
     return {"result": "STARTED", "applies": "the printer restarts into the new version"}
 
 
@@ -798,8 +921,32 @@ def _remove_installed_upload(t):
         return False
 
 
+def _stack_up():
+    """(up, note): Klipper ready and the screen running. A screen that
+    memguard shed for memory counts as up (G91 v2.3, G79 review 10) - the
+    note says so in the result record."""
+    if not _klipper_ready():
+        return False, None
+    if _gui_running():
+        return True, None
+    if os.path.exists(SHED_SCREEN):
+        return True, "the screen was stopped by memguard (low memory) and counted as up"
+    return False, None
+
+
+def _confirm(t, running, note):
+    _record(t, "CONFIRMED", note)
+    confirm_slot(running)
+    remove_trial()
+    return {"result": "CONFIRMED", "removed_upload": _remove_installed_upload(t)}
+
+
 def trial():
-    """First boot after an install: confirm the new slot, or go back ONCE."""
+    """First boot after an install or a switch into an unconfirmed slot:
+    confirm the slot, or go back ONCE. The verdict waits while a print runs
+    (G91 v2.3): never a switch + reboot under it; TRIAL stays meanwhile (a
+    power cut re-runs the trial), then Klipper and the screen are judged
+    again."""
     t, _ = common.read_json(TRIAL)
     if not t:
         return {"result": "NO_TRIAL"}
@@ -811,13 +958,23 @@ def trial():
         return {"result": "NOT_STARTED"}
     deadline = time.monotonic() + TRIAL_SECONDS
     while True:
-        if _klipper_ready() and _gui_running():
-            _record(t, "CONFIRMED")
-            os.unlink(TRIAL)
-            return {"result": "CONFIRMED", "removed_upload": _remove_installed_upload(t)}
+        up, note = _stack_up()
+        if up:
+            return _confirm(t, running, note)
         if time.monotonic() >= deadline:
             break
         time.sleep(TRIAL_POLL)
+    postponed = False
+    while common.busy_state("recovery")["busy"]:
+        if not postponed:
+            postponed = True
+            t["postponed"] = True       # the request refusal says "after the print"
+            write_trial(t)
+        time.sleep(TRIAL_POLL)
+    if postponed:
+        up, note = _stack_up()
+        if up:
+            return _confirm(t, running, note)
     # Remove the trial BEFORE switching back: whatever happens next, this
     # fallback can never run a second time.
     os.unlink(TRIAL)
