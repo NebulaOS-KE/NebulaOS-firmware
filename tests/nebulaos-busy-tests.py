@@ -38,7 +38,7 @@ PYLIB = os.path.join(OVERLAY, "usr", "lib", "nebulaos", "python")
 BUSY_CLI = os.path.join(OVERLAY, "usr", "libexec", "nebulaos", "nebulaos-busy")
 BUSY_LIB = os.path.join(OVERLAY, "etc", "nebulaos-busy.sh")
 SHIM = os.path.join(OVERLAY, "usr", "bin", "supervisorctl")
-FAST_PROFILES = ("restart", "recovery")
+FAST_PROFILES = ("restart", "recovery", "screen")
 
 
 def unix_sockets_allowed():
@@ -70,7 +70,7 @@ elif mode != "ready":
 else:
     print(json.dumps({"result": {"status": st["status"]}}, separators=(",", ":")))
 """
-ALL_PROFILES = ("request", "point_of_no_return", "git", "restart", "recovery")
+ALL_PROFILES = ("request", "point_of_no_return", "git", "restart", "recovery", "screen")
 
 
 def dead_pid():
@@ -505,25 +505,33 @@ class BusyTests(unittest.TestCase):
 
     def test_s20_klippy_alive_state_unreadable(self):
         # Moonraker down, Klippy runs but does not answer: UNKNOWN for the
-        # request-type profiles and restart; recovery only with the marker.
+        # request-type profiles and the screen; recovery only with the marker;
+        # restart never (G95: a hung Klipper can always be restarted, even
+        # with memguard's print marker set - only a live answer refuses).
         self.moonraker_down()
         self.klippy_socket("hang")
         self.expect({"request": "UNKNOWN", "point_of_no_return": "UNKNOWN", "git": "UNKNOWN",
-                     "restart": "UNKNOWN", "recovery": None})
+                     "restart": None, "recovery": None, "screen": "UNKNOWN"})
         self.assertEqual(self.c.BUSY_MESSAGES["UNKNOWN"],
                          "Printer state unknown - not possible right now.")
         self.marker("print-active")
-        self.expect({"request": "PRINTING", "restart": "PRINTING", "recovery": "PRINTING"},
-                    profiles=("request", "restart", "recovery"), cli=False)
+        self.marker("klipper-active")
+        self.expect({"request": "PRINTING", "restart": None, "recovery": "PRINTING",
+                     "screen": "PRINTING"},
+                    profiles=("request", "restart", "recovery", "screen"), cli=False)
 
     def test_ready_klippy_query_fails(self):
-        # N3: a failed query against a live, ready Klippy
+        # N3: a failed query against a live, ready Klippy; G95: restart is
+        # allowed then, even with the print marker
         self.mr.query_fails = True
         self.expect({"request": "UNKNOWN", "point_of_no_return": "UNKNOWN", "git": "UNKNOWN",
-                     "restart": "UNKNOWN", "recovery": None})
+                     "restart": None, "recovery": None, "screen": "UNKNOWN"})
         self.marker("print-active")
-        self.assertEqual(self.py("recovery"), "PRINTING")
-        self.assertEqual(self.fast("recovery"), "PRINTING")
+        for profile in ("recovery", "screen"):
+            self.assertEqual(self.py(profile), "PRINTING")
+            self.assertEqual(self.fast(profile), "PRINTING")
+        self.assertIsNone(self.py("restart"))
+        self.assertIsNone(self.fast("restart"))
 
     def test_s25_moonraker_broken_klippy_socket_decides(self):
         # an app update broke Moonraker: the Klippy socket says idle -> the
@@ -536,8 +544,9 @@ class BusyTests(unittest.TestCase):
         self.klippy_socket("ready", {"extruder": {"target": 210.0}})
         self.expect("ACTIVE", cli=False)
         self.klippy_socket("error")
-        self.expect({"request": "UNKNOWN", "restart": "UNKNOWN", "recovery": None},
-                    profiles=("request", "restart", "recovery"), cli=False)
+        self.expect({"request": "UNKNOWN", "restart": None, "recovery": None,
+                     "screen": "UNKNOWN"},
+                    profiles=("request", "restart", "recovery", "screen"), cli=False)
 
     def test_s26_no_moonraker_no_klippy(self):
         # a new image whose Moonraker never starts and Klippy is not running
@@ -647,20 +656,34 @@ class BusyTests(unittest.TestCase):
         self.assertEqual((rc, ran, err), (0, ["S55klipper", "restart"], ""))
         self.assertLess(took, 2.0)
 
-    def test_shim_hung_query_counts_as_busy_within_budget(self):
-        # N3: a check that cannot read a live, ready Klippy refuses, and the
-        # worst case stays inside the budget (Moonraker kills it at 6 s).
-        self.mr.query_fails = True
+    def test_g95_shim_hung_klippy_restart_allowed_within_budget(self):
+        # G95 (Tim 2026-10-22): a hung/unresponsive Klipper must ALWAYS be
+        # restartable from Mainsail. A check that gets no answer from a live
+        # Klippy allows the restart - even with memguard's print marker set -
+        # and the worst case stays inside the budget (Moonraker kills the shim
+        # at 6 s).
+        self.marker("print-active")
+        self.mr.query_fails = True                         # Moonraker: ready, query errors
         rc, err, ran, took = self.shim("restart", "klipper")
-        self.assertEqual((rc, ran), (1, []))
-        self.assertIn("(UNKNOWN)", err)
+        self.assertEqual((rc, ran, err), (0, ["S55klipper", "restart"], ""))
         self.mr.query_fails = False
         self.mr.hang = 3                                   # Moonraker does not answer
         self.klippy_socket("hang")                         # nor does Klippy
         rc, err, ran, took = self.shim("restart", "klipper")
-        self.assertEqual((rc, ran), (1, []))
+        self.assertEqual((rc, ran), (0, ["S55klipper", "restart"]))
         self.assertLess(took, 2.5)
+        rc, err, ran, took = self.shim("stop", "klipper")
+        self.assertEqual((rc, ran), (0, ["S55klipper", "stop"]))
         self.mr.hang = 0
+
+    def test_g95_marker_refuses_only_while_klippy_answers(self):
+        # the memguard print marker still refuses while Klippy answers (its
+        # live reply may lag the print start by a poll)
+        self.status(print_stats={"state": "standby"})
+        self.marker("print-active")
+        rc, err, ran, took = self.shim("restart", "klipper")
+        self.assertEqual((rc, ran), (1, []))
+        self.assertIn("(PRINTING)", err)
 
 
 if __name__ == "__main__":

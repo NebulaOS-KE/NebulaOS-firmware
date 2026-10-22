@@ -129,14 +129,17 @@ restart() {
 # Mainsail's service "restart klipper" lands here too. Neither may cut a
 # print: restart/stop of `klipper` - and ONLY klipper; nebulascreen and the
 # rest are never gated - is refused while the shared busy check
-# (/etc/nebulaos-busy.sh, restart profile) says printing, paused, heating or
-# moving, or cannot read the state of a live, ready Klippy (a hung query
-# never lets a restart through, N3). A Klippy that is not running or not
-# ready can always be restarted (S19): the check reads klippy_state and the
-# Klippy pid first. Shell only, before `stop`, well inside Moonraker's 6 s
-# budget for this command. The reason goes to stderr, exit 1. A user who
-# really needs Klipper back during a print uses FIRMWARE_RESTART or the
-# emergency stop, which do not come through here.
+# (/etc/nebulaos-busy.sh, restart profile) POSITIVELY says printing, paused,
+# heating or moving (G95, Tim 2026-10-22: a live Klippy answered so, or the
+# memguard print marker is set while Klippy answers). A Klippy that is not
+# running, not ready, or does not answer (hung, timeout, error) can ALWAYS be
+# restarted (S19, G95): the check reads klippy_state and the Klippy pid
+# first. Shell only, before `stop`, well inside Moonraker's 6 s budget for
+# this command. The reason goes to stderr, exit 1, and (G98) a
+# "!! NebulaOS refused: ..." line to Mainsail's console through the
+# [nebulaos] component (best effort, 1 s, never delays or changes the
+# refusal). A user who really needs Klipper back during a print uses
+# FIRMWARE_RESTART or the emergency stop, which do not come through here.
 NEBULAOS_BUSY_LIB="${NEBULAOS_BUSY_LIB:-/etc/nebulaos-busy.sh}"
 
 refuse_if_klipper_busy() {

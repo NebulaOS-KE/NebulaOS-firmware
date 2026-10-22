@@ -7,9 +7,14 @@
 # Python start-up:
 #
 #   restart    supervisorctl restart/stop of klipper (v3.1: < 2 s, runs before
-#              `stop`): PRINTING PAUSED ACTIVE, and UNKNOWN (a failed query
-#              against a live, ready Klippy - a hung query never lets a
-#              Klipper restart through, N3)
+#              `stop`): G95 (Tim 2026-10-22, design v3.7) - only a POSITIVE
+#              answer refuses: PRINTING PAUSED ACTIVE from a live reply, or
+#              the memguard markers while Klippy answers. No answer, a
+#              timeout or an error (UNKNOWN) = allowed: a hung Klipper can
+#              always be restarted from Mainsail.
+#   screen     the update supervisor's own NebulaScreen restarts: PRINTING
+#              PAUSED ACTIVE, and UNKNOWN (a failed query against a live
+#              Klippy) - the pre-G95 restart rule
 #   recovery   the supervisor's validation restarts and rollback transaction:
 #              PRINTING PAUSED ACTIVE only; UNKNOWN counts only together with
 #              the print-active marker (N3); never a lock (a rollback outranks
@@ -171,12 +176,15 @@ nb_status_reasons() {
 
 nebulaos_busy_fast() { # PROFILE -> echo REASON, rc 0 busy / 1 not busy
 	case "$1" in
-		restart) _nbcount="PRINTING PAUSED ACTIVE UNKNOWN" ;;
+		restart) _nbcount="PRINTING PAUSED ACTIVE" ;;
+		screen) _nbcount="PRINTING PAUSED ACTIVE UNKNOWN" ;;
 		recovery) _nbcount="PRINTING PAUSED ACTIVE" ;;
 		*) echo "nebulaos_busy_fast: unknown profile '$1'" >&2; echo UNKNOWN; return 0 ;;
 	esac
 	nb_klippy_facts
 	[ "$_nb_klippy" = not_ready ] && return 1
+	# G95: restart counts only what a live, answering Klippy says.
+	[ "$1" = restart ] && [ "$_nb_klippy" != ready ] && return 1
 	_nb_reasons=
 	[ "$_nb_klippy" = ready ] && nb_status_reasons
 	case " $_nb_reasons " in *" PAUSED "*) ;; *)

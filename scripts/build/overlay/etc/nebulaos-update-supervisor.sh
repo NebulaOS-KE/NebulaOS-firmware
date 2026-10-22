@@ -844,15 +844,16 @@ ns_set_state() { # STATE REASON [KEY=VALUE...]
 }
 
 # Why the screen may not be restarted now (echoed), or return 1 when idle.
-# G91: the print reasons come from the shared busy check (restart profile:
+# G91: the print reasons come from the shared busy check (screen profile:
 # PRINTING, PAUSED, ACTIVE, and UNKNOWN for a live Klippy whose state cannot
-# be read; a Klippy that is not ready is not busy - no print can run). On top,
+# be read; a Klippy that is not ready is not busy - no print can run; the
+# Klipper restart profile allows UNKNOWN since G95, the screen keeps it). On top,
 # for the screen: memory pressure, and Moonraker unreachable (fail-closed,
 # P3 - the screen reports its health through Moonraker, so it could not be
 # judged anyway).
 ns_busy_reason() {
 	if command -v nebulaos_busy_fast >/dev/null 2>&1; then
-		nebulaos_busy_fast restart && return 0
+		nebulaos_busy_fast screen && return 0
 	elif [ -e "$NEBULAOS_RUN_DIR/print-active" ]; then
 		echo PRINTING; return 0
 	fi

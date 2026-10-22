@@ -189,8 +189,15 @@ def parse_kv(text):
 #                       is excluded by its holder token; no pending-trial rule)
 #   git                 the git wrapper inside a Moonraker update: not
 #                       update_manager busy
-#   restart             supervisorctl restart/stop of klipper: print + activity
-#                       (+ UNKNOWN: a failed query against a live Klippy)
+#   restart             supervisorctl restart/stop of klipper, the screen's
+#                       Restart Klipper / Restart MCU: G95 (Tim 2026-10-22) -
+#                       only a POSITIVE answer refuses (print_stats printing/
+#                       paused, a heater target or idle_timeout "Printing" from
+#                       a live reply, or the memguard markers while Klippy
+#                       answers). No answer, a timeout, an error = UNKNOWN =
+#                       allowed: a hung Klipper can always be restarted.
+#   screen              the update supervisor's own NebulaScreen restarts: the
+#                       pre-G95 restart rule (print + activity, UNKNOWN = busy)
 #   recovery            supervisor rollback, image trial fallback: print +
 #                       activity only; UNKNOWN only together with the
 #                       print-active marker (N3); never a lock
@@ -224,9 +231,13 @@ PROFILES = {
                            "LOW_MEMORY", "UNKNOWN", "update_manager"},
     "git": {"PRINTING", "PAUSED", "ACTIVE", "CALIBRATING", "UPDATING", "LOW_MEMORY",
             "UNKNOWN"},
-    "restart": {"PRINTING", "PAUSED", "ACTIVE", "UNKNOWN"},
+    "restart": {"PRINTING", "PAUSED", "ACTIVE"},
+    "screen": {"PRINTING", "PAUSED", "ACTIVE", "UNKNOWN"},
     "recovery": {"PRINTING", "PAUSED", "ACTIVE"},
 }
+# G95: profiles that count only what a live, answering Klippy says (the
+# memguard markers too only while Klippy answers; never UNKNOWN).
+POSITIVE_ONLY = {"restart"}
 # What one query asks Klippy (through Moonraker or its socket).
 BUSY_OBJECTS = {
     "print_stats": ["state"],
@@ -476,7 +487,8 @@ def busy_state(profile, holder=None, facts=None):
     reasons = []
     if klippy == "ready":
         reasons += status_reasons(facts.get("status"))
-    if klippy in ("ready", "unknown"):
+    marker_states = ("ready",) if profile in POSITIVE_ONLY else ("ready", "unknown")
+    if klippy in marker_states:
         # R3: the markers count only while Klippy may be printing.
         if marker and "PAUSED" not in reasons:
             reasons.append("PRINTING")
