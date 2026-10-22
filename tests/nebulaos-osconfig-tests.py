@@ -93,6 +93,9 @@ class Env(object):
             "NEBULAOS_MOONRAKER_BASE": "http://127.0.0.1:9",
             "NEBULAOS_KLIPPY_PIDFILE": os.path.join(self.tmp, "klippy.pid"),
             "NEBULAOS_KLIPPY_SOCK": os.path.join(self.tmp, "klippy.sock"),
+            # S34 reboot grace: never the host's printer.cfg or /proc
+            "NEBULAOS_PRINTER_CFG": os.path.join(self.tmp, "printer.cfg"),
+            "NEBULAOS_PROC_DIR": os.path.join(self.tmp, "proc"),
         })
         if PYLIB not in sys.path:
             sys.path.insert(0, PYLIB)
@@ -1035,6 +1038,136 @@ class WifiTests(unittest.TestCase):
         self.assertEqual((rc, out["result"]), (0, "CONNECTED"))
 
 
+class MaintenanceGateTests(unittest.TestCase):
+    """G91 v2.7 step 6 / S34: every remaining disruptive osconfig action holds
+    the maintenance lock and is refused (exit 3) while busy; reboot-type
+    actions wait out the grace after a Klippy (re)start or SAVE_CONFIG."""
+
+    def setUp(self):
+        self.e = Env()
+        self.c = self.e.common
+        self.cleanup = importlib.import_module("nebulaos_osconfig.cleanup")
+        write_exe(os.environ["NEBULAOS_SLOT_SWAP"], "exit 0\n")
+        open(os.environ["NEBULAOS_CMDLINE"], "w").write("root=/dev/mmcblk0p8\n")
+
+    def tearDown(self):
+        self.e.cleanup()
+
+    def actions(self):
+        return [("set_image", lambda: self.e.bootdisplay.set_image("x.png")),
+                ("reset_image", self.e.bootdisplay.reset_image),
+                ("restore_original_logo", self.e.bootdisplay.restore_original_logo),
+                ("clean_creality", lambda: self.cleanup.clean_creality(False)),
+                ("request_clean_reset", self.e.system.request_clean_reset),
+                ("swap_slot", self.e.system.swap_slot),
+                ("mcu_flash", lambda: self.e.mcu.flash("upload/x.bin", "0" * 64))]
+
+    def test_refused_while_busy_nothing_changed(self):
+        self.e.image.slot_bootable = lambda slot: True
+        for reason in ("PRINTING", "PAUSED", "ACTIVE", "CALIBRATING", "LOW_MEMORY", "UNKNOWN"):
+            calls = fake_busy(self.c, [reason])
+            for name, action in self.actions():
+                del calls[:]
+                with self.assertRaises(self.c.Refused, msg=name) as cm:
+                    action()
+                self.assertEqual(cm.exception.code, reason, name)
+                self.assertEqual(calls[0][0], "request", name)
+                self.assertTrue(calls[0][1], name)               # own lock excluded
+                self.assertIsNone(self.c.lock_holder(self.c.MAINTENANCE_LOCK), name)
+        self.assertFalse(os.path.exists(self.e.system.CLEAN_RESET_FLAG))
+        self.assertFalse(os.path.exists(self.e.image.TRIAL))
+
+    def test_refusal_is_exit_3_through_the_cli(self):
+        fake_busy(self.c, ["PRINTING"])
+        for argv in (["boot-display", "reset-image"], ["system", "cleanup-creality"],
+                     ["system", "clean-reset"], ["boot-display", "restore-original-logo"]):
+            out, old = io.StringIO(), sys.stdout
+            sys.stdout = out
+            try:
+                rc = self.e.cli.main(argv)
+            finally:
+                sys.stdout = old
+            reply = json.loads(out.getvalue())
+            self.assertEqual((rc, reply["error"], reply["refused"]), (3, "PRINTING", True), argv)
+
+    def test_second_action_refused_by_the_lock(self):
+        # the real check: Klippy gone (not busy) but another holder -> UPDATING
+        self.e.image.slot_bootable = lambda slot: True
+        other = self.c.MaintenanceLock("image-1").acquire()
+        try:
+            for name, action in self.actions():
+                with self.assertRaises(self.c.Refused, msg=name) as cm:
+                    action()
+                self.assertEqual(cm.exception.code, "UPDATING", name)
+        finally:
+            other.release()
+
+    def test_lock_held_while_the_action_runs(self):
+        seen = {}
+        real = self.e.system._arm_clean_reset
+
+        def arm():
+            seen["holder"] = self.c.lock_holder(self.c.MAINTENANCE_LOCK)
+            return real()
+        self.e.system._arm_clean_reset = arm
+        self.assertEqual(self.e.system.request_clean_reset()["result"], "SCHEDULED")
+        self.assertTrue(seen["holder"].startswith("clean-reset-"))
+        self.assertIsNone(self.c.lock_holder(self.c.MAINTENANCE_LOCK))
+
+    def test_mcu_flash_hands_its_token_to_the_cli_and_maps_its_refusal(self):
+        m = self.e.mcu
+        os.makedirs(m.UPLOAD_DIR, exist_ok=True)
+        data = candidate_bytes()
+        with open(os.path.join(m.UPLOAD_DIR, "ok.bin"), "wb") as fh:
+            fh.write(data)
+        sha = m._image_module().sha256(data)
+        log = os.path.join(self.e.tmp, "cli.env")
+        write_exe(os.environ["NEBULAOS_MCU_CLI"], """
+            echo "$NEBULAOS_MAINTENANCE_HOLDER" > "%s"
+            echo "NebulaOS refused: Not possible while a print is running. (PRINTING)" >&2
+            exit 3
+        """ % log)
+        with self.assertRaises(self.c.Refused) as cm:
+            m.flash("upload/ok.bin", sha)
+        self.assertEqual(cm.exception.code, "PRINTING")
+        self.assertTrue(open(log).read().strip().startswith("mcu-flash-"))
+        self.assertEqual([f for f in os.listdir(m.STAGE_DIR) if f.endswith(".bin")], [])
+
+    def test_s34_reboot_grace(self):
+        import time
+        slept = []
+        cfg = os.environ["NEBULAOS_PRINTER_CFG"]
+        self.assertEqual(self.c.reboot_grace(slept.append), 0.0)    # nothing known
+        open(cfg, "w").close()                                     # SAVE_CONFIG just now
+        waited = self.c.reboot_grace(slept.append)
+        self.assertTrue(2.0 < waited <= 3.0, waited)
+        os.utime(cfg, (time.time() - 10, time.time() - 10))
+        self.assertEqual(self.c.reboot_grace(slept.append), 0.0)
+        # a Klippy process started 1 s ago (FIRMWARE_RESTART / service restart)
+        proc = os.environ["NEBULAOS_PROC_DIR"]
+        os.makedirs(os.path.join(proc, "4242"))
+        open(os.environ["NEBULAOS_KLIPPY_PIDFILE"], "w").write("4242\n")
+        tck = os.sysconf("SC_CLK_TCK")
+        fields = ["S"] + ["0"] * 18 + [str(99 * tck)] + ["0"] * 10
+        open(os.path.join(proc, "4242", "stat"), "w").write("4242 (python3) " + " ".join(fields))
+        open(os.path.join(proc, "uptime"), "w").write("100.00 50.00\n")
+        waited = self.c.reboot_grace(slept.append)
+        self.assertAlmostEqual(waited, 2.0, places=3)
+        self.assertEqual(len(slept), 2)
+
+    def test_s34_reboot_actions_wait_first(self):
+        order = []
+        self.c.reboot_grace = lambda sleep=None: order.append("grace")
+        fake = fake_busy(self.c, [None])
+        real = self.c.busy_state
+        self.c.busy_state = lambda *a, **k: (order.append("busy"), real(*a, **k))[1]
+        self.e.system.request_clean_reset()
+        self.e.image.slot_bootable = lambda slot: True
+        self.e.system.swap_slot()
+        self.assertEqual(order, ["grace", "busy", "grace", "busy"])
+        self.assertEqual(len(fake), 2)
+
+
 class SystemResetSlotTests(unittest.TestCase):
     def setUp(self):
         self.e = Env()
@@ -1298,7 +1431,8 @@ class McuFilesTests(unittest.TestCase):
         try:
             with self.assertRaises(self.e.common.OsConfigError) as cm:
                 self.m.flash("upload/ok.bin", sha)
-            self.assertEqual(cm.exception.code, "BUSY")
+            # G91: the MCU flash lock is part of the shared check (UPDATING)
+            self.assertEqual((cm.exception.code, cm.exception.refused), ("UPDATING", True))
         finally:
             os.close(fd)
         self.assertFalse(os.path.exists(self.cli_log))

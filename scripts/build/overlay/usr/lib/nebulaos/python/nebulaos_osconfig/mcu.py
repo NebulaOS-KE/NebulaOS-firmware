@@ -279,6 +279,7 @@ def _record(entry):
         pass
 
 
+@common.maintenance("mcu-flash")      # G91 step 6: lock + request busy check
 def flash(file_id, expected_sha):
     path = resolve(file_id)
     if not isinstance(expected_sha, str) or not re.match(r"^[0-9a-f]{64}$", expected_sha):
@@ -307,8 +308,19 @@ def flash(file_id, expected_sha):
             if img.sha256(handle.read()) != img.sha256(image):
                 raise OsConfigError("STAGE_FAILED", "could not stage the firmware in memory")
         started = time.time()
-        rc, out, err = common.run([MCU_CLI, "flash", staged], FLASH_TIMEOUT)
+        # The CLI re-checks right before it stops Klipper (point of no
+        # return), our lock excluded through the holder token.
+        env = dict(os.environ, NEBULAOS_MAINTENANCE_HOLDER=common.CURRENT_HOLDER or "")
+        rc, out, err = common.run([MCU_CLI, "flash", staged], FLASH_TIMEOUT, env=env)
         log = (out + err)[-3000:]
+        if rc == common.EXIT_REFUSED:
+            try:
+                os.unlink(staged)
+            except OSError:
+                pass
+            m = re.search(r"\((%s)\)" % "|".join(common.BUSY_REASONS), log)
+            raise common.Refused(common.busy_result("point_of_no_return",
+                                                    m.group(1) if m else "UNKNOWN"))
         record = {"file": file_id, "sha256": expected_sha, "image_sha256": img.sha256(image),
                   "kind": kind, "time": int(started), "seconds": int(time.time() - started),
                   "klipper_version": img.klipper_version(image),

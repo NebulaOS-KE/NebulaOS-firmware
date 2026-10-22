@@ -433,6 +433,9 @@ def _apply_both(change_boot, slot_bytes):
     return cfg, power
 
 
+# G91 step 6: the power-on logo writes (RTOS partition) and the boot-screen
+# change around them hold the maintenance lock and are refused while busy.
+@common.maintenance("boot-logo")
 def set_image(filename):
     src = resolve_upload(filename)
     fmt, width, height = validate_image_file(src)
@@ -459,6 +462,7 @@ def set_image(filename):
             "power_on": power}
 
 
+@common.maintenance("boot-logo")
 def reset_image():
     from . import poweronlogo
     slot_bytes = poweronlogo.nebulaos_slot_bytes()
@@ -477,6 +481,7 @@ def reset_image():
     return {"result": "APPLIED", "config": cfg, "render": _render_now(), "power_on": power}
 
 
+@common.maintenance("boot-logo")
 def restore_original_logo():
     """G58: the original power-on logo back into the running slot's RTOS. The
     Linux boot screen is not changed."""

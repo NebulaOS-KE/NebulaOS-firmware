@@ -787,6 +787,9 @@ def run_job(file_id, sha256, holder=None):
         # marker cannot be put back, touch nothing more and do not reboot:
         # the TRIAL record protects the next power-on. What is left is the
         # few-ms window between this check and /sbin/reboot (S33, accepted).
+        # S34: Klippy settled for the grace period (a SAVE_CONFIG just
+        # before) and the disks synced first.
+        common.reboot_grace()
         busy = _stop_check(holder)
         if busy:
             rc, _, _ = common.run([SLOT_SWAP, running], 30)
@@ -984,5 +987,6 @@ def trial():
     if rc != 0:
         _record(t, "ROLLBACK_FAILED", "the previous slot could not be selected")
         return {"result": "ROLLBACK_FAILED"}
+    common.reboot_grace()          # S34
     common.run([REBOOT], 30)
     return {"result": "ROLLED_BACK"}

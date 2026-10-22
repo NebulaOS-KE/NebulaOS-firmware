@@ -188,6 +188,7 @@ def _remove(path, skip):
         os.rmdir(path)
 
 
+@common.maintenance("creality-cleanup")     # G91 step 6
 def clean_creality(include_videos=False, log=None):
     mounts, swaps = _mounts(), _swaps()
     removed, kept, freed_before = [], [], _free()

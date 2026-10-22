@@ -10,6 +10,7 @@ import fcntl
 import json
 import os
 import subprocess
+import time
 
 NEBULAOS_ROOT = os.environ.get("NEBULAOS_ROOT", "/usr/data/nebulaos")
 RUN_DIR = os.environ.get("NEBULAOS_OSCONFIG_RUN", "/run/nebulaos")
@@ -524,3 +525,80 @@ def refuse_if_busy(profile="request", holder=None):
     if state["busy"]:
         raise Refused(state)
     return state
+
+
+# The maintenance-lock token of the action running in this process (set by
+# @maintenance), for a child that re-checks at its own point of no return
+# (nebulaos-mcu reads it from NEBULAOS_MAINTENANCE_HOLDER).
+CURRENT_HOLDER = None
+
+
+def maintenance(name):
+    """G91 v2.7 step 6 (P1, P6): the decorated disruptive action takes the
+    maintenance lock (a second one is refused UPDATING, never queued) and is
+    refused (Refused, exit 3) while the request busy check says busy - its own
+    lock excluded. Nothing has been changed when either refuses."""
+    import functools
+
+    def wrap(fn):
+        @functools.wraps(fn)
+        def run(*args, **kwargs):
+            global CURRENT_HOLDER
+            token = "%s-%d" % (name, os.getpid())
+            with MaintenanceLock(token):
+                refuse_if_busy("request", holder=token)
+                outer, CURRENT_HOLDER = CURRENT_HOLDER, token
+                try:
+                    return fn(*args, **kwargs)
+                finally:
+                    CURRENT_HOLDER = outer
+        return run
+    return wrap
+
+
+# S34 (G91 v2.5): a reboot-type point of no return waits until Klippy has
+# been settled for REBOOT_GRACE seconds - SAVE_CONFIG rewrites printer.cfg
+# and restarts Klippy in-process, a FIRMWARE_RESTART or service restart
+# starts a new process - then syncs. Bounded: never more than REBOOT_GRACE.
+REBOOT_GRACE = float(os.environ.get("NEBULAOS_REBOOT_GRACE", "3"))
+PRINTER_CFG = os.environ.get("NEBULAOS_PRINTER_CFG", "/opt/printer_data/config/printer.cfg")
+
+
+def _klippy_age():
+    """Seconds since the Klippy process started, None when unknown."""
+    try:
+        with open(KLIPPY_PIDFILE) as handle:
+            pid = handle.read().strip()
+        with open(os.path.join(PROC_DIR, pid, "stat")) as handle:
+            fields = handle.read().rsplit(")", 1)[1].split()
+        with open(os.path.join(PROC_DIR, "uptime")) as handle:
+            uptime = float(handle.read().split()[0])
+        return uptime - int(fields[19]) / float(os.sysconf("SC_CLK_TCK"))
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def klippy_settled_for():
+    """Seconds since the last Klippy (re)start or printer.cfg write (SAVE_CONFIG)."""
+    ages = []
+    try:
+        ages.append(time.time() - os.stat(PRINTER_CFG).st_mtime)
+    except OSError:
+        pass
+    age = _klippy_age()
+    if age is not None:
+        ages.append(age)
+    return min(ages) if ages else None
+
+
+def reboot_grace(sleep=None):
+    """Wait out the rest of REBOOT_GRACE after a Klippy (re)start or a
+    printer.cfg write, then sync. Returns the seconds waited."""
+    sleep = sleep or time.sleep
+    age = klippy_settled_for()
+    waited = 0.0
+    if age is not None and 0 <= age < REBOOT_GRACE:
+        waited = REBOOT_GRACE - age
+        sleep(waited)
+    os.sync()
+    return waited

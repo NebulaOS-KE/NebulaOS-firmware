@@ -131,6 +131,17 @@ def ack_notice(nid):
 # reboot cannot be started.
 
 def request_clean_reset():
+    """G91 step 6: refused while busy, under the maintenance lock; S34: armed
+    only once Klippy has been settled for the grace period (the [nebulaos]
+    component reboots right after)."""
+    token = "clean-reset-%d" % os.getpid()
+    with common.MaintenanceLock(token):
+        common.reboot_grace()
+        common.refuse_if_busy("request", holder=token)
+        return _arm_clean_reset()
+
+
+def _arm_clean_reset():
     stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     common.atomic_write(CLEAN_RESET_FLAG, "requested=%s\n" % stamp, mode=0o600)
     return {"result": "SCHEDULED", "applies": "next boot"}
@@ -180,7 +191,16 @@ def swap_slot():
     if not image.slot_bootable(target):
         raise common.OsConfigError("SLOT_EMPTY", "slot %s holds no system (an image install "
                                    "into it did not finish); install an image first" % target)
-    common.refuse_if_busy("request")
+    token = "slot-swap-%d" % os.getpid()
+    with common.MaintenanceLock(token):
+        # S34: the [nebulaos] component reboots right after this returns.
+        common.reboot_grace()
+        common.refuse_if_busy("request", holder=token)
+        return _arm_swap(current, target)
+
+
+def _arm_swap(current, target):
+    from . import image
     trial = None
     if not image.slot_confirmed(target):
         kname, _ = image.uimage_name(image._read_head(image.SLOTS[target]["kernel"]))
