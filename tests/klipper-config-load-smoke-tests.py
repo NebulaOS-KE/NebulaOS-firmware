@@ -265,9 +265,34 @@ def load_config(py, klipper_dir, config_file, child_path):
     return json.loads(out.split("@@JSON@@", 1)[1])
 
 
+# Options the running printer writes into printer.cfg's SAVE_CONFIG block (or
+# that follow the user's persisted choice). Klipper's configfile refuses an
+# autosaved option that an include also sets, and G99's
+# contact_detection_mode default 'auto' must follow the user's load cell
+# mode - so no image-owned cfg may set any of them (comments are fine).
+IMAGE_CFG_FORBIDDEN_OPTIONS = ("contact_detection_mode", "raw_reference_counts",
+                               "counts_per_gram", "reference_tare_counts")
+
+
+def check_image_cfg_leaves_autosaved_options_alone():
+    cfg_dir = REPO_ROOT / "scripts/build/overlay/etc/nebulaos/klipper"
+    found = []
+    for path in sorted(cfg_dir.glob("*.cfg")):
+        for n, line in enumerate(path.read_text().splitlines(), 1):
+            name = line.split(":", 1)[0].split("=", 1)[0].strip()
+            if name in IMAGE_CFG_FORBIDDEN_OPTIONS:
+                found.append(f"{path.name}:{n}: {line.strip()}")
+    check(not found,
+          "no image-owned cfg sets an autosaved/user-choice option "
+          f"({', '.join(IMAGE_CFG_FORBIDDEN_OPTIONS)})",
+          "image-owned cfg sets an autosaved/user-choice option: "
+          + "; ".join(found))
+
+
 def main():
     global SKIP
 
+    check_image_cfg_leaves_autosaved_options_alone()
     klipper_pin = manifest_value("KLIPPER_PIN")
     ext_pin = manifest_value("KLIPPER_EXTENSIONS_PIN")
     check(bool(klipper_pin) and bool(ext_pin),

@@ -6,6 +6,25 @@
 > C/D need Tim at the printer with a scale). Content below is the brief as
 > supplied.
 >
+> **Status 2026-10-22 (G99, Tim's decision - overrides this brief's
+> qualification rule; formal qualification deferred):** the raw-count profile
+> **`ke-stock-v1`** (trigger 6400 counts, polarity -1) is the **default for
+> everyone**. The user chooses the load cell mode on the screen's Load Cell
+> page (`NEBULAOS_LOAD_CELL_MODE MODE=auto|manual`, persisted in
+> `printer_data/calibration/load_cell_mode.json`, no restart): **Automatic**
+> (default, no bottle) arms every touch - Z offset, nozzle clean - with that
+> profile anchored to the reference of a passed
+> `NEBULAOS_LOAD_CELL_AUTO_CHECK` (empty bed, no motion; the Z-offset
+> workflow runs it itself, refreshed hot right before the touches); a failed
+> check blocks automatic contact and offers Manual. **Manual** uses the
+> bottle calibration (`NEBULAOS_LOAD_CELL_CALIBRATE`; accepting it selects
+> Manual). `contact_detection_mode` stays a developer override (default
+> `auto` = follow the user's choice; never set in an image-owned cfg). Known
+> risks: nozzle clean on raw counts is not separately tested; a less or more
+> sensitive load cell on another unit presses with a different force at 6400
+> counts. Commands and status fields: `NEBULAOS_CORE_PUBLIC_API.md` sections
+> 8 and 8a. The 2026-10-21 note below describes the state before G99.
+>
 > **Implementation status (checked against the code 2026-10-21; the brief
 > below stays as supplied):** `contact_detection_mode` is
 > `auto|calibrated_force|raw_contact` with default **`auto`** (G83b-auto):

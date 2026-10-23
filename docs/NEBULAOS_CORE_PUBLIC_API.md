@@ -26,8 +26,8 @@ NOT_SUPPORTED_BY_MAINSAIL_UI.
 | CANONICAL_NAME | OWNER | DATA_SOURCE | USER_SURFACE | MAINSAIL_GROUP/PANEL | STATE_RESTRICTIONS | STATUS |
 |---|---|---|---|---|---|---|
 | `NEBULAOS_AUTO_CALIBRATE` | NebulaOS | Public wrapper (calibration.cfg) → private `_NEBULAOS_AUTO_CALIBRATE` (`nebulaos_calibration.py`, `cmd_auto_calibrate`) — full guided preflight→home→PID→nozzle-clean→Z-offset→bed-mesh→one-`SAVE_CONFIG` sequence, backed by `nebulaos_calibration_journal.py`'s persistent transaction journal | Mainsail macro button | `nebulaos-calibration` ("Calibration"), pos 0 | standby only (default: showInStandby=True, showInPrinting=False, showInPause=False) | OK |
-| `NEBULAOS_Z_OFFSET_CALIBRATE` | NebulaOS | Public wrapper → private `_NEBULAOS_Z_OFFSET_CALIBRATE` (`cmd_z_offset_calibrate`) — LOAD_CELL-only bounded-descent BLTouch/HX711 paired calibration (`nebulaos_probe_pair.py`); requires the probe's `contact_ready()` for this caller first (today: a load cell calibration, `NEBULAOS_LOAD_CELL_CALIBRATE` or `LOAD_CELL_CALIBRATE`; raw contact only with a qualified profile, none exists) | Mainsail macro button | `nebulaos-calibration`, pos 1 | standby only | OK |
-| `NEBULAOS_LOAD_CELL_CALIBRATE` | NebulaOS | Public wrapper → private `_NEBULAOS_LOAD_CELL_CALIBRATE` (`nebulaos_load_cell_calibration.py`, G86) — guided known-weight (1.5 L bottle) load cell calibration with re-place/zero/previous-change checks; `GRAMS=`/`NEXT=1`/`MEASURE=1`/`ACCEPT=1` steps, cancel `_NEBULAOS_LOAD_CELL_CANCEL`; status object `nebulaos_load_cell_calibration` (incl. `change_warning`) drives the screen's Load Cell page (G90) | Mainsail macro button + action prompts; NebulaScreen page | `nebulaos-calibration`, pos 8 | standby only | OK |
+| `NEBULAOS_Z_OFFSET_CALIBRATE` | NebulaOS | Public wrapper → private `_NEBULAOS_Z_OFFSET_CALIBRATE` (`cmd_z_offset_calibrate`) — LOAD_CELL-only bounded-descent BLTouch/HX711 paired calibration (`nebulaos_probe_pair.py`); requires the probe's `contact_ready()` for this caller first (G99: follows the user's load cell mode - Automatic, the default for everyone: the qualified `ke-stock-v1` raw-count profile plus a passed `NEBULAOS_LOAD_CELL_AUTO_CHECK`, which the workflow runs itself; Manual: the bottle calibration, `NEBULAOS_LOAD_CELL_CALIBRATE` or `LOAD_CELL_CALIBRATE`) | Mainsail macro button | `nebulaos-calibration`, pos 1 | standby only | OK |
+| `NEBULAOS_LOAD_CELL_CALIBRATE` | NebulaOS | Public wrapper → private `_NEBULAOS_LOAD_CELL_CALIBRATE` (`nebulaos_load_cell_calibration.py`, G86) — guided known-weight (1.5 L bottle) load cell calibration with re-place/zero/previous-change checks; `GRAMS=`/`NEXT=1`/`MEASURE=1`/`ACCEPT=1` steps, cancel `_NEBULAOS_LOAD_CELL_CANCEL`; accepting it switches the load cell mode to Manual (G99); status object `nebulaos_load_cell_calibration` (incl. `change_warning` and the G99 fields, see §8a) drives the screen's Load Cell page (G90) | Mainsail macro button + action prompts; NebulaScreen page | `nebulaos-calibration`, pos 8 | standby only | OK |
 | `NEBULAOS_BED_TRAM` | NebulaOS | Public wrapper → private `_NEBULAOS_BED_TRAM` (`nebulaos_bed_tram.py`, G87) — guided bed tramming, one corner instruction at a time; cancel `_NEBULAOS_BED_TRAM_CANCEL`; status object `nebulaos_bed_tram` drives the screen's Bed Tramming page (G89) | Mainsail macro button + action prompts; NebulaScreen page | `nebulaos-calibration`, pos 9 | standby only | OK |
 | `AXIS_TWIST_X` | Upstream UI adapter (NebulaOS-authored one-line wrapper only) | `AXIS_TWIST_COMPENSATION_CALIBRATE AXIS=X` — pristine upstream `axis_twist_compensation.py`, not modified/forked/shadowed | Mainsail macro button | `nebulaos-calibration`, pos 2 | standby only | OK |
 | `AXIS_TWIST_Y` | Upstream UI adapter | `AXIS_TWIST_COMPENSATION_CALIBRATE AXIS=Y` | Mainsail macro button | `nebulaos-calibration`, pos 3 | standby only | OK |
@@ -105,8 +105,11 @@ reach them is the console or a direct API/gcode call.
 | `NEBULAOS_CALIBRATION_STATUS` | NebulaOS (`nebulaos_calibration.py`, `cmd_calibration_status`) | Reports the coordinator's Z-offset/auto-calibrate/e-steps/input-shaper state | Console/API only; same data is also the `nebulaos_calibration` status object (`printer.objects.query`/`subscribe`) | None (not a macro) | n/a | OK — a status query, not an action; no user-facing need for a button when the same data is already a subscribable object |
 | `NEBULAOS_LOAD_CELL_READ` | NebulaOS (`nebulaos_load_cell_calibration.py`) | Read-only: the force on the front-left corner in grams from the current calibration | Console/API only | None | n/a | OK (measurement aid, G86) |
 | `NEBULAOS_RAW_CONTACT_DIAGNOSTIC` | NebulaOS (`nebulaos_z_offset_probe.py`) | No-motion raw ADC health window (rate, noise, drift) | Console/API only | None | n/a | OK (diagnostic, G83b) |
-| `NEBULAOS_RAW_CONTACT_REFERENCE` | NebulaOS (`nebulaos_z_offset_probe.py`) | No motion: captures the unloaded raw reference into the SAVE_CONFIG autosave block (applies after `SAVE_CONFIG`); refused on an unhealthy sensor | Console/API only | None | n/a | OK (G83b-auto, locked: no qualified profile) |
+| `NEBULAOS_RAW_CONTACT_REFERENCE` | NebulaOS (`nebulaos_z_offset_probe.py`) | No motion: captures the unloaded raw reference into the SAVE_CONFIG autosave block (`raw_reference_counts`, applies after `SAVE_CONFIG`); refused on an unhealthy sensor. G99: superseded by `NEBULAOS_LOAD_CELL_AUTO_CHECK` (state file, no restart); used only while no automatic check has run. The autosaved option is a rollback barrier (an image without it refuses printer.cfg, see `NEBULAOS_UPDATE_AND_ROLLBACK_DESIGN.md` §9) | Console/API only | None | n/a | OK (developer tool, G83b-auto) |
 | `NEBULAOS_RAW_CONTACT_COMPARE` | NebulaOS (`nebulaos_calibration.py`) | Supervised (`SUPERVISED=1` required) comparison of calibrated vs raw-count contact at the Z-offset point; moves the printer, saves nothing | Console only, operator at the printer | None | standby only | OK (qualification tool, G83b-auto) |
+| `NEBULAOS_LOAD_CELL_MODE` | NebulaOS (`nebulaos_load_cell_calibration.py`, G99) | `MODE=auto` (Automatic: no bottle, the default for everyone) or `MODE=manual` (the bottle calibration); no `MODE`: reports the mode and whether automatic contact is ready. Saved at once in `printer_data/calibration/load_cell_mode.json` (no SAVE_CONFIG, no restart); every touch (Z offset, nozzle clean, mesh helpers) follows it | NebulaScreen Load Cell page (Automatic / Manual); console | None | n/a | OK (G99) |
+| `NEBULAOS_LOAD_CELL_AUTO_CHECK` | NebulaOS (`nebulaos_load_cell_calibration.py`, G99) | No motion, EMPTY bed: sensor health plus the unloaded reference automatic contact is anchored to; saved at once (state file). Refused while printing or while the bottle calibration runs; a failed check blocks automatic contact and points to Manual. The Z-offset workflow runs it itself (cold, and refreshed hot right before the touches) | NebulaScreen Load Cell page (Run); console | None | standby only | OK (G99) |
+| `NEBULAOS_Z_ADJUST` | NebulaOS (`nebulaos_z_adjust.py`, G92; `[nebulaos_z_adjust]` in calibration.cfg) | The saved Z offset fine-tune (`printer_data/config/z_offset_adjust.json`, max +/-2 mm), applied again at every Klipper start: `DELTA=<mm>` adjusts (Z homed) and saves, `RESET=1` sets 0, `APPLY=1` applies the saved value again (`MOVE=0/1`), `MARK=1` / `RESUME=1` are used by `PAUSE` / `RESUME` (only screen changes made while paused are added), no parameter reports. The Z-offset calibration resets it to 0; Mainsail's `Z_OFFSET_APPLY_PROBE` ("Save") folds it into the probe z_offset and sets it to 0. Status object `nebulaos_z_adjust`: `value`, `applied`, `error` | NebulaScreen Tune > Z Offset / Fine Tune; `PAUSE`/`RESUME` | None | n/a | OK (G92) |
 | `NEBULAOS_PLR_STATUS` | NebulaOS (`nebulaos_power_loss_recovery.py`) | See §6 above | Console/API only | None | n/a | OK (status query, same reasoning) |
 | `LOAD_CELL_READ` / `LOAD_CELL_TARE` / `LOAD_CELL_CALIBRATE` / `LOAD_CELL_DIAGNOSTIC` | Upstream Klipper (`load_cell.py`'s `LoadCell` wrapper, instantiated by `[nebulaos_z_offset_probe]`) | Zero-motion HX711 sensor qualification/calibration (sets `counts_per_gram`/`reference_tare_counts` via `SAVE_CONFIG`) | Console/API only, by design (per the mission's own instruction: the load cell needs a correct config object + a working calibration path, not a permanent Mainsail graph) | None | n/a | OK |
 | `_GUPPY_LOAD_MODULE` / `_GUPPY_UNLOAD_MODULE` | NebulaOS (`guppy_module_loader.py`) | Runtime enable/disable of printer objects (used to lazily load `[tmcstatus]` for GuppyScreen's own TMC panel) | GuppyScreen-internal only | None | n/a | INTERNAL_ONLY (leading underscore = private by this project's own convention) |
@@ -198,6 +201,40 @@ Three new tests (`extras/test_z_compensate_reentrancy_guard.py`'s
 `PublicAPISurfaceTest`, in the extensions repo) prove the two commands are
 genuinely independent implementations, registered separately, never
 aliasing one another.
+
+## 8a. Load cell status fields and the busy endpoint (G99, G98 - Run 18)
+
+Status object `nebulaos_load_cell_calibration` (besides the bottle-flow fields)
+carries the G99 load cell mode fields; all are `null` on a printer without a
+`[nebulaos_z_offset_probe]`:
+
+| Field | Meaning |
+|---|---|
+| `mode` | `auto` or `manual` - what every touch follows now |
+| `mode_choice` | the persisted user choice (differs from `mode` only when the developer option `contact_detection_mode` forces one; that option is never set in an image-owned cfg) |
+| `auto_check` | `never`, `ok` or `failed` - the last automatic check |
+| `auto_check_reason` | why the last check failed (text), else empty |
+| `auto_check_time` | when the last check ran (epoch seconds) or `null` |
+| `auto_ready` | automatic contact can touch now (qualified profile + reference of a passed check) |
+| `auto_profile` | the raw-contact profile id (`ke-stock-v1`: 6400 counts, polarity -1) |
+| `auto_reference_counts` | the unloaded reference in use, or `null` |
+| `mode_warning` | a problem reading or saving `load_cell_mode.json`, or `null` |
+
+Status object `nebulaos_z_offset_probe` adds `load_cell_mode`, `auto_check`,
+`contact_detection_mode`, `effective_contact_mode` (the arming the last touch
+used) and `contact_qualified` (ready for nozzle contact on the Z-offset path).
+
+Moonraker endpoint `GET /machine/nebulaos/system/busy?profile=request|restart`
+(component `nebulaos`): the shared busy check (`nebulaos_osconfig` `system busy`,
+the same answer as `nebulaos-busy`). Returns `{busy, reason, message, klippy,
+profile}`. `request` (default) fails closed: printing, paused, heating or moving,
+a calibration, another update or a pending image trial, low memory, or a live
+Klippy whose state cannot be read is busy, and a failed check answers busy
+(`reason` `UNKNOWN`). `restart` (G95) is for a client about to restart Klipper
+itself (NebulaScreen's Restart Klipper / Restart MCU): a hung Klippy is not busy,
+and a check that fails or times out answers not busy, so the restart stays the
+way out. `POST /machine/nebulaos/system/notify_refused` (`message`) puts a
+refusal line into Mainsail's console.
 
 ## STATUS bucket totals (this deliverable)
 
