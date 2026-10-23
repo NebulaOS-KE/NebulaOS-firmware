@@ -47,12 +47,20 @@
 # Usage: seed_manifest_branch <manifest-path> <component-name>
 # Prints the branch on success; prints nothing and returns 1 on any failure.
 seed_manifest_branch() {
+	seed_manifest_field "$1" "$2" branch
+}
+
+# The same block-scoped read for any flat string key of one component
+# (G91 S05 boot guard: "seed_commit", the image's pin).
+# Usage: seed_manifest_field <manifest-path> <component-name> <key>
+seed_manifest_field() {
 	_smb_file="$1"
 	_smb_component="$2"
+	_smb_key="$3"
 	[ -n "$_smb_file" ] && [ -f "$_smb_file" ] || return 1
-	[ -n "$_smb_component" ] || return 1
+	[ -n "$_smb_component" ] && [ -n "$_smb_key" ] || return 1
 
-	_smb_value=$(awk -v want="$_smb_component" '
+	_smb_value=$(awk -v want="$_smb_component" -v key="$_smb_key" '
 		{
 			line = $0
 			if (depth == 0) {
@@ -66,14 +74,14 @@ seed_manifest_branch() {
 				depth = 1
 				line = substr(line, b + 1)
 			}
-			if (match(line, /"branch"[ \t]*:[ \t]*"[^"]*"/)) {
+			if (match(line, "\"" key "\"[ \t]*:[ \t]*\"[^\"]*\"")) {
 				found = substr(line, RSTART, RLENGTH)
-				sub(/.*"branch"[ \t]*:[ \t]*"/, "", found)
+				sub("^\"" key "\"[ \t]*:[ \t]*\"", "", found)
 				sub(/".*/, "", found)
 				print found
 				exit
 			}
-			# Closing brace before any "branch" key: this component has none.
+			# Closing brace before the key: this component has none.
 			if (index(line, "}")) exit
 		}
 	' "$_smb_file" 2>/dev/null)

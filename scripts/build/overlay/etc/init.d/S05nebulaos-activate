@@ -71,6 +71,11 @@ KLIPPER_STACK_LOCK="klipper-stack"
 [ -f "$COMPOSE_LIB" ] && . "$COMPOSE_LIB"
 [ -f "$CHELPER_LIB" ] && . "$CHELPER_LIB"
 
+# G91 S05 boot guard: the image's extensions pin (seed-manifest.json).
+SEEDS="${SEEDS:-/opt/nebulaos-seeds}"
+SEED_MANIFEST_LIB="${SEED_MANIFEST_LIB:-/etc/nebulaos-seed-manifest.sh}"
+[ -f "$SEED_MANIFEST_LIB" ] && . "$SEED_MANIFEST_LIB"
+
 DIAG_DIR="${NEBULAOS_ROOT}/system/diagnostics"
 DIAG_LOG="${DIAG_DIR}/activation.log"
 DIAG_MAX_SIZE=65536
@@ -258,9 +263,39 @@ bind_if_not_already() {
 # where extras/nebulaos_compat.py reads it, so a stale prebuilt library
 # surfaces as a named preflight refusal instead of a gcc crash part-way
 # through boot on a device with no toolchain.
+# G91 S05 boot guard (Run 17 verifier, open item): never activate a
+# persistent extensions checkout OLDER than the image's own pin - e.g. one
+# left behind when S04's migration to a newer image failed, or by a rollback
+# to before this image. The image's Klipper side, its extras' required
+# symbols and its macros expect at least the pinned extensions. "Not older"
+# = HEAD is the pin or has it as an ancestor (updates move forward from it).
+# A HEAD without the pin in its history (older, diverged, or the pin object
+# unknown) keeps the immutable stack, which ships exactly the pinned
+# extensions; logged and recorded. Without a readable pin (not a release
+# image) nothing is checked.
+extensions_not_older_than_pin() {
+	_pin=
+	command -v seed_manifest_field >/dev/null 2>&1 && \
+		_pin=$(seed_manifest_field "$SEEDS/seed-manifest.json" nebulaos-klipper-extensions seed_commit 2>/dev/null)
+	if [ -z "$_pin" ]; then
+		log "klipper-stack: the image's extensions pin is unknown - the persistent extensions are not checked against it"
+		return 0
+	fi
+	_head=$(git -C "$1" rev-parse HEAD 2>/dev/null)
+	[ -n "$_head" ] && [ "$_head" = "$_pin" ] && return 0
+	if [ -n "$_head" ] && git -C "$1" merge-base --is-ancestor "$_pin" "$_head" 2>/dev/null; then
+		return 0
+	fi
+	log "klipper-stack: the persistent extensions (${_head:-no readable HEAD}) do not contain this image's pin $_pin - older or diverged. The persistent Klipper stack is NOT activated; the image's immutable copy (with exactly the pinned extensions) runs instead"
+	record "klipper_stack" "immutable:extensions_older_than_image"
+	return 1
+}
+
 activate_klipper_stack() {
 	kdir="$NEBULAOS_ROOT/apps/klipper"
 	edir="$NEBULAOS_ROOT/apps/nebulaos-klipper-extensions"
+
+	extensions_not_older_than_pin "$edir" || return 1
 
 	if ! command -v compose_ensure >/dev/null 2>&1; then
 		log "klipper-stack: $COMPOSE_LIB is missing - cannot compose the extension set, refusing to activate an incomplete Klipper"
