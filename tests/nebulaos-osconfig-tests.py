@@ -1133,6 +1133,30 @@ class MaintenanceGateTests(unittest.TestCase):
         self.assertTrue(open(log).read().strip().startswith("mcu-flash-"))
         self.assertEqual([f for f in os.listdir(m.STAGE_DIR) if f.endswith(".bin")], [])
 
+    def test_mcu_flash_is_not_refused_by_its_own_locks(self):
+        """Run 18 architect finding 1: the CLI's real busy check, run while
+        mcu.flash holds BOTH locks, must not see them as another update."""
+        m = self.e.mcu
+        os.makedirs(m.UPLOAD_DIR, exist_ok=True)
+        data = candidate_bytes()
+        with open(os.path.join(m.UPLOAD_DIR, "ok.bin"), "wb") as fh:
+            fh.write(data)
+        sha = m._image_module().sha256(data)
+        out = os.path.join(self.e.tmp, "busy.out")
+        libdir = os.path.dirname(os.path.dirname(os.path.abspath(self.c.__file__)))
+        write_exe(os.environ["NEBULAOS_MCU_CLI"], """
+            python3 -c 'import os, sys; sys.path.insert(0, sys.argv[1])
+from nebulaos_osconfig import common
+r = common.busy_state("point_of_no_return", os.environ["NEBULAOS_MAINTENANCE_HOLDER"], {"klippy": "not_ready"})
+print(r["busy"], r.get("reason"))' "%s" > "%s"
+            exit 0
+        """ % (libdir, out))
+        try:
+            m.flash("upload/ok.bin", sha)
+        except Exception:
+            pass        # later steps of the fake flash may fail; the check is what matters
+        self.assertEqual(open(out).read().split()[0], "False", open(out).read())
+
     def test_s34_reboot_grace(self):
         import time
         slept = []

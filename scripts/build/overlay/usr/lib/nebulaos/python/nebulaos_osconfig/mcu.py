@@ -302,6 +302,12 @@ def flash(file_id, expected_sha):
             fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
             raise OsConfigError("BUSY", "an MCU flash is already running")
+        # Our maintenance token in the flash lock, so the CLI's busy check
+        # (holder = this token) recognises the lock as ours instead of
+        # refusing the flash itself UPDATING (Run 18 architect finding 1).
+        os.ftruncate(lock_fd, 0)
+        os.write(lock_fd, ("%s %d\n" % (common.CURRENT_HOLDER or "mcu-flash",
+                                         os.getpid())).encode())
         staged = os.path.join(STAGE_DIR, "flash-%s.bin" % expected_sha[:16])
         common.atomic_write(staged, image, mode=0o600)
         with open(staged, "rb") as handle:
