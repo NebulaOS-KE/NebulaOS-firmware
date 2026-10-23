@@ -295,6 +295,13 @@ CAPTURE_PROFILES = {
     "update-log": (_UPDATE_LOG, False, None, 60),
     # G82 (Run 15 test): the GuppyScreen -> NebulaScreen settings migration,
     # read-only - the old file must be unchanged, the new one a copy of it.
+    # G99 load-cell state as Klipper and Moonraker see it (Run 18 test 3), read-only.
+    "loadcell-mode": ("echo '== status'; wget -q -O - 'http://127.0.0.1:7125/printer/objects/query?nebulaos_load_cell_calibration&nebulaos_z_offset_probe' 2>&1 | head -c 4000; "
+        "echo; echo '== extensions version'; wget -q -O - 'http://127.0.0.1:7125/printer/objects/query?nebulaos_version' 2>&1 | head -c 1500; "
+        "echo; echo '== mode file'; cat /usr/data/nebulaos/printer_data/calibration/load_cell_mode.json 2>&1; "
+        "echo; echo '== klippy.log G99 lines'; grep -hE 'NEBULAOS_LOAD_CELL|load_cell_mode|auto check|AUTO_CHECK' /opt/printer_data/logs/klippy.log 2>/dev/null | tail -n 30; "
+        "echo '== nebulascreen.log'; grep -hiE 'load.?cell|AUTO_CHECK|LOAD_CELL_MODE' /opt/printer_data/logs/nebulascreen.log 2>/dev/null | tail -n 30",
+        False, None, 60),
     # Run 18 checks (G96 boot picture, G99 load-cell mode, G92 Z adjust,
     # G97 boot timing), read-only.
     "run18-checks": ("echo '== G96 boot picture (kernel)'; dmesg | grep 'boot picture'; "
