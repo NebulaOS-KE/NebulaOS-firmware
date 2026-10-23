@@ -295,6 +295,15 @@ CAPTURE_PROFILES = {
     "update-log": (_UPDATE_LOG, False, None, 60),
     # G82 (Run 15 test): the GuppyScreen -> NebulaScreen settings migration,
     # read-only - the old file must be unchanged, the new one a copy of it.
+    # Run 18 checks (G96 boot picture, G99 load-cell mode, G92 Z adjust,
+    # G97 boot timing), read-only.
+    "run18-checks": ("echo '== G96 boot picture (kernel)'; dmesg | grep 'boot picture'; "
+        "echo '== kernel'; uname -v; "
+        "echo '== G99 load-cell mode'; cat /usr/data/nebulaos/printer_data/calibration/load_cell_mode.json 2>&1; "
+        "echo '== G92 Z adjust'; cat /opt/printer_data/config/z_offset_adjust.json 2>&1; "
+        "echo '== nebulaos refusals (syslog)'; grep -h 'NebulaOS refused' /opt/printer_data/logs/system.log 2>/dev/null | tail -n 10; "
+        "echo '== boot script timing'; grep -E 'S00|S01|S58' /run/nebulaos-boot-scripts.log",
+        False, None, 60),
     # Run 16 kernel image checks (K1 log levels, G5 sysfs/no debugfs, G3
     # early boot screen), read-only.
     "kernel-run16": ("echo '== kernel'; uname -r; uname -v; "
