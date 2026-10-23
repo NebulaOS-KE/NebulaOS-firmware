@@ -295,6 +295,13 @@ CAPTURE_PROFILES = {
     "update-log": (_UPDATE_LOG, False, None, 60),
     # G82 (Run 15 test): the GuppyScreen -> NebulaScreen settings migration,
     # read-only - the old file must be unchanged, the new one a copy of it.
+    # Result and step order of the last auto-calibrate (Run 18 test 4), read-only.
+    "autocal-result": ("echo '== calibration status'; wget -q -O - 'http://127.0.0.1:7125/printer/objects/query?nebulaos_calibration' 2>&1 | head -c 3000; "
+        "echo; echo '== journal'; cat /usr/data/nebulaos/printer_data/calibration/*journal*.json 2>&1 | head -c 3000; "
+        "echo; echo '== saved z_offset / mesh (printer.cfg autosave)'; grep -nE '^#\*# \[(bltouch|bed_mesh default|nebulaos_z_offset_probe)\]|^#\*# z_offset|^#\*# (x|y)_count|^#\*# min_x' /opt/printer_data/config/printer.cfg 2>&1 | head -n 20; "
+        "echo '== klippy.log auto-calibrate sequence'; L=/opt/printer_data/logs/klippy.log; "
+        "grep -nE 'NEBULAOS_AUTO_CALIBRATE|_NEBULAOS_|AUTO_CHECK|auto check|NOZZLE_CLEAN|nozzle_clear|Z_OFFSET|z_offset|BED_MESH|probe at|bed will contact|SAVE_CONFIG|M190|M109|M140|M104|G28|calibration:|Restart|restart|error|Error|!!' $L 2>/dev/null | tail -n 120",
+        False, None, 90),
     # G99 load-cell state as Klipper and Moonraker see it (Run 18 test 3), read-only.
     "loadcell-mode": ("echo '== status'; wget -q -O - 'http://127.0.0.1:7125/printer/objects/query?nebulaos_load_cell_calibration&nebulaos_z_offset_probe' 2>&1 | head -c 4000; "
         "echo; echo '== extensions version'; wget -q -O - 'http://127.0.0.1:7125/printer/objects/query?nebulaos_version' 2>&1 | head -c 1500; "
