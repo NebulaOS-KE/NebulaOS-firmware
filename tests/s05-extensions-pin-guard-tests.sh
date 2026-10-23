@@ -13,6 +13,7 @@ REPO_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
 OV="$REPO_ROOT/scripts/build/overlay"
 ACTIVATE="$OV/etc/init.d/S05nebulaos-activate"
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/s05-pin.XXXXXX")
+[ -n "${WORK:-}" ] && [ -e "$WORK" ] || { echo "FATAL: mktemp failed" >&2; exit 1; }
 trap 'rm -rf "$WORK"' EXIT INT TERM
 PASS=0
 FAIL=0

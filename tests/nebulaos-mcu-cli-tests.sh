@@ -620,6 +620,7 @@ echo ""
 echo "--- G91: shared busy check and maintenance lock ---"
 
 G91=$(mktemp -d)
+[ -n "${G91:-}" ] && [ -e "$G91" ] || { echo "FATAL: mktemp failed" >&2; exit 1; }
 cat > "$G91/busy" <<'FAKE'
 #!/bin/sh
 echo "$*" >> "$G91_DIR/busy.log"

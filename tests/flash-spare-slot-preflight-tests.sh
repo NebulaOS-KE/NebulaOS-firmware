@@ -292,6 +292,7 @@ fi
 # maintenance lock (exit 3, nothing written); --check-only and --force never
 # call it. A fake nebulaos-busy that refuses, and logs every call. ---
 G91=$(mktemp -d)
+[ -n "${G91:-}" ] && [ -e "$G91" ] || { echo "FATAL: mktemp failed" >&2; exit 1; }
 printf '#!/bin/sh\necho "$*" >> "%s/busy.log"\necho "NebulaOS refused: Not possible while a print is running. (PRINTING)" >&2\nexit 3\n' "$G91" > "$G91/busy"
 chmod +x "$G91/busy"
 echo "console=ttyS4 root=$F/dev/mmcblk0p7 rootwait" > "$F/cmdline"
