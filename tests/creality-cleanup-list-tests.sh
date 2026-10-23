@@ -7,7 +7,8 @@
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 CLEANUP="$ROOT/scripts/build/overlay/usr/lib/nebulaos/python/nebulaos_osconfig/cleanup.py"
-GUPPY="$ROOT/../NebulaOS-guppyscreen/src"
+GUPPY="$ROOT/../NebulaOS-nebulascreen/src"     # R1: the renamed checkout
+[ -d "$GUPPY" ] || GUPPY="$ROOT/../NebulaOS-guppyscreen/src"
 PASS=0 FAIL=0
 pass() { PASS=$((PASS + 1)); }
 fail() { echo "FAIL: $1"; FAIL=$((FAIL + 1)); }
