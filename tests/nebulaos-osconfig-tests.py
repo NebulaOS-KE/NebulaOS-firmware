@@ -1168,6 +1168,47 @@ class MaintenanceGateTests(unittest.TestCase):
         self.assertEqual(len(fake), 2)
 
 
+class RollbackSchemaTests(unittest.TestCase):
+    """G91 rollback audit (S15/S18): an older image reads the keys it knows
+    from a NEWER settings file (higher schema, extra keys) instead of falling
+    back to the defaults; a malformed schema still falls back."""
+
+    def setUp(self):
+        self.e = Env()
+
+    def tearDown(self):
+        self.e.cleanup()
+
+    def put(self, mod, obj):
+        os.makedirs(os.path.dirname(mod.CONFIG), exist_ok=True)
+        with open(mod.CONFIG, "w") as fh:
+            json.dump(obj, fh)
+
+    def test_newer_schema_known_keys_read(self):
+        n = self.e.network
+        self.put(n, {"schema": 2, "hostname": "attic-ke", "future": {"x": 1},
+                     "ipv4": {"mode": "static", "address": "10.0.0.5", "prefix": 24,
+                              "gateway": "10.0.0.1", "dns": ["10.0.0.1"]}})
+        cfg, err = n.load_config()
+        self.assertIsNone(err)
+        self.assertEqual((cfg["hostname"], cfg["ipv4"]["address"]), ("attic-ke", "10.0.0.5"))
+        d = self.e.display
+        self.put(d, {"schema": 3, "brightness": d.LEVELS[0], "touch_wake": False, "new": 1})
+        cfg, err = d.load_config()
+        self.assertEqual((err, cfg["brightness"], cfg["touch_wake"]), (None, d.LEVELS[0], False))
+        b = self.e.bootdisplay
+        self.put(b, {"schema": 2, "mode": "logo", "image": "custom", "source": "a.png", "z": 0})
+        cfg, err = b.load_config()
+        self.assertEqual((err, cfg["image"], cfg["source"]), (None, "custom", "a.png"))
+
+    def test_malformed_or_older_schema_falls_back(self):
+        for bad in (0, "1", True, None, 1.5):
+            self.put(self.e.network, {"schema": bad, "hostname": "x"})
+            cfg, err = self.e.network.load_config()
+            self.assertTrue(err, bad)
+            self.assertEqual(cfg, self.e.network.default_config())
+
+
 class SystemResetSlotTests(unittest.TestCase):
     def setUp(self):
         self.e = Env()

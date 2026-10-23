@@ -70,7 +70,7 @@ def load_config():
         return default_config(), error
     if raw.get("mode") in RETIRED_MODES:
         raw = dict(raw, mode=RETIRED_MODES[raw["mode"]])
-    if (raw.get("schema") != SCHEMA or raw.get("mode") not in MODES
+    if (not common.schema_readable(raw, SCHEMA) or raw.get("mode") not in MODES
             or raw.get("image") not in ("builtin", "custom")):
         return default_config(), "CONFIG_INVALID"
     cfg = {"schema": SCHEMA, "mode": raw["mode"], "image": raw["image"]}

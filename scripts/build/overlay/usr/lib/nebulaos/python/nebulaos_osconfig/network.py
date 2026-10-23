@@ -103,7 +103,7 @@ def validate_ipv4(spec):
 
 
 def validate_config(cfg):
-    if not isinstance(cfg, dict) or cfg.get("schema") != SCHEMA:
+    if not common.schema_readable(cfg, SCHEMA):
         raise invalid("CONFIG_INVALID", "unsupported configuration schema")
     return {"schema": SCHEMA,
             "hostname": validate_hostname(cfg.get("hostname")),

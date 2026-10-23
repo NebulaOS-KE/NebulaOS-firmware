@@ -183,3 +183,29 @@ The `"is_valid": false` gap this document's rollback machinery lives alongside (
 ## 8. Printer configuration confirmed outside rollback scope (2026-07-29)
 
 The mainline print-controls mission required explicitly confirming that printer configuration (`printer_data/config`) is not, and should never become, part of the rollback machinery described above. A direct check of `nebulaos-update-supervisor.sh`'s rollback code paths confirms it only ever touches `printer_data/logs/*.log` (copying diagnostic logs alongside a failed-commit backup) - never `printer_data/config`. Rollback in this document has always operated exclusively on `/opt/klipper` and `/opt/moonraker`'s own git checkouts; printer configuration lives in an entirely separate directory tree seeded and validated independently (`docs/NEBULAOS_ENDER3_V3_KE_FACTORY_CONFIG_SEED.md`) and was never wired into this state machine at all. Confirmed live: an ordinary reboot and a full genuine empty-namespace requalification both left `printer_data/config`'s own seeding marker and content behaving exactly as that document describes, unaffected by anything in this one. Full evidence: `docs/NEBULAOS_FRONTEND_PRINT_CONTROLS.md`.
+
+## 9. Image rollback and persistent state (G91, 2026-10-23)
+
+An A/B rollback (a manual slot swap or a failed image trial) boots an OLDER image against
+`/usr/data` that a newer image already wrote. Rules for every persistent file:
+
+- A versioned settings file only ever gains keys: a newer image may ADD keys and then raises
+  its schema number; an incompatible change uses a NEW file name (copy, never move - the old
+  file stays for the other slot). Readers accept `schema >= their own` and read the keys they
+  know (`nebulaos_osconfig.common.schema_readable`, used by network, display and boot display),
+  so a rollback keeps the hostname, static IP, brightness and boot logo instead of falling back
+  to the defaults. An older image that saves such a file writes its own schema and drops the
+  newer keys; the newer image then uses defaults for those keys only.
+- Boot readers use the rendered `*.env` files and accept only the keys they know, each
+  validated.
+- The printer.cfg SAVE_CONFIG block is a rollback barrier: Klipper refuses an unknown section
+  or option there too, so a NEW autosaved section/option (today `raw_reference_counts` in
+  `[nebulaos_z_offset_probe]` and `[autotune_tmc ...]`) means an image without it does not
+  start Klipper until the user deletes those `#*#` lines. New state that needs no restart
+  belongs in a small state file (as the G99 load cell mode), not in SAVE_CONFIG; any new
+  autosaved option is named in the release notes.
+- Downloaded NebulaScreen releases and their state are reset by "the image wins"; persistent
+  Klipper extensions older than the image's pin are never activated (S05).
+
+The per-file audit is kept with the Run 18 notes (`_scratch/run18/G91-rollback-audit.md` in
+the workspace).

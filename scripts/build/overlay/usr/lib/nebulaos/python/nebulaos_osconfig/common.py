@@ -120,6 +120,18 @@ def read_json(path):
     return obj, None
 
 
+def schema_readable(raw, schema):
+    """G91 rollback audit (S15/S18): a settings file this code can read. The
+    rule for every versioned osconfig file: a newer image may only ADD keys
+    under a higher schema number (an incompatible change uses a new file
+    name - copy, never move, P5), so an older image reads the keys it knows
+    from a newer file and ignores the rest instead of falling back to the
+    defaults (a rollback must not reset the hostname, static IP, brightness
+    or boot logo)."""
+    value = raw.get("schema") if isinstance(raw, dict) else None
+    return isinstance(value, int) and not isinstance(value, bool) and value >= schema
+
+
 def render_env(pairs):
     """KEY=value lines for the boot shell. Values are already validated by the
     caller; this only refuses characters a shell reader could misparse."""

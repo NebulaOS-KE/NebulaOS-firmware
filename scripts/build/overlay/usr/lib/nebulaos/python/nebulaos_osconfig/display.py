@@ -47,7 +47,7 @@ def load_config():
     if raw is None:
         return default_config(), error
     try:
-        if raw.get("schema") != SCHEMA:
+        if not common.schema_readable(raw, SCHEMA):
             raise invalid("CONFIG_INVALID", "unsupported schema")
         tw = raw.get("touch_wake", True)
         if not isinstance(tw, bool):
