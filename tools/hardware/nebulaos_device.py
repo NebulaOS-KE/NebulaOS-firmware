@@ -934,8 +934,11 @@ class SshDeviceSession(DeviceSession):
         has been through the target/policy layer.
         """
         slot = plans_slot(plans)
+        # --force: this agent's own idle proof (re-checked after arming, with
+        # its dev-mode policy) is the authority here, not the script's G91
+        # busy gate, which exists for a developer's manual SSH use.
         rc, out, err = self._run(
-            "sh %s/flash-spare-slot.sh --target-slot %d %s/xImage %s/rootfs.squashfs %s/%s"
+            "sh %s/flash-spare-slot.sh --force --target-slot %d %s/xImage %s/rootfs.squashfs %s/%s"
             % (_STAGE_DIR, slot, _STAGE_DIR, _STAGE_DIR, _STAGE_DIR, shlex.quote(manifest_name)),
             timeout=1800)
         return rc == 0, out + err

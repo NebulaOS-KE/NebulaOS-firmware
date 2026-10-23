@@ -516,6 +516,9 @@ usage() {
     echo "                            immutable image - never touches printer.cfg's"
     echo "                            own user-owned region, SAVE_CONFIG, macros/,"
     echo "                            nebulascreen/, uploads/ or moonraker.conf"
+    echo ""
+    echo "Every command but status is refused (exit 3) while the printer is busy;"
+    echo "--force skips that check (developer recovery only)."
     exit 1
 }
 
@@ -525,6 +528,29 @@ fi
 
 command="$1"
 shift
+
+# G91 step 6: every recovery stops a service or replaces what one runs. Unless
+# --force (developer, USB/serial recovery - never used by a UI), it re-runs
+# itself under the maintenance lock after the shared request busy check
+# (nebulaos-busy): refused -> the reason on stderr, exit 3, nothing touched.
+NEBULAOS_BUSY_CLI="${NEBULAOS_BUSY_CLI:-/usr/libexec/nebulaos/nebulaos-busy}"
+case "$command" in
+    klipper|moonraker|mainsail|klipper-extensions|config)
+        _force=0
+        for _a in "$@"; do
+            [ "$_a" = "--force" ] && _force=1
+        done
+        if [ "$_force" = 0 ] && [ -z "${NEBULAOS_MAINTENANCE_HOLDER:-}" ] \
+            && [ -x "$NEBULAOS_BUSY_CLI" ]; then
+            exec "$NEBULAOS_BUSY_CLI" --profile request --lock "nebulaos-recover-$command" \
+                --exec /bin/sh "$0" "$command" "$@"
+        fi
+        for _a in "$@"; do
+            shift
+            [ "$_a" = "--force" ] || set -- "$@" "$_a"
+        done
+        ;;
+esac
 
 case "$command" in
     status)             cmd_status ;;

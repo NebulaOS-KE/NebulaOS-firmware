@@ -611,6 +611,81 @@ else
 fi
 
 # =========================================================================
+# G91 step 6: flash/managed go through the shared busy check + maintenance
+# lock (nebulaos-busy --lock ... --exec), re-check before Klipper stops,
+# exit 3 on a refusal; --force (developer) skips both.
+# =========================================================================
+
+echo ""
+echo "--- G91: shared busy check and maintenance lock ---"
+
+G91=$(mktemp -d)
+cat > "$G91/busy" <<'FAKE'
+#!/bin/sh
+echo "$*" >> "$G91_DIR/busy.log"
+mode=$(cat "$G91_DIR/mode")
+case "$*" in
+    *--exec*)
+        [ "$mode" = refuse ] && { echo "NebulaOS refused: Not possible while a print is running. (PRINTING)" >&2; exit 3; }
+        while [ "$1" != --exec ]; do shift; done; shift
+        NEBULAOS_MAINTENANCE_HOLDER=nebulaos-mcu-managed-1 exec "$@" ;;
+    *--refuse*)
+        [ "$mode" = pnr ] && { echo "NebulaOS refused: Not possible while a print is running. (PRINTING)" >&2; exit 3; }
+        exit 0 ;;
+esac
+exit 64
+FAKE
+chmod +x "$G91/busy"
+printf 'echo MCU_APPLICATION_CLASS=NATIVE_CANDIDATE_001\necho touched >> "%s/identity.log"\n' "$G91" > "$G91/identity.sh"
+g91_run() {
+    rm -f "$G91/busy.log" "$G91/identity.log"
+    echo "$1" > "$G91/mode"; shift
+    G91_DIR="$G91" NEBULAOS_BUSY_CLI="$G91/busy" MCU_GUARD_PYTHON3=/bin/sh \
+        MCU_IDENTITY_CHECK="$G91/identity.sh" MCU_MANAGED_DIR="$G91/mcu" \
+        MCU_MANAGED_FLAG="$G91/mcu/managed" NEBULAOS_MAINTENANCE_HOLDER= \
+        sh "$CLI_SCRIPT" "$@" >"$G91/out" 2>&1
+}
+
+g91_run refuse managed; rc=$?
+if [ "$rc" = 3 ] && [ ! -f "$G91/identity.log" ] && grep -q "NebulaOS refused" "$G91/out" \
+    && grep -q -- "--profile request --lock nebulaos-mcu-managed --exec" "$G91/busy.log"; then
+    pass "managed refused while busy: exit 3, the MCU never touched"
+else
+    fail "managed while busy: rc=$rc $(cat "$G91/out")"
+fi
+
+g91_run ok managed; rc=$?
+if [ "$rc" = 0 ] && [ -f "$G91/identity.log" ] \
+    && grep -q -- "--profile point_of_no_return --holder nebulaos-mcu-managed-1 --refuse" "$G91/busy.log"; then
+    pass "managed runs under the lock and re-checks with its holder token before Klipper stops"
+else
+    fail "managed when idle: rc=$rc $(cat "$G91/out") / $(cat "$G91/busy.log")"
+fi
+
+g91_run pnr managed; rc=$?
+if [ "$rc" = 3 ] && [ ! -f "$G91/identity.log" ]; then
+    pass "managed stops at the point of no return when a print started meanwhile"
+else
+    fail "managed point of no return: rc=$rc"
+fi
+
+g91_run refuse managed --force; rc=$?
+if [ "$rc" = 0 ] && [ -f "$G91/identity.log" ] && [ ! -f "$G91/busy.log" ]; then
+    pass "managed --force skips the shared check (developer recovery)"
+else
+    fail "managed --force: rc=$rc $(cat "$G91/out")"
+fi
+
+printf 'x' > "$G91/fw.bin"
+g91_run refuse flash "$G91/fw.bin"; rc=$?
+if [ "$rc" = 3 ] && grep -q -- "--lock nebulaos-mcu-flash --exec /bin/sh" "$G91/busy.log"; then
+    pass "flash refused while busy (exit 3)"
+else
+    fail "flash while busy: rc=$rc $(cat "$G91/out")"
+fi
+rm -rf "$G91"
+
+# =========================================================================
 # Summary
 # =========================================================================
 

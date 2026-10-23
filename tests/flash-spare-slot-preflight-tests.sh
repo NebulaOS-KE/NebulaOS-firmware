@@ -288,6 +288,51 @@ else
 	echo "$out" | sed 's/^/    /'
 fi
 
+# --- G91 step 6: a real write is gated by the shared busy check + the
+# maintenance lock (exit 3, nothing written); --check-only and --force never
+# call it. A fake nebulaos-busy that refuses, and logs every call. ---
+G91=$(mktemp -d)
+printf '#!/bin/sh\necho "$*" >> "%s/busy.log"\necho "NebulaOS refused: Not possible while a print is running. (PRINTING)" >&2\nexit 3\n' "$G91" > "$G91/busy"
+chmod +x "$G91/busy"
+echo "console=ttyS4 root=$F/dev/mmcblk0p7 rootwait" > "$F/cmdline"
+out=$(NEBULAOS_BUSY_CLI="$G91/busy" NEBULAOS_MAINTENANCE_HOLDER= FLASH_SPARE_SLOT_TEST_MODE=1 \
+	DEV_PREFIX="$F" CMDLINE_PATH="$F/cmdline" \
+	sh "$FLASH_SCRIPT" "$IMG/xImage" "$IMG/rootfs.squashfs" "$IMG/manifest.txt" 2>&1)
+rc=$?
+if [ "$rc" -eq 3 ] && echo "$out" | grep -q "NebulaOS refused" \
+	&& grep -q -- "--profile request --lock flash-spare-slot --exec /bin/sh" "$G91/busy.log"; then
+	pass "a real write is refused while busy (exit 3, before any preflight or write)"
+else
+	fail "busy gate on a real write (exit=$rc)"
+	echo "$out" | sed 's/^/    /'
+fi
+rm -f "$G91/busy.log"
+out=$(NEBULAOS_BUSY_CLI="$G91/busy" NEBULAOS_MAINTENANCE_HOLDER= FLASH_SPARE_SLOT_TEST_MODE=1 \
+	DEV_PREFIX="$F" CMDLINE_PATH="$F/cmdline" \
+	sh "$FLASH_SCRIPT" --check-only "$IMG/xImage" "$IMG/rootfs.squashfs" "$IMG/manifest.txt" 2>&1)
+rc=$?
+if [ "$rc" -eq 0 ] && [ ! -f "$G91/busy.log" ]; then
+	pass "--check-only is never gated"
+else
+	fail "--check-only gated or failed (exit=$rc)"
+fi
+out=$(NEBULAOS_BUSY_CLI="$G91/busy" NEBULAOS_MAINTENANCE_HOLDER= FLASH_SPARE_SLOT_TEST_MODE=1 \
+	DEV_PREFIX="$F" CMDLINE_PATH="$F/cmdline" \
+	sh "$FLASH_SCRIPT" --check-only --force "$IMG/xImage" "$IMG/rootfs.squashfs" "$IMG/manifest.txt" 2>&1)
+rc=$?
+if [ "$rc" -eq 0 ] && [ ! -f "$G91/busy.log" ]; then
+	pass "--force is accepted and skips the gate"
+else
+	fail "--force (exit=$rc)"
+	echo "$out" | sed 's/^/    /'
+fi
+if grep -q -- '--force --target-slot' "$(dirname "$FLASH_SCRIPT")/../tools/hardware/nebulaos_device.py"; then
+	pass "the Hardware Agent passes --force (its own idle proof is the authority)"
+else
+	fail "the Hardware Agent does not pass --force"
+fi
+rm -rf "$G91"
+
 echo
 echo "=== $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ]

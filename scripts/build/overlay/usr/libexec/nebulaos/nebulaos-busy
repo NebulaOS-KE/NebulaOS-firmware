@@ -1,15 +1,32 @@
 #!/usr/bin/python3
 # nebulaos-busy - the G91 shared busy check for shell callers and SSH.
 #
-#   nebulaos-busy [--profile request|point_of_no_return|git|restart|recovery]
-#                 [--holder TOKEN]
+#   nebulaos-busy [--profile PROFILE] [--holder TOKEN] [--refuse]
+#   nebulaos-busy [--profile PROFILE] --lock NAME --exec CMD [ARG...]
 #
-# Prints BUSY=<reason> (PRINTING PAUSED ACTIVE CALIBRATING UPDATING
+# PROFILE: request (default) point_of_no_return git restart recovery screen.
+#
+# Plain: prints BUSY=<reason> (PRINTING PAUSED ACTIVE CALIBRATING UPDATING
 # LOW_MEMORY UNKNOWN) or BUSY=no, then MESSAGE=<text> and KLIPPY=<state>.
-# exit 0 = not busy (go ahead), 1 = busy, 64 = usage. The same check as
-# nebulaos_osconfig.common.busy_state (the [nebulaos] component and the
-# osconfig verbs); /etc/nebulaos-busy.sh is the fast shell variant of the
-# restart/recovery profiles (supervisorctl shim, update supervisor).
+# exit 0 = not busy (go ahead), 1 = busy, 64 = usage.
+#
+# --refuse (G91 step 6, for the CLI tools): prints nothing on stdout; busy ->
+# "NebulaOS refused: <message> (<REASON>)" on stderr and exit 3 (the osconfig
+# refusal code), not busy -> exit 0.
+#
+# --lock NAME --exec CMD...: takes the maintenance lock (token NAME-<pid>),
+# runs the check with that token excluded, and on "not busy" execs CMD with
+# the lock still held (the fd is inherited; it dies with CMD) and
+# NEBULAOS_MAINTENANCE_HOLDER=<token> in its environment, so CMD can re-check
+# at its own point of no return (--holder "$NEBULAOS_MAINTENANCE_HOLDER").
+# Another holder -> UPDATING. Refusals as --refuse (exit 3, nothing run).
+# nebulaos-mcu, nebulaos-recover and flash-spare-slot.sh re-exec themselves
+# through this unless --force.
+#
+# The same check as nebulaos_osconfig.common.busy_state (the [nebulaos]
+# component and the osconfig verbs); /etc/nebulaos-busy.sh is the fast shell
+# variant of the restart/recovery/screen profiles (supervisorctl shim, update
+# supervisor).
 import os
 import sys
 
@@ -17,30 +34,66 @@ sys.path.insert(0, os.environ.get("NEBULAOS_OSCONFIG_PYTHONPATH",
                                   "/usr/lib/nebulaos/python"))
 from nebulaos_osconfig import common  # noqa: E402
 
+EXIT_REFUSED = 3
 
-def main(argv):
-    profile, holder = "request", None
-    it = iter(argv)
-    for arg in it:
-        if arg in ("--profile", "--holder"):
-            value = next(it, None)
-            if value is None:
-                break
-            if arg == "--profile":
-                profile = value
-            else:
-                holder = value
-        else:
-            break
-    else:
-        if profile in common.PROFILES:
-            state = common.busy_state(profile, holder)
-            sys.stdout.write("BUSY=%s\nMESSAGE=%s\nKLIPPY=%s\n" % (
-                state["reason"] or "no", state["message"], state["klippy"]))
-            return 1 if state["busy"] else 0
-    sys.stderr.write("usage: nebulaos-busy [--profile %s] [--holder TOKEN]\n"
+
+def usage():
+    sys.stderr.write("usage: nebulaos-busy [--profile %s] [--holder TOKEN] [--refuse]\n"
+                     "       nebulaos-busy [--profile P] --lock NAME --exec CMD [ARG...]\n"
                      % "|".join(sorted(common.PROFILES)))
     return 64
+
+
+def refusal(state):
+    sys.stderr.write("NebulaOS refused: %s (%s)\n" % (state["message"], state["reason"]))
+    return EXIT_REFUSED
+
+
+def main(argv):
+    opts = {"--profile": "request", "--holder": None, "--lock": None}
+    refuse, command = False, None
+    it = iter(argv)
+    for arg in it:
+        if arg in opts:
+            value = next(it, None)
+            if value is None:
+                return usage()
+            opts[arg] = value
+        elif arg == "--refuse":
+            refuse = True
+        elif arg == "--exec":
+            command = list(it)
+            if not command:
+                return usage()
+        else:
+            return usage()
+    profile = opts["--profile"]
+    if profile not in common.PROFILES or (command is None) != (opts["--lock"] is None):
+        return usage()
+    if command is not None:
+        token = "%s-%d" % (opts["--lock"], os.getpid())
+        lock = common.MaintenanceLock(token)
+        try:
+            lock.acquire()
+        except common.Refused as exc:
+            return refusal(common.busy_result(profile, exc.code))
+        state = common.busy_state(profile, token)
+        if state["busy"]:
+            lock.release()
+            return refusal(state)
+        os.set_inheritable(lock.fd, True)
+        env = dict(os.environ, NEBULAOS_MAINTENANCE_HOLDER=token)
+        try:
+            os.execvpe(command[0], command, env)
+        except OSError as exc:
+            sys.stderr.write("nebulaos-busy: cannot run %s: %s\n" % (command[0], exc))
+            return 127
+    state = common.busy_state(profile, opts["--holder"])
+    if refuse:
+        return refusal(state) if state["busy"] else 0
+    sys.stdout.write("BUSY=%s\nMESSAGE=%s\nKLIPPY=%s\n" % (
+        state["reason"] or "no", state["message"], state["klippy"]))
+    return 1 if state["busy"] else 0
 
 
 sys.exit(main(sys.argv[1:]))

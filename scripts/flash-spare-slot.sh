@@ -387,21 +387,47 @@ write_and_verify() {
 	echo "$name write verified OK (md5 $src_sum)"
 }
 
+# G91 step 6 (2026-10-22): on a NebulaOS system a real write runs only
+# under the maintenance lock and when the shared busy check (request
+# profile: printing, paused, heating/moving, calibrating, another update or a
+# pending image trial, low memory, a live Klippy whose state cannot be read)
+# says idle - the script re-runs itself through nebulaos-busy --lock ...
+# --exec. Refused: the reason on stderr, exit 3, nothing written. --force
+# skips it: developer recovery, and the Hardware Agent, which carries its own
+# idle proof (re-checked after arming, with its dev-mode policy for an
+# unreadable Moonraker). --check-only writes nothing and is never gated. A
+# system without the check (Creality stock) is not gated either.
+NEBULAOS_BUSY_CLI="${NEBULAOS_BUSY_CLI:-/usr/libexec/nebulaos/nebulaos-busy}"
+
+maintenance_gate() {
+	_gate=true
+	for _a in "$@"; do
+		case "$_a" in --check-only|--force) _gate=false ;; esac
+	done
+	if [ "$_gate" = true ] && [ -z "${NEBULAOS_MAINTENANCE_HOLDER:-}" ] \
+		&& [ -x "$NEBULAOS_BUSY_CLI" ]; then
+		exec "$NEBULAOS_BUSY_CLI" --profile request --lock flash-spare-slot \
+			--exec /bin/sh "$0" "$@"
+	fi
+}
+
 main() {
+	maintenance_gate "$@"
 	check_only=false
 	while :; do
 		case "${1:-}" in
 			--check-only) check_only=true; shift ;;
+			--force) shift ;;
 			--target-slot)
 				case "${2:-}" in
 					1|2) TARGET_SLOT="$2"; shift 2 ;;
 					*) die "--target-slot takes 1 or 2, got '${2:-}'" ;;
 				esac ;;
-			--*) die "unknown option: $1 (usage: $0 [--check-only] [--target-slot 1|2] <xImage> <rootfs.squashfs> [build-manifest.txt])" ;;
+			--*) die "unknown option: $1 (usage: $0 [--check-only] [--force] [--target-slot 1|2] <xImage> <rootfs.squashfs> [build-manifest.txt])" ;;
 			*) break ;;
 		esac
 	done
-	[ "$#" -le 3 ] || die "unexpected extra arguments: $* (usage: $0 [--check-only] [--target-slot 1|2] <xImage> <rootfs.squashfs> [build-manifest.txt])"
+	[ "$#" -le 3 ] || die "unexpected extra arguments: $* (usage: $0 [--check-only] [--force] [--target-slot 1|2] <xImage> <rootfs.squashfs> [build-manifest.txt])"
 	kernel_img="$1"; rootfs_img="$2"; manifest="$3"
 
 	run_preflight "$kernel_img" "$rootfs_img" "$manifest"

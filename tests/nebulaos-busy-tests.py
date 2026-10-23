@@ -590,6 +590,41 @@ class BusyTests(unittest.TestCase):
                            text=True, env=env)
         self.assertEqual((p.returncode, p.stdout.splitlines()[0]), (0, "BUSY=no"))
 
+    def test_cli_refuse_and_lock_exec(self):
+        # G91 step 6: the CLI tools' gate (nebulaos-mcu, nebulaos-recover,
+        # flash-spare-slot.sh re-exec themselves through it)
+        env = self.shell_env()
+        self.status(print_stats={"state": "printing"})
+        p = subprocess.run([sys.executable, BUSY_CLI, "--refuse"], capture_output=True, text=True,
+                           env=env)
+        self.assertEqual((p.returncode, p.stdout), (3, ""))
+        self.assertEqual(p.stderr, "NebulaOS refused: Not possible while a print is running. "
+                                   "(PRINTING)\n")
+        out = os.path.join(self.tmp, "ran")
+        cmd = [sys.executable, BUSY_CLI, "--lock", "tool", "--exec", "sh", "-c",
+               'echo "$NEBULAOS_MAINTENANCE_HOLDER" > "$1"; "$2" "$3" --profile request; '
+               'echo "rc=$?" >> "$1"', "sh", out, sys.executable, BUSY_CLI]
+        p = subprocess.run(cmd, capture_output=True, text=True, env=env)
+        self.assertEqual(p.returncode, 3)
+        self.assertFalse(os.path.exists(out))                  # nothing ran
+        self.status(print_stats={"state": "standby"})
+        p = subprocess.run(cmd, capture_output=True, text=True, env=env)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        holder, rc = open(out).read().split()
+        self.assertTrue(holder.startswith("tool-"))
+        self.assertEqual(rc, "rc=1")             # the lock was held while CMD ran
+        self.assertIsNone(self.c.lock_holder(self.c.MAINTENANCE_LOCK))   # and died with it
+        lock = self.c.MaintenanceLock("image-9").acquire()
+        try:
+            p = subprocess.run(cmd, capture_output=True, text=True, env=env)
+            self.assertEqual(p.returncode, 3)
+            self.assertIn("Another update is running. (UPDATING)", p.stderr)
+        finally:
+            lock.release()
+        p = subprocess.run([sys.executable, BUSY_CLI, "--lock", "x"], capture_output=True,
+                           text=True, env=env)
+        self.assertEqual(p.returncode, 64)
+
     def test_osconfig_verb(self):
         cli = importlib.import_module("nebulaos_osconfig.cli")
         import io

@@ -793,6 +793,57 @@ else
 fi
 
 # =========================================================================
+# G91 step 6: recovery commands go through the shared busy check +
+# maintenance lock; exit 3 when busy; --force skips; status never gated.
+# =========================================================================
+
+echo ""
+echo "--- G91: shared busy check and maintenance lock ---"
+G91=$(mktemp -d)
+cat > "$G91/busy" <<'FAKE'
+#!/bin/sh
+echo "$*" >> "$G91_DIR/busy.log"
+[ "$(cat "$G91_DIR/mode")" = refuse ] && { echo "NebulaOS refused: Not possible while a print is running. (PRINTING)" >&2; exit 3; }
+while [ "$1" != --exec ]; do shift; done; shift
+NEBULAOS_MAINTENANCE_HOLDER=tok exec "$@"
+FAKE
+chmod +x "$G91/busy"
+g91_recover() {
+    rm -f "$G91/busy.log"; echo "$1" > "$G91/mode"; shift
+    G91_DIR="$G91" NEBULAOS_BUSY_CLI="$G91/busy" NEBULAOS_MAINTENANCE_HOLDER= \
+        CONFIG_MATERIALIZE_LIB="$G91/none.sh" NEBULAOS_ROOT="$G91/root" \
+        sh "$CLI_SCRIPT" "$@" >"$G91/out" 2>&1
+}
+for c in config klipper moonraker mainsail klipper-extensions; do
+    g91_recover refuse "$c"; rc=$?
+    if [ "$rc" = 3 ] && grep -q "NebulaOS refused" "$G91/out" \
+        && grep -q -- "--lock nebulaos-recover-$c --exec /bin/sh" "$G91/busy.log"; then
+        pass "recover $c refused while busy (exit 3)"
+    else
+        fail "recover $c while busy: rc=$rc $(cat "$G91/out")"
+    fi
+done
+g91_recover ok config; rc=$?
+if [ "$rc" = 1 ] && grep -q "config materialization library not found" "$G91/out"; then
+    pass "recover config runs under the lock when idle"
+else
+    fail "recover config idle: rc=$rc $(cat "$G91/out")"
+fi
+g91_recover refuse config --force; rc=$?
+if [ ! -f "$G91/busy.log" ] && grep -q "config materialization library not found" "$G91/out"; then
+    pass "recover --force skips the shared check"
+else
+    fail "recover --force: rc=$rc $(cat "$G91/out")"
+fi
+g91_recover refuse status; rc=$?
+if [ "$rc" = 0 ] && [ ! -f "$G91/busy.log" ]; then
+    pass "recover status is never gated"
+else
+    fail "recover status: rc=$rc"
+fi
+rm -rf "$G91"
+
+# =========================================================================
 # Summary
 # =========================================================================
 

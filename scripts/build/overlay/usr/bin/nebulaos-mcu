@@ -43,6 +43,9 @@ MCU_UPLOAD_DIR="${MCU_UPLOAD_DIR:-/opt/printer_data/config/uploads/mainboard-fir
 MCU_NATIVE_CANDIDATE="${MCU_NATIVE_CANDIDATE:-/opt/nebulaos/mcu-candidates/candidate-001.bin}"
 MOONRAKER_URL="${MOONRAKER_URL:-http://127.0.0.1:7125}"
 PYTHON3="${MCU_GUARD_PYTHON3:-/usr/bin/python3}"
+# G91 step 6: the shared busy check + maintenance lock (nebulaos-busy).
+NEBULAOS_BUSY_CLI="${NEBULAOS_BUSY_CLI:-/usr/libexec/nebulaos/nebulaos-busy}"
+FORCE=0
 
 die() { echo "nebulaos-mcu: error: $1" >&2; exit 1; }
 
@@ -103,7 +106,18 @@ restart_klipper_after_mcu_touch() {
     /etc/init.d/S55klipper start 2>/dev/null || true
 }
 
+# G91 step 6: right before Klipper is stopped (the point of no return), the
+# shared check (point_of_no_return profile; the maintenance lock this run
+# holds is excluded through NEBULAOS_MAINTENANCE_HOLDER). Refused -> the
+# reason on stderr, exit 3. --force (developer, USB/serial recovery) skips
+# it. Without the shared check (not a NebulaOS image) the old print check.
 check_printer_idle() {
+    [ "$FORCE" = 1 ] && return 0
+    if [ -x "$NEBULAOS_BUSY_CLI" ]; then
+        "$NEBULAOS_BUSY_CLI" --profile point_of_no_return \
+            --holder "${NEBULAOS_MAINTENANCE_HOLDER:-}" --refuse || exit 3
+        return 0
+    fi
     _state=$("$PYTHON3" -c "
 import json, sys
 try:
@@ -239,6 +253,8 @@ cmd_managed() {
     # points below (exit 0 twice, exit 1 three times) - a trap guarantees
     # Klipper comes back exactly once regardless of which one fires,
     # rather than needing every branch to remember to call it.
+    check_printer_idle || exit 1
+
     trap restart_klipper_after_mcu_touch EXIT
     stop_klipper_for_mcu_touch
 
@@ -295,6 +311,8 @@ usage() {
     echo "  status          Show current MCU lifecycle state (read-only)"
     echo "  flash <file>    Flash arbitrary firmware file to MCU"
     echo "  managed         Restore native firmware and re-enter managed mode"
+    echo "  (flash/managed are refused while the printer is busy; --force skips"
+    echo "   that check - developer recovery only)"
     exit 1
 }
 
@@ -304,6 +322,29 @@ fi
 
 command="$1"
 shift
+
+# G91 step 6: flash and managed stop Klipper and write the MCU. Unless
+# --force (developer only, never used by a UI), they re-run themselves under
+# the maintenance lock after the request busy check (refused: exit 3,
+# nothing touched); the osconfig MCU flash already holds the lock and passes
+# its token in NEBULAOS_MAINTENANCE_HOLDER.
+case "$command" in
+    flash|managed)
+        for _a in "$@"; do
+            [ "$_a" = "--force" ] && FORCE=1
+        done
+        if [ "$FORCE" = 0 ] && [ -z "${NEBULAOS_MAINTENANCE_HOLDER:-}" ] \
+            && [ -x "$NEBULAOS_BUSY_CLI" ]; then
+            exec "$NEBULAOS_BUSY_CLI" --profile request --lock "nebulaos-mcu-$command" \
+                --exec /bin/sh "$0" "$command" "$@"
+        fi
+        # --force is not a file name
+        for _a in "$@"; do
+            shift
+            [ "$_a" = "--force" ] || set -- "$@" "$_a"
+        done
+        ;;
+esac
 
 case "$command" in
     status)  cmd_status ;;
