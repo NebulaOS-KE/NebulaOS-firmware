@@ -10,9 +10,14 @@
 #     [bed_mesh adaptive], BED_MESH_PROFILE REMOVE=adaptive unstages it and
 #     never unloads the mesh in use, a saved [bed_mesh default] is untouched;
 #   - the pinned bed_mesh behaviour the macro relies on (PROFILE default
-#     "default", the adaptive path drops the name).
+#     "default", the adaptive path drops the name);
+#   - F2 (Run 18): a full mesh on a print with objects goes through the
+#     adaptive path (ADAPTIVE=1 ADAPTIVE_MARGIN=1000): pinned
+#     BedMeshCalibrate.update_config with machine.cfg's [bed_mesh] probes the
+#     same points as ADAPTIVE=0 and stages nothing (no save_config_pending).
 #
 # Usage: python3 tests/print-mesh-profile-tests.py
+import collections
 import configparser
 import os
 import re
@@ -67,17 +72,30 @@ def printer_ctx(objects=(), profiles=()):
     })
 
 
+FULL_VIA_ADAPTIVE = "BED_MESH_CALIBRATE ADAPTIVE=1 ADAPTIVE_MARGIN=1000 PROFILE=adaptive START_PRINT=1"
+
+
 class MacroTests(unittest.TestCase):
     def test_print_mesh_is_named_adaptive_and_unstaged(self):
         small = [[[100, 100], [120, 100], [120, 120], [100, 120]]]
         out = render("_START_PRINT_BED_MESH", params={}, printer=printer_ctx(small))
         self.assertEqual(out, ["BED_MESH_CALIBRATE ADAPTIVE=1 PROFILE=adaptive START_PRINT=1",
                                "_START_PRINT_BED_MESH_UNSTAGE"])
-        # bed usage above the threshold: a full mesh - still "adaptive"
+        # bed usage above the threshold: a full mesh through the adaptive
+        # path (F2: same points, nothing staged)
         big = [[[0, 0], [220, 0], [220, 220], [0, 220]]]
         out = render("_START_PRINT_BED_MESH", params={}, printer=printer_ctx(big))
-        self.assertIn("BED_MESH_CALIBRATE ADAPTIVE=0 PROFILE=adaptive START_PRINT=1", out)
+        self.assertIn(FULL_VIA_ADAPTIVE, out)
         self.assertEqual(out[-1], "_START_PRINT_BED_MESH_UNSTAGE")
+        # the user asks for a full mesh on a print with objects: same
+        out = render("_START_PRINT_BED_MESH", params={"BED_MESH_ADAPTIVE": "0"},
+                     printer=printer_ctx(small))
+        self.assertEqual(out, [FULL_VIA_ADAPTIVE, "_START_PRINT_BED_MESH_UNSTAGE"])
+        # ... without objects: the named fallback (unstaged afterwards)
+        out = render("_START_PRINT_BED_MESH", params={"BED_MESH_ADAPTIVE": "0"},
+                     printer=printer_ctx())
+        self.assertEqual(out, ["BED_MESH_CALIBRATE ADAPTIVE=0 PROFILE=adaptive START_PRINT=1",
+                               "_START_PRINT_BED_MESH_UNSTAGE"])
         # no objects at all
         out = render("_START_PRINT_BED_MESH", params={}, printer=printer_ctx())
         self.assertEqual(out, ["BED_MESH_CALIBRATE ADAPTIVE=1 PROFILE=adaptive START_PRINT=1",
@@ -98,8 +116,9 @@ class MacroTests(unittest.TestCase):
     def test_no_print_mesh_under_a_saved_name(self):
         text = open(PRINT_CFG).read()
         calls = re.findall(r"^\s*BED_MESH_CALIBRATE\b.*$", text, re.M)
-        self.assertEqual(len(calls), 1)
-        self.assertIn("PROFILE=adaptive", calls[0])
+        self.assertEqual(len(calls), 2)
+        for call in calls:
+            self.assertIn("PROFILE=adaptive", call)
         self.assertNotRegex(text, r"(?m)^\s*BED_MESH_PROFILE SAVE")
 
 
@@ -181,6 +200,8 @@ class PinnedBedMeshTests(unittest.TestCase):
         # recorded as a deletion (None) - what SAVE_CONFIG writes is the
         # autosave config itself, which no longer has it.
         self.assertIsNone(self.autosave.status_save_pending["bed_mesh adaptive"])
+        # F2 residual (prints without objects only): the flag stays set
+        self.assertTrue(self.autosave.save_config_pending)
         self.assertFalse(self.autosave.fileconfig.has_section("bed_mesh adaptive"))
         import configfile
         written = configfile.ConfigFileReader().build_config_string(self.autosave.fileconfig)
@@ -207,6 +228,99 @@ class PinnedBedMeshTests(unittest.TestCase):
                       src)
         remove = src[src.index("def remove_profile"):src.index("cmd_BED_MESH_PROFILE_help")]
         self.assertNotIn("set_mesh", remove)                    # REMOVE never unloads
+
+
+MACHINE_CFG = os.path.join(os.path.dirname(PRINT_CFG), "machine.cfg")
+
+
+class FakeExcludeObject(object):
+    def __init__(self, polygons):
+        self.polygons = polygons
+
+    def get_status(self, eventtime=None):
+        return {"objects": [{"name": "o%d" % i, "polygon": p}
+                            for i, p in enumerate(self.polygons)]}
+
+
+class FakeProbeMgr(object):
+    def __init__(self):
+        self.calls = []
+
+    def generate_points(self, mesh_config, mesh_min, mesh_max, radius, origin,
+                        probe_method="automatic"):
+        self.calls.append((dict(mesh_config), tuple(mesh_min), tuple(mesh_max),
+                           radius, origin, probe_method))
+
+
+class FakeGcmd(object):
+    def __init__(self, **params):
+        self.params = {k: str(v) for k, v in params.items()}
+
+    def get_command_parameters(self):
+        return dict(self.params)
+
+    def get(self, name, default=None):
+        return self.params.get(name, default)
+
+    def get_int(self, name, default=None, **kw):
+        return int(self.params[name]) if name in self.params else default
+
+    def get_float(self, name, default=None, **kw):
+        return float(self.params[name]) if name in self.params else default
+
+    def respond_info(self, msg):
+        pass
+
+    def error(self, msg):
+        return Exception(msg)
+
+
+class FullMeshViaAdaptiveTests(unittest.TestCase):
+    """F2: pinned BedMeshCalibrate.update_config with machine.cfg's real
+    [bed_mesh]: ADAPTIVE=1 ADAPTIVE_MARGIN=1000 on a print with objects
+    probes exactly the points of ADAPTIVE=0, and drops the profile name (so
+    probe_finalize never stages [bed_mesh adaptive])."""
+
+    def calibrate(self, polygons, **params):
+        if KLIPPY not in sys.path:
+            sys.path.insert(0, KLIPPY)
+        try:
+            import configfile
+            from extras import bed_mesh
+        except Exception as exc:          # numpy etc. missing on this host
+            raise unittest.SkipTest("pinned Klipper not importable here: %s" % exc)
+        printer = FakePrinter()
+        printer.objects["exclude_object"] = FakeExcludeObject(polygons)
+        fileconfig = configfile.ConfigFileReader().build_fileconfig(
+            open(MACHINE_CFG).read(), MACHINE_CFG)
+        config = configfile.ConfigWrapper(printer, fileconfig, {}, "bed_mesh")
+        cal = bed_mesh.BedMeshCalibrate.__new__(bed_mesh.BedMeshCalibrate)
+        cal.printer = printer
+        cal.orig_config = {"radius": None, "origin": None}
+        cal.radius = cal.origin = None
+        cal.mesh_min = cal.mesh_max = (0., 0.)
+        cal.adaptive_margin = 0.
+        cal.mesh_config = collections.OrderedDict()
+        cal._init_mesh_config(config)
+        cal.probe_mgr = FakeProbeMgr()
+        cal._profile_name = "adaptive"                  # PROFILE=adaptive
+        cal.update_config(FakeGcmd(**params))
+        return cal.probe_mgr.calls[-1], cal._profile_name
+
+    def test_same_points_as_full_and_not_staged(self):
+        objects = [[[0, 0], [220, 0], [220, 220], [0, 220]]]
+        full, full_name = self.calibrate(objects, ADAPTIVE=0, PROFILE="adaptive")
+        via, via_name = self.calibrate(objects, ADAPTIVE=1, ADAPTIVE_MARGIN=1000,
+                                       PROFILE="adaptive")
+        self.assertEqual(full, via)
+        self.assertEqual(full[1:3], ((5.0, 10.0), (215.0, 215.0)))
+        self.assertEqual((full[0]["x_count"], full[0]["y_count"]), (9, 9))
+        self.assertEqual(full_name, "adaptive")         # ADAPTIVE=0: staged, then UNSTAGE
+        self.assertIsNone(via_name)                     # never staged
+        # a small object far from the edges: still the whole bed
+        small, small_name = self.calibrate([[[100, 100], [120, 100], [120, 120], [100, 120]]],
+                                           ADAPTIVE=1, ADAPTIVE_MARGIN=1000)
+        self.assertEqual((small, small_name), (full, None))
 
 
 CALIBRATION_CFG = os.path.join(os.path.dirname(PRINT_CFG), "calibration.cfg")
