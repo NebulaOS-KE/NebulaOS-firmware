@@ -6,11 +6,31 @@
 #     transient on this system and must be the first OOM victim;
 #   - while a print is active, a network fetch is a no-op success (the repo
 #     stays valid with its last known refs) and pull/clone are refused;
-#   - under memory pressure (memguard P1+) fetch/pull/clone are refused.
+#   - under memory pressure (memguard P1+) fetch/pull/clone are refused;
+#   - G91 step 7 (design v2.4/v3.4): every repo-changing command (pull, clone,
+#     checkout, reset, merge, rebase, clean) asks the shared busy check under
+#     the `git` profile (printing, paused, heating/moving, calibrating, an
+#     image/MCU job, low memory, a live Klippy whose state cannot be read; not
+#     Moonraker's own update) and is refused while busy: the reason on stderr
+#     (Moonraker shows it in the update dialog for pull/clone), in syslog, and
+#     as a "!! NebulaOS refused: ..." line in Mainsail's console. This covers
+#     /machine/update/full and paused prints, which Moonraker does not check.
+#     fetch only downloads: it stays a no-op under a print, as before.
 # /usr/bin/git itself is untouched.
 
 NEBULAOS_GIT_REAL="${NEBULAOS_GIT_REAL:-/usr/bin/git}"
 NEBULAOS_RUN_DIR="${NEBULAOS_RUN_DIR:-/run/nebulaos}"
+NEBULAOS_BUSY_CLI="${NEBULAOS_BUSY_CLI:-/usr/libexec/nebulaos/nebulaos-busy}"
+NB_MOONRAKER="${NB_MOONRAKER:-http://127.0.0.1:7125}"
+
+refuse() { # SUB TEXT
+	echo "NebulaOS refused: git $1 - $2" >&2
+	logger -t nebulaos-git "refused: git $1 - $2" 2>/dev/null
+	wget -q -T 1 -O /dev/null --header "Content-Type: application/json" \
+		--post-data "{\"message\": \"update (git $1) - $2\"}" \
+		"$NB_MOONRAKER/machine/nebulaos/system/notify_refused" </dev/null >/dev/null 2>&1
+	exit 1
+}
 
 echo 800 > /proc/self/oom_score_adj 2>/dev/null
 
@@ -31,18 +51,21 @@ for a in "$@"; do
 done
 
 case "$sub" in
-fetch | pull | clone)
+fetch | pull | clone | checkout | reset | merge | rebase | clean)
 	if [ -e "$NEBULAOS_RUN_DIR/print-active" ]; then
 		if [ "$sub" = fetch ]; then
 			logger -t nebulaos-git "print active: fetch skipped (no-op success): $*" 2>/dev/null
 			exit 0
 		fi
-		logger -t nebulaos-git "print active: $sub refused" 2>/dev/null
-		exit 1
+		refuse "$sub" "Not possible while a print is running. (PRINTING)"
 	fi
 	if [ -e "$NEBULAOS_RUN_DIR/memguard/deny-maintenance" ]; then
-		logger -t nebulaos-git "memory pressure: $sub refused" 2>/dev/null
-		exit 1
+		refuse "$sub" "Not possible right now: the printer is low on memory. (LOW_MEMORY)"
+	fi
+	[ "$sub" = fetch ] && exec "$NEBULAOS_GIT_REAL" "$@"
+	if [ -x "$NEBULAOS_BUSY_CLI" ]; then
+		_why=$("$NEBULAOS_BUSY_CLI" --profile git --refuse 2>&1 >/dev/null)
+		[ $? = 3 ] && refuse "$sub" "${_why#NebulaOS refused: }"
 	fi
 	;;
 esac
