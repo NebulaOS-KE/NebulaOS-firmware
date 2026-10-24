@@ -54,7 +54,7 @@ elif [ -d "$REPO_ROOT/../NebulaOS-guppyscreen/.git" ]; then
 	GUPPY_REPO=$(cd "$REPO_ROOT/../NebulaOS-guppyscreen" && pwd)
 fi
 if [ -z "$GUPPY_REPO" ]; then
-	echo "SKIP: no NebulaOS-guppyscreen checkout found (run 00-fetch-vendor-sources.sh, or place the sibling checkout beside this repo)"
+	echo "SKIP: no NebulaOS-nebulascreen (or old NebulaOS-guppyscreen) checkout found (run 00-fetch-vendor-sources.sh, or place the sibling checkout beside this repo)"
 	exit 0
 fi
 if ! git -C "$GUPPY_REPO" cat-file -e "${PIN}^{commit}" 2>/dev/null; then

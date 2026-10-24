@@ -53,7 +53,7 @@ Five NebulaOS development repositories are active here, canonical remotes under
 | `NebulaOS-klipper-extensions/` | `coreflake1/NebulaOS-klipper-extensions` | `main` | NebulaOS-owned host Klipper functionality |
 | `NebulaOS-klipper-mcu/` | `coreflake1/NebulaOS-klipper-mcu` | `main` | GD32F303 application firmware development |
 | `NebulaOS-kernel/` | `coreflake1/NebulaOS-kernel` | `openke` | X2000 Linux kernel development |
-| `NebulaOS-guppyscreen/` (being renamed `NebulaOS-nebulascreen/`) | `coreflake1/NebulaOS-guppyscreen` (→ `NebulaOS-nebulascreen`) | `main` | Touchscreen frontend (NebulaScreen, based on GuppyScreen) |
+| `NebulaOS-nebulascreen/` | `coreflake1/NebulaOS-nebulascreen` (renamed from `NebulaOS-guppyscreen` 2026-10-24; the old URL redirects, never recreate it) | `main` | Touchscreen frontend (NebulaScreen, based on GuppyScreen) |
 
 In DEV any branch may be checked out. The workspace root is deliberately **not** a git
 repository.

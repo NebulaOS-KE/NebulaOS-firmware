@@ -3,7 +3,7 @@
 
 The update supervisor runs this on /usr/data/nebulaos/apps/nebulascreen
 BEFORE a release is activated (health stage 1). Same rules as the release
-zip check of NebulaOS-guppyscreen/scripts/nebulascreen_release.py, applied to
+zip check of NebulaOS-nebulascreen/scripts/nebulascreen_release.py, applied to
 the extracted directory, plus the one thing only the printer knows: the
 image's own path/name contract level.
 

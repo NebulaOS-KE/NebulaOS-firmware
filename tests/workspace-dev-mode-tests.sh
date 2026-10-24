@@ -36,7 +36,7 @@ mkrepo(){ # name branch
   echo "$1" > "$R/$1/README.md"; git -C "$R/$1" add -A; git -C "$R/$1" commit -qm init
 }
 mkdir -p "$R"
-for r in NebulaOS-klipper-extensions:main NebulaOS-klipper-mcu:main NebulaOS-kernel:openke NebulaOS-guppyscreen:main; do
+for r in NebulaOS-klipper-extensions:main NebulaOS-klipper-mcu:main NebulaOS-kernel:openke NebulaOS-nebulascreen:main; do
   mkrepo "${r%%:*}" "${r##*:}"
 done
 mkrepo NebulaOS-firmware main
@@ -50,7 +50,7 @@ KLIPPER_PIN=58bd67db3ce1be1951c3e4a6d1156a79903d4edc
 KLIPPER_EXTENSIONS_BRANCH=production
 KLIPPER_EXTENSIONS_PIN=$(git -C "$R/NebulaOS-klipper-extensions" rev-parse HEAD)
 KERNEL_PIN=$(git -C "$R/NebulaOS-kernel" rev-parse HEAD)
-GUPPYSCREEN_PIN=$(git -C "$R/NebulaOS-guppyscreen" rev-parse HEAD)
+NEBULASCREEN_PIN=$(git -C "$R/NebulaOS-nebulascreen" rev-parse HEAD)
 EOF
 CAND=$FW/scripts/build/overlay/opt/nebulaos/mcu-candidates/candidate-001
 echo mcu-binary > "$CAND.bin"
@@ -95,7 +95,7 @@ out=$("$GATE" 2>&1); rc=$?
 expect_rc 0 "--local passes on a pristine fixture (baseline for the strict cases)" "$GATE" --local
 
 echo "[ ordinary DEV state never blocks ]"
-echo dirty >> "$R/NebulaOS-guppyscreen/README.md"
+echo dirty >> "$R/NebulaOS-nebulascreen/README.md"
 expect_rc 0       "dirty unrelated repo: DEV passes"            "$GATE" --dev
 expect_rc nonzero "dirty unrelated repo: --local still strict"  "$GATE" --local
 echo wip > "$FW/wip.txt"; git -C "$FW" add wip.txt; git -C "$FW" commit -qm "unpushed local work"

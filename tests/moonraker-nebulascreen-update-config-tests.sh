@@ -1,17 +1,18 @@
 #!/bin/sh
 # G82 stage 4: [update_manager nebulascreen] (type: zip) - image-owned,
 # consistent with S58, the shim, moonraker.asvc and the update supervisor,
-# and DORMANT until the screen repository is renamed and has a first stable
-# release (nebulaos.conf carries its include line commented out).
+# and ACTIVE since Run 19 (2026-10-24): the screen repository is renamed and
+# has a stable release, so nebulaos.conf includes it (it was dormant before).
 #
 #   - the section's options, and that "repo" is the owner/project every
 #     release_info.json names (Moonraker queries that one for a valid install)
 #   - path == S58's and the supervisor's app dir; managed_services is a
 #     service the supervisorctl shim maps onto S58nebulascreen, with S58's
 #     pidfile, and S56 allows it in moonraker.asvc
-#   - dormant: no active include, no active section anywhere in the chain
-#   - the pinned Moonraker facts the dormancy rests on are still true
-#   - the pinned Moonraker's parser accepts the chain with the include enabled
+#   - active: exactly one include (in nebulaos.conf), no commented-out copy,
+#     no second [update_manager nebulascreen|guppyscreen] in the chain
+#   - the pinned Moonraker facts the activation rests on are still true
+#   - the pinned Moonraker's parser accepts the shipped chain as it is
 #
 # Usage: sh tests/moonraker-nebulascreen-update-config-tests.sh
 set -u
@@ -62,13 +63,20 @@ t "S56 allows nebulascreen in moonraker.asvc" \
 t "S58 restart = stop (unbind) + start (approved-only bind)" \
 	'grep -A3 "^	restart)" "$S58" | grep -q stop && grep -q "ns_activate \"\$NS_APP\" \"\$NS_DIR\" \"\$NS_UPDATE_STATE\"" "$S58"'
 
-# Dormant until a release exists.
-t "nebulaos.conf names the include, commented out" \
-	'grep -qx "# \[include /etc/nebulaos/moonraker/nebulascreen-update.conf\]" "$NCONF"'
-t "no active include of it anywhere in the chain" \
-	'! grep -hx "\[include /etc/nebulaos/moonraker/nebulascreen-update.conf\]" "$NCONF" "$PIN" "$MCONF" | grep -q .'
-t "no active [update_manager nebulascreen|guppyscreen] in the chain" \
+# Active (G82 stage 4, Run 19): the include is live exactly once, in the
+# image-owned nebulaos.conf - never in the user-owned moonraker.conf.
+t "nebulaos.conf includes it (active, exactly once)" \
+	'[ "$(grep -cx "\[include /etc/nebulaos/moonraker/nebulascreen-update.conf\]" "$NCONF")" = 1 ]'
+t "no commented-out copy of the include is left behind" \
+	'! grep -qE "^#.*\[include /etc/nebulaos/moonraker/nebulascreen-update.conf\]" "$NCONF"'
+t "the include is nowhere else in the chain (user-owned moonraker.conf, klipper-pin.conf)" \
+	'! grep -hx "\[include /etc/nebulaos/moonraker/nebulascreen-update.conf\]" "$PIN" "$MCONF" | grep -q .'
+t "no other [update_manager nebulascreen|guppyscreen] in the chain" \
 	'! grep -hEx "\[update_manager (nebulascreen|guppyscreen)\]" "$NCONF" "$PIN" "$MCONF" | grep -q .'
+t "klipper-pin.conf includes nebulaos.conf (so the section reaches every device)" \
+	'grep -qx "\[include /etc/nebulaos/moonraker/nebulaos.conf\]" "$PIN"'
+t "the update supervisor sees the include as active (nebulascreen refresh on)" \
+	'grep -q "NS_MOONRAKER_INCLUDE:-/etc/nebulaos/moonraker/nebulaos.conf" "$SUP" && grep -q "grep -qx .\\\\\[include /etc/nebulaos/moonraker/nebulascreen-update.conf\\\\\]." "$SUP"'
 
 if [ -d "$MR/moonraker/components/update_manager" ]; then
 	UM="$MR/moonraker/components/update_manager"
@@ -83,12 +91,10 @@ if [ -d "$MR/moonraker/components/update_manager" ]; then
 	t "pinned Moonraker: type zip may manage its own service" \
 		'grep -q "svc_choices = \[self.name, \"klipper\", \"moonraker\"\]" "$UM/app_deploy.py"'
 
-	# The parser on the chain with the include ENABLED (absolute paths
-	# redirected into a temp tree).
+	# The parser on the shipped chain (absolute paths redirected into a
+	# temp tree).
 	mkdir -p "$W/etc/nebulaos/moonraker" "$W/cfg"
 	cp "$NCONF" "$PIN" "$UCONF" "$W/etc/nebulaos/moonraker/"
-	sed -i "s#^\# \[include /etc/nebulaos/moonraker/nebulascreen-update.conf\]#[include /etc/nebulaos/moonraker/nebulascreen-update.conf]#" \
-		"$W/etc/nebulaos/moonraker/nebulaos.conf"
 	sed -i "s#/etc/nebulaos/moonraker/#$W/etc/nebulaos/moonraker/#" \
 		"$W/etc/nebulaos/moonraker/klipper-pin.conf" "$W/etc/nebulaos/moonraker/nebulaos.conf"
 	sed "s#/etc/nebulaos/moonraker/#$W/etc/nebulaos/moonraker/#" "$MCONF" > "$W/cfg/moonraker.conf"
@@ -106,7 +112,7 @@ print("SECTIONS", "|".join(sorted(cp.sections())))
 print("TYPE", cp.get("update_manager nebulascreen", "type"))
 PYEOF
 )
-	t "pinned Moonraker parses the chain with the include enabled" \
+	t "pinned Moonraker parses the shipped chain with the section active" \
 		'echo "$out" | grep -q "^TYPE zip$" && echo "$out" | grep -q "update_manager mainsail"'
 	[ "$FAIL" -eq 0 ] || echo "$out" | tail -5
 else

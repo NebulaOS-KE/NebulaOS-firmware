@@ -110,6 +110,39 @@ tree is not silently discarded either: it is only removed when it is provably
 identical to the incoming seed and clean, and otherwise it is preserved
 alongside as `<component>.diverged-<timestamp>` with a warning in the boot log.
 
+## NebulaScreen (current state, Run 19, 2026-10-24)
+
+**This section supersedes the "GuppyScreen" section below, which is kept as
+the record of the Phase 2 decision.** Derived from source:
+`scripts/build/overlay/etc/nebulaos/moonraker/nebulascreen-update.conf`,
+`nebulaos.conf`, `S58nebulascreen`, `/etc/nebulascreen-lib.sh` and the
+nebulascreen component of `nebulaos-update-supervisor.sh`.
+
+- Canonical source: `coreflake1/NebulaOS-nebulascreen` (renamed from
+  `NebulaOS-guppyscreen`; GitHub redirects the old URL - never recreate the
+  old name), `main` branch, image copy pinned via `NEBULASCREEN_PIN`.
+- The image's own screen is served from `/opt/nebulascreen` (squashfs).
+- Live updates: **on**. `[update_manager nebulascreen]` (type `zip`,
+  channel `stable`, repo `coreflake1/NebulaOS-nebulascreen`, path
+  `/usr/data/nebulaos/apps/nebulascreen`, managed_services `nebulascreen`)
+  lives in the image-owned `nebulascreen-update.conf`, included from the
+  image-owned `nebulaos.conf` (never from the user's `moonraker.conf`).
+  Moonraker downloads the release zip from the screen repo's stable GitHub
+  releases (one asset per tag; release name == tag == `release_info.json`
+  version) and restarts the service.
+- One owner per step: Moonraker downloads; `S58nebulascreen` binds a
+  downloaded release over `/opt/nebulascreen` only after the NebulaOS update
+  supervisor checked it (`nebulascreen-release-check`) and approved it; the
+  supervisor activates it on an idle printer, health-checks it and rolls
+  back (last-known-good release, else the image's screen). A new system
+  image wins: on its first boot the app dir is reset to the image's seed
+  `release_info.json`, and the supervisor refreshes Moonraker's view.
+- Updates are refused while the printer is busy, like every other update
+  path (G91).
+- "Update all" in Mainsail now includes nebulascreen. It needs a published
+  stable release: with none, Moonraker's full update would stop at this
+  component (the reason the include stayed dormant until Run 19).
+
 ## GuppyScreen
 
 **Owner: NebulaOS firmware/release only. No independent updater exists,

@@ -95,6 +95,20 @@ NebulaOS feature the way Klipper branch drift did. Left as a known,
 intentional design point (see Phase 2's ownership decision below), not
 something requiring the same fast-forward treatment.
 
+## NebulaScreen (current state, Run 19, 2026-10-24)
+
+The "GuppyScreen" table below is the Phase 2 snapshot and no longer
+describes the image. Current state (from source):
+
+| Field | Value |
+|---|---|
+| Path (device) | image copy `/opt/nebulascreen` (squashfs); downloaded releases in `/usr/data/nebulaos/apps/nebulascreen`, bound over the image copy only after the update supervisor approved them |
+| Remote | `https://github.com/coreflake1/NebulaOS-nebulascreen.git` (renamed from `NebulaOS-guppyscreen`; the old URL redirects) |
+| Update manager | `[update_manager nebulascreen]`, type `zip`, channel `stable`, in the image-owned `/etc/nebulaos/moonraker/nebulascreen-update.conf`, **active** (included from `nebulaos.conf`) since Run 19 |
+| Image pin | `NEBULASCREEN_PIN` / `NEBULASCREEN_VERSION` in `manifests/dependencies.conf` |
+
+See `NEBULAOS_UPDATE_OWNERSHIP.md`, "NebulaScreen".
+
 ## GuppyScreen
 
 | Field | Value |

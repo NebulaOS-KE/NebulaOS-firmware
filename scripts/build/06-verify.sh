@@ -1719,9 +1719,22 @@ check /etc/nebulascreen-lib.sh
 check /usr/share/nebulaos/nebulascreen/release_info.json
 # G82 stage 3: the update supervisor's static check of a downloaded release.
 check /usr/libexec/nebulaos/nebulascreen-release-check
-# G82 stage 4: the image-owned [update_manager nebulascreen] section (its
-# include in nebulaos.conf stays commented until a first release exists).
+# G82 stage 4: the image-owned [update_manager nebulascreen] section, active
+# since Run 19 (nebulaos.conf includes it; it was dormant before the repo
+# rename and the first stable release).
 check /etc/nebulaos/moonraker/nebulascreen-update.conf
+if debugfs -R "cat /etc/nebulaos/moonraker/nebulaos.conf" ${IMAGES}/rootfs.ext2 2>/dev/null \
+		| grep -qx '\[include /etc/nebulaos/moonraker/nebulascreen-update.conf\]'; then
+	echo "OK   nebulaos.conf includes nebulascreen-update.conf (NebulaScreen updates active)"
+else
+	echo "MISS nebulaos.conf does not include nebulascreen-update.conf (NebulaScreen updates off)"
+fi
+if debugfs -R "cat /etc/nebulaos/moonraker/nebulascreen-update.conf" ${IMAGES}/rootfs.ext2 2>/dev/null \
+		| grep -qx 'repo: coreflake1/NebulaOS-nebulascreen'; then
+	echo "OK   [update_manager nebulascreen] names the renamed repository"
+else
+	echo "MISS [update_manager nebulascreen] does not name coreflake1/NebulaOS-nebulascreen"
+fi
 check_absent /etc/init.d/S58guppyscreen
 check_absent /opt/guppyscreen/guppyscreen
 NS_RELEASE_INFO=$(debugfs -R "cat /usr/share/nebulaos/nebulascreen/release_info.json" ${IMAGES}/rootfs.ext2 2>/dev/null)
