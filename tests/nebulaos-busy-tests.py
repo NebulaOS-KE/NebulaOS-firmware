@@ -700,6 +700,34 @@ class BusyTests(unittest.TestCase):
         self.assertLess(took, 3.0)
         self.mr.post_hang = 0
 
+    def test_g107_shim_one_console_line_per_reason(self):
+        # G107: repeated refusals (Moonraker retries, an update's restart, a
+        # double click) are all refused, but the console line goes out once
+        # per reason per window; another reason gets its own line.
+        self.status(print_stats={"state": "printing"})
+        for action in ("restart", "restart", "stop", "restart"):
+            rc, err, ran, took = self.shim(action, "klipper")
+            self.assertEqual((rc, ran), (1, []))
+            self.assertIn("(PRINTING)", err)
+        self.assertEqual(len(self.mr.posts), 1)
+        stamp = os.path.join(self.run_dir, "refusal-notify", "svc-klipper-PRINTING")
+        self.assertTrue(open(stamp).read().strip().isdigit())
+        self.status(print_stats={"state": "paused"})
+        self.assertEqual(self.shim("restart", "klipper")[0], 1)
+        self.assertEqual(self.shim("restart", "klipper")[0], 1)
+        self.assertEqual(len(self.mr.posts), 2)
+        # after the window, the next refusal shows again
+        self.status(print_stats={"state": "printing"})
+        with open(stamp, "w") as fh:
+            fh.write("%d\n" % (int(time.time()) - 61))
+        self.assertEqual(self.shim("restart", "klipper")[0], 1)
+        self.assertEqual(len(self.mr.posts), 3)
+        # a stamp from the future (clock went back) never silences
+        with open(stamp, "w") as fh:
+            fh.write("%d\n" % (int(time.time()) + 3600))
+        self.assertEqual(self.shim("restart", "klipper")[0], 1)
+        self.assertEqual(len(self.mr.posts), 4)
+
     def test_shim_paused_and_active(self):
         self.status(print_stats={"state": "paused"})
         self.assertEqual(self.shim("restart", "klipper")[0], 1)

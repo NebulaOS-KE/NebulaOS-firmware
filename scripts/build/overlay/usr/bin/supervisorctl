@@ -157,8 +157,29 @@ refuse_if_klipper_busy() {
   esac
   echo "NebulaOS refused: $1 klipper - $text ($reason)" >&2
   logger -t supervisorctl "NebulaOS refused: $1 klipper ($reason)" 2>/dev/null
-  notify_refused "$1 klipper - $text"
+  notify_due "svc-klipper-$reason" && notify_refused "$1 klipper - $text"
   exit 1
+}
+
+# G107 (Run 19): one visible refusal per action. Moonraker may retry a
+# refused restart, and an update or a double click sends several; each one is
+# still refused (stderr, syslog), but the console line - and the screen popup
+# that follows it - goes out at most once per NB_NOTIFY_WINDOW seconds per
+# reason (last notify time in a small tmpfs file, same scheme as the git
+# wrapper /usr/libexec/nebulaos/bin/git).
+notify_due() { # KEY - true (and stamped) when no notify for KEY in the window
+  _nd_dir="${NEBULAOS_RUN_DIR:-/run/nebulaos}/refusal-notify"
+  _nd_file="$_nd_dir/$1"
+  _nd_now=$(date +%s 2>/dev/null) || return 0
+  _nd_last=$(cat "$_nd_file" 2>/dev/null)
+  case "$_nd_last" in '' | *[!0-9]*) _nd_last=0 ;; esac
+  # a clock that went backwards never silences notifies
+  if [ "$_nd_last" -le "$_nd_now" ] && [ $((_nd_now - _nd_last)) -lt "${NB_NOTIFY_WINDOW:-60}" ]; then
+    return 1
+  fi
+  mkdir -p "$_nd_dir" 2>/dev/null
+  echo "$_nd_now" > "$_nd_file.$$" 2>/dev/null && mv -f "$_nd_file.$$" "$_nd_file" 2>/dev/null
+  return 0
 }
 
 # G98: the refusal as a "!! NebulaOS refused: ..." line in Mainsail's console

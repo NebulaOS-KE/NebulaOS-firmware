@@ -86,6 +86,48 @@ rm -f "$WORK/busy"
 reset; sh "$WRAP" -C /x reset --hard origin/master; rc=$?
 [ "$rc" = 0 ] && [ "$(calls)" = 1 ] && pass "idle: reset passes through" || fail "idle reset blocked (rc=$rc)"
 
+# G107: one visible refusal per update attempt. A fake wget records the
+# notify_refused posts; every command is still refused with its stderr line.
+mkdir -p "$WORK/bin"
+printf '#!/bin/sh\np=""\nfor a in "$@"; do [ "$p" = --post-data ] && echo "$a" >> %s/notify.calls; p="$a"; done\nexit 0\n' "$WORK" > "$WORK/bin/wget"
+chmod +x "$WORK/bin/wget"
+notifies() { cat "$WORK/notify.calls" 2>/dev/null | grep -c .; }
+OLDPATH=$PATH
+PATH="$WORK/bin:$PATH"
+rm -rf "$NEBULAOS_RUN_DIR/refusal-notify"; rm -f "$WORK/notify.calls"
+echo PAUSED > "$WORK/busy"
+errs=0
+for c in "fetch origin" "reset --hard origin/master" "checkout -q v1" "pull" "reset --hard origin/master"; do
+	# shellcheck disable=SC2086
+	err=$(sh "$WRAP" -C /x $c 2>&1 >/dev/null); rc=$?
+	case "$c" in fetch*) continue ;; esac
+	[ "$rc" != 0 ] && case "$err" in "NebulaOS refused: git "*"(PAUSED)") true ;; *) false ;; esac || errs=$((errs + 1))
+done
+[ "$errs" = 0 ] && pass "G107: every repo-changing command of one attempt is still refused on stderr" || fail "G107: $errs commands not refused"
+[ "$(notifies)" = 1 ] && pass "G107: one attempt (4 refused commands, a retry) = ONE console notify" || fail "G107: $(notifies) notifies: $(cat "$WORK/notify.calls" 2>/dev/null)"
+grep -q 'update (git reset) - Not possible while a print is paused. (PAUSED)' "$WORK/notify.calls" \
+	&& pass "G107: the one notify carries the first refusal's text" || fail "G107: notify text: $(cat "$WORK/notify.calls")"
+[ "$(cat "$NEBULAOS_RUN_DIR/refusal-notify/git-PAUSED" 2>/dev/null | grep -c '^[0-9][0-9]*$')" = 1 ] \
+	&& pass "G107: the last notify time is kept per reason in /run/nebulaos/refusal-notify" || fail "G107: no state file"
+rm -f "$WORK/busy"
+: > "$NEBULAOS_RUN_DIR/memguard/deny-maintenance"
+sh "$WRAP" -C /x pull 2>/dev/null; sh "$WRAP" -C /x pull 2>/dev/null
+[ "$(notifies)" = 2 ] && pass "G107: a different reason (LOW_MEMORY) notifies once on its own" || fail "G107: other reason gave $(notifies) notifies in total"
+rm -f "$NEBULAOS_RUN_DIR/memguard/deny-maintenance"
+echo PAUSED > "$WORK/busy"
+echo $(( $(date +%s) - 61 )) > "$NEBULAOS_RUN_DIR/refusal-notify/git-PAUSED"
+sh "$WRAP" -C /x pull 2>/dev/null
+[ "$(notifies)" = 3 ] && pass "G107: after the window (60 s) the next attempt notifies again" || fail "G107: no notify after the window ($(notifies))"
+echo $(( $(date +%s) + 3600 )) > "$NEBULAOS_RUN_DIR/refusal-notify/git-PAUSED"
+sh "$WRAP" -C /x pull 2>/dev/null
+[ "$(notifies)" = 4 ] && pass "G107: a stamp from the future (clock went back) never silences" || fail "G107: future stamp silenced ($(notifies))"
+NB_NOTIFY_WINDOW=0 sh "$WRAP" -C /x pull 2>/dev/null
+[ "$(notifies)" = 5 ] && pass "G107: NB_NOTIFY_WINDOW=0 notifies every refusal" || fail "G107: window 0 ($(notifies))"
+NEBULAOS_RUN_DIR="$WORK/ro/none" sh "$WRAP" -C /x pull 2>/dev/null; rc=$?
+[ "$rc" != 0 ] && [ "$(notifies)" = 6 ] && pass "G107: a run dir without notify state yet -> refused and notified" || fail "G107: fresh state dir rc=$rc n=$(notifies)"
+rm -f "$WORK/busy"
+PATH=$OLDPATH
+
 grep -q 'export PATH="/usr/libexec/nebulaos/bin:$PATH"' "$REPO_ROOT/scripts/build/overlay/etc/init.d/S56moonraker" \
 	&& pass "S56moonraker puts the wrapper first on Moonraker's PATH" || fail "S56moonraker PATH export missing"
 

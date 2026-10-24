@@ -15,6 +15,7 @@
 #     (Moonraker shows it in the update dialog for pull/clone), in syslog, and
 #     as a "!! NebulaOS refused: ..." line in Mainsail's console. This covers
 #     /machine/update/full and paused prints, which Moonraker does not check.
+#     G107: the console line at most once per minute per reason (below).
 #     fetch only downloads: it stays a no-op under a print, as before.
 # /usr/bin/git itself is untouched.
 
@@ -23,12 +24,44 @@ NEBULAOS_RUN_DIR="${NEBULAOS_RUN_DIR:-/run/nebulaos}"
 NEBULAOS_BUSY_CLI="${NEBULAOS_BUSY_CLI:-/usr/libexec/nebulaos/nebulaos-busy}"
 NB_MOONRAKER="${NB_MOONRAKER:-http://127.0.0.1:7125}"
 
+# G107 (Run 19): ONE visible refusal per update attempt. Moonraker runs
+# several git commands per update and retries a refused one; every command is
+# still refused (stderr for Moonraker's dialog, syslog), but the console line
+# (notify_refused -> "!! NebulaOS refused: ..." in Mainsail, and the screen's
+# popup that follows it) goes out at most once per NB_NOTIFY_WINDOW seconds
+# per reason. The last notify time per reason lives in a small tmpfs file.
+NB_NOTIFY_WINDOW="${NB_NOTIFY_WINDOW:-60}"
+notify_due() { # KEY - true (and stamped) when no notify for KEY in the window
+	_nd_dir="$NEBULAOS_RUN_DIR/refusal-notify"
+	_nd_file="$_nd_dir/$1"
+	_nd_now=$(date +%s 2>/dev/null) || return 0
+	_nd_last=$(cat "$_nd_file" 2>/dev/null)
+	case "$_nd_last" in '' | *[!0-9]*) _nd_last=0 ;; esac
+	# a clock that went backwards never silences notifies
+	if [ "$_nd_last" -le "$_nd_now" ] && [ $((_nd_now - _nd_last)) -lt "$NB_NOTIFY_WINDOW" ]; then
+		return 1
+	fi
+	mkdir -p "$_nd_dir" 2>/dev/null
+	echo "$_nd_now" > "$_nd_file.$$" 2>/dev/null && mv -f "$_nd_file.$$" "$_nd_file" 2>/dev/null
+	return 0
+}
+
+# The reason code a refusal text ends with: "... (PAUSED)" -> PAUSED.
+reason_key() { # TEXT
+	_rk=${1##*(}
+	_rk=${_rk%)}
+	case "$_rk" in '' | *[!A-Z0-9_]*) _rk=OTHER ;; esac
+	echo "$_rk"
+}
+
 refuse() { # SUB TEXT
 	echo "NebulaOS refused: git $1 - $2" >&2
 	logger -t nebulaos-git "refused: git $1 - $2" 2>/dev/null
-	wget -q -T 1 -O /dev/null --header "Content-Type: application/json" \
-		--post-data "{\"message\": \"update (git $1) - $2\"}" \
-		"$NB_MOONRAKER/machine/nebulaos/system/notify_refused" </dev/null >/dev/null 2>&1
+	if notify_due "git-$(reason_key "$2")"; then
+		wget -q -T 1 -O /dev/null --header "Content-Type: application/json" \
+			--post-data "{\"message\": \"update (git $1) - $2\"}" \
+			"$NB_MOONRAKER/machine/nebulaos/system/notify_refused" </dev/null >/dev/null 2>&1
+	fi
 	exit 1
 }
 
