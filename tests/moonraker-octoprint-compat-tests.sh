@@ -35,8 +35,10 @@ grep -q 'location ~ \^/(printer|api|access|machine|server)/' "$NGINX" && pass ||
 # paths redirected into a temp tree).
 if [ -f "$MR/moonraker/confighelper.py" ]; then
 	mkdir -p "$W/etc/nebulaos/moonraker" "$W/cfg"
-	cp "$NCONF" "$PIN" "$W/etc/nebulaos/moonraker/"
-	sed -i "s#/etc/nebulaos/moonraker/#$W/etc/nebulaos/moonraker/#" "$W/etc/nebulaos/moonraker/klipper-pin.conf"
+	# every image-owned file of the chain (nebulaos.conf includes
+	# nebulascreen-update.conf since G82 stage 4), all includes redirected
+	cp "$OV"/etc/nebulaos/moonraker/*.conf "$W/etc/nebulaos/moonraker/"
+	sed -i "s#/etc/nebulaos/moonraker/#$W/etc/nebulaos/moonraker/#" "$W"/etc/nebulaos/moonraker/*.conf
 	sed "s#/etc/nebulaos/moonraker/#$W/etc/nebulaos/moonraker/#" "$MCONF" > "$W/cfg/moonraker.conf"
 	cp "$W/cfg/moonraker.conf" "$W/cfg/moonraker-user-octo.conf"
 	printf '\n[octoprint_compat]\nenable_ufp: False\n' >> "$W/cfg/moonraker-user-octo.conf"
