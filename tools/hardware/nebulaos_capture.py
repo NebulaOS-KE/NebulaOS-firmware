@@ -318,6 +318,20 @@ CAPTURE_PROFILES = {
         "echo '== nebulaos refusals (syslog)'; grep -h 'NebulaOS refused' /opt/printer_data/logs/system.log 2>/dev/null | tail -n 10; "
         "echo '== boot script timing'; grep -E 'S00|S01|S58' /run/nebulaos-boot-scripts.log",
         False, None, 60),
+    # Run 19 checks (G108 buzzer channel, G104/G105 history, G82 stage 4
+    # screen release, G96 boot picture), read-only: nothing sounds or moves.
+    "run19-checks": ("echo '== kernel'; uname -v; "
+        "echo '== G96 boot picture'; dmesg | grep 'boot picture'; "
+        "echo '== G108 pwm/pinctrl kernel messages'; dmesg | grep -iE 'pwm|pinctrl' | tail -n 20; "
+        "echo '== G108 pwm channels'; ls /sys/class/pwm/pwmchip0/ 2>&1; "
+        "for f in enable period duty_cycle; do echo \"pwm3/$f=$(cat /sys/class/pwm/pwmchip0/pwm3/$f 2>&1)\"; done; "
+        "echo '== G108 beeper in klippy.log'; grep -iE 'nebulaos_beeper|beeper' /opt/printer_data/logs/klippy.log 2>/dev/null | tail -n 10; "
+        "echo '== status objects'; curl -s -m 3 'http://127.0.0.1:7125/printer/objects/query?nebulaos_beeper&nebulaos_calibration=history,last_result,progress' 2>&1 | head -c 3000; echo; "
+        "echo '== G105 history file'; cat /usr/data/nebulaos/printer_data/calibration/calibration_history.json 2>&1 | head -c 2000; echo; "
+        "echo '== G82 screen release'; cat /usr/share/nebulaos/nebulascreen/release_info.json 2>&1; "
+        "cat /usr/data/nebulaos/apps/nebulascreen/release_info.json 2>&1; "
+        "echo '== screen process'; ps | grep -E '[n]ebulascreen'",
+        False, None, 60),
     # Run 16 kernel image checks (K1 log levels, G5 sysfs/no debugfs, G3
     # early boot screen), read-only.
     "kernel-run16": ("echo '== kernel'; uname -r; uname -v; "
