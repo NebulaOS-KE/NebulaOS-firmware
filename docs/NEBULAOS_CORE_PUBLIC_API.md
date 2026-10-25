@@ -68,9 +68,17 @@ NOT_SUPPORTED_BY_MAINSAIL_UI.
 
 | CANONICAL_NAME | OWNER | DATA_SOURCE | USER_SURFACE | MAINSAIL_GROUP/PANEL | STATE_RESTRICTIONS | STATUS |
 |---|---|---|---|---|---|---|
-| `BEEP` | GuppyScreen-derived (`guppy_cmd.cfg` lineage) | `M300 S2000 P120` → `guppybeep` shell binary → real hardware PWM buzzer on PC03 | Mainsail macro button | `nebulaos-maintenance` ("Maintenance"), pos 0 | standby only | OK |
-| `PLAY_TUNE` | GuppyScreen-derived | `SONG=<name>` (from `songs.conf`) or inline `RTTTL=<string>` → `guppybeep` | Mainsail macro button | `nebulaos-maintenance`, pos 1 | standby only | OK |
-| `M300` | GuppyScreen-derived | Standard slicer/gcode beep command (`S`=frequency Hz, `P`=duration ms), same `guppybeep` backend as `BEEP` | Console/slicer gcode only | **None** (not in any `DEFAULT_GROUPS` entry) | n/a | OK — correctly excluded: `M300` is the raw slicer-compatible primitive, `BEEP` is its one-click Mainsail-friendly wrapper; both existing is not a duplicate, it's primitive-vs-convenience, same relationship as `PID_CALIBRATE`/`PID_BED` |
+| `BEEP` | GuppyScreen-derived name; G108 (Run 19) backend | `M300 S2000 P120` → `NEBULAOS_BEEP` (Klipper extra `nebulaos_beeper.py`) → kernel PWM channel `/sys/class/pwm/pwmchip0/pwm3` (PC03) | Mainsail macro button | `nebulaos-maintenance` ("Maintenance"), pos 0 | standby only | OK |
+| `PLAY_TUNE` | GuppyScreen-derived | `SONG=<name>` (from `songs.conf`) or inline `RTTTL=<string>` → `NEBULAOS_PLAY_TUNE` (non-blocking, queued; 120 s cap, 20 s while printing) | Mainsail macro button | `nebulaos-maintenance`, pos 1 | standby only | OK |
+| `M300` | GuppyScreen-derived | Standard slicer/gcode beep command (`S`=frequency Hz, `P`=duration ms), same `NEBULAOS_BEEP` backend as `BEEP` (S0 = rest; no G4 dwell, never holds the G-code queue) | Console/slicer gcode only | **None** (not in any `DEFAULT_GROUPS` entry) | n/a | OK — correctly excluded: `M300` is the raw slicer-compatible primitive, `BEEP` is its one-click Mainsail-friendly wrapper; both existing is not a duplicate, it's primitive-vs-convenience, same relationship as `PID_CALIBRATE`/`PID_BED` |
+| `NEBULAOS_BEEP` / `NEBULAOS_PLAY_TUNE` / `NEBULAOS_BEEPER_STOP` | NebulaOS (`nebulaos_beeper.py`, G108) | Beep `FREQ= DURATION=`, tune `SONG=`/`RTTTL=`, stop. Queued behind the moves before them (like `SET_PIN`), played by a reactor timer; status object `nebulaos_beeper` (`available`, ...); webhook `nebulaos_beeper/click` = NebulaScreen's touch click (not queued behind G-code) | Console/API; called by `M300`/`BEEP`/`PLAY_TUNE` | None | n/a | OK (G108) |
+
+**Removed in Run 19 (G108), migration:** the `[gcode_shell_command guppybeep]` and
+`[gcode_shell_command nebulabeep]` sections are gone (no shell, no `/dev/mem`). A user macro
+with `RUN_SHELL_COMMAND CMD=guppybeep PARAMS="m300 S<hz> P<ms>"` (or `CMD=nebulabeep`) now
+fails with an unknown-command error: replace it with `M300 S<hz> P<ms>` (or
+`NEBULAOS_BEEP FREQ=<hz> DURATION=<ms>`); a tune with `PLAY_TUNE SONG=<name>`.
+`/opt/nebulascreen/nebulabeep` still exists as a client that forwards to Klipper.
 
 ## 6. Recovery group — `nebulaos-recovery`
 
