@@ -1,5 +1,12 @@
 # Beeper Control Path
 
+> **Superseded by G108 (Run 19, 2026-10-24).** The kernel now muxes GPC3 to PWM channel 3
+> (`/sys/class/pwm/pwmchip0/pwm3`); Klipper's `nebulaos_beeper` extra (NebulaOS-klipper-extensions)
+> is its only owner. M300/BEEP/PLAY_TUNE (`etc/nebulaos/klipper/beeper.cfg`) call that extra and never
+> hold the G-code queue; the screen's touch click is a request to the Klippy API endpoint
+> `nebulaos_beeper/click`. No `gcode_shell_command`, no `/dev/mem`. The trace below is the
+> pre-G108 path, kept as history.
+
 Part of the "Nebula Pad beeper and audio-pin conflict investigation" (2026-07-23). Traces the
 complete, real control path for the hardware buzzer from GuppyScreen/Klipper source down to the
 physical pin, and proves - via source reading plus live register/IRQ verification on real hardware,

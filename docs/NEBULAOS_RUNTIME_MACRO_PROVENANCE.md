@@ -127,9 +127,9 @@ Legend:
 
 | MACRO_NAME | SOURCE_FILE | SOURCE_LAYER | OWNER | PUBLIC_OR_PRIVATE | EXPECTED |
 |---|---|---|---|---|---|
-| M300 | beeper.cfg | IMMUTABLE_NEBULAOS | NebulaOS (derived from GuppyScreen `guppy_cmd.cfg`, retained unchanged) | PUBLIC | YES |
-| BEEP | beeper.cfg | IMMUTABLE_NEBULAOS | NebulaOS (derived from GuppyScreen `guppy_cmd.cfg`, retained unchanged) | PUBLIC | YES |
-| PLAY_TUNE | beeper.cfg | IMMUTABLE_NEBULAOS | NebulaOS (derived from GuppyScreen `guppy_cmd.cfg`, retained unchanged) | PUBLIC | YES |
+| M300 | beeper.cfg | IMMUTABLE_NEBULAOS | NebulaOS (names from GuppyScreen `guppy_cmd.cfg`; since G108 they call the `nebulaos_beeper` extra) | PUBLIC | YES |
+| BEEP | beeper.cfg | IMMUTABLE_NEBULAOS | NebulaOS (names from GuppyScreen `guppy_cmd.cfg`; since G108 they call the `nebulaos_beeper` extra) | PUBLIC | YES |
+| PLAY_TUNE | beeper.cfg | IMMUTABLE_NEBULAOS | NebulaOS (names from GuppyScreen `guppy_cmd.cfg`; since G108 they call the `nebulaos_beeper` extra) | PUBLIC | YES |
 
 ### calibration.cfg (IMMUTABLE — genuine NebulaOS functionality plus two upstream UI adapters)
 

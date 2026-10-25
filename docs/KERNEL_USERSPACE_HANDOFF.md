@@ -28,7 +28,7 @@ separate, later milestones.
 ## Supported product hardware
 
 eMMC · Wi-Fi (BCM43430/1, firmware 7.46.58.13) · display · backlight · touchscreen (`ns2009_ts`) ·
-USB · PWM beeper (GPC-3/PWM channel 3, `guppybeep`, direct `/dev/mem` MMIO) · RTC · watchdog ·
+USB · PWM beeper (GPC-3/PWM channel 3, kernel PWM sysfs channel `pwmchip0/pwm3`, owned by Klipper `nebulaos_beeper` since G108) · RTC · watchdog ·
 rotation (`/dev/video0`) · H.264 encoder (`/dev/video1`) · H.264 decoder (`/dev/video2`) · UART1
 printer link (software-equivalent to stock, see `docs/PRINTER_MAINBOARD_PRECONNECTION_CHECKLIST.md`
 for the remaining physical-connection sign-off).
@@ -53,8 +53,8 @@ for the remaining physical-connection sign-off).
   userspace security-hardening item, not a kernel functional blocker.
 - Service startup and supervision (init.d ordering, restart policy).
 - Application permissions and privilege boundaries.
-- `/dev/mem` access used directly by `guppybeep` - works today, but is a raw-hardware-access pattern
-  a userspace security review should be aware of.
+- `/dev/mem`: the beeper no longer uses it (G108). The legacy `/opt/nebulascreen/nebulabeep`
+  binary still ships (the screen release format requires it) but nothing in the image calls it.
 - Network-service exposure (dropbear, nginx, Moonraker's `trusted_clients`).
 - Logging policy and log rotation.
 - RTC/NTP policy (RTC currently boots to a fixed epoch until NTP updates it - `S49ntp`).
