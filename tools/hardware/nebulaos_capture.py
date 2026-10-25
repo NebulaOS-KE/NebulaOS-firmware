@@ -346,6 +346,24 @@ CAPTURE_PROFILES = {
         "echo '== processes (start times)'; ps -o pid,etime,args 2>/dev/null | grep -E '[k]lippy|[m]oonraker|[n]ebulascreen' "
         "|| ps | grep -E '[k]lippy|[m]oonraker|[n]ebulascreen'",
         False, None, 60),
+    # Who paused a print (Run 19 test, G112): klippy.log of the last prints
+    # with the file position (sd_pos) stall/move transitions, Moonraker's
+    # pause/resume/job lines, the screen's pause/resume lines and Moonraker's
+    # console history, read-only.
+    "print-pause": ("L=/opt/printer_data/logs; echo '== now'; date; uptime; "
+        "echo '== klippy.log: SD card print lines'; grep -nE 'SD card print|Exiting SD' $L/klippy.log 2>/dev/null | tail -n 10; "
+        "n=$(grep -n 'Starting SD card print' $L/klippy.log 2>/dev/null | tail -n 3 | head -n 1 | cut -d: -f1); "
+        "echo \"== klippy.log from line ${n:-1}: non-Stats lines + sd_pos stalled/moving\"; "
+        "tail -n +${n:-1} $L/klippy.log | awk '/^Stats /{p=\"\"; if (match($0,/sd_pos=[0-9]+/)) p=substr($0,RSTART+7,RLENGTH-7); "
+        "s=(p!=\"\" && p==q); if (p!=\"\" && s!=ls) print \"STATS \" $2 \" sd_pos=\" p (s ? \" STALLED\" : \" moving\"); ls=s; q=p; next} {print}' "
+        "| head -n 300 | cut -c1-250; "
+        "echo '== moonraker.log: pause/resume/job lines'; grep -nEi 'pause|resume|print_stats|printer\\.print|job' $L/moonraker.log 2>/dev/null "
+        "| grep -v -e get_file_list -e 'Updating File List' | tail -n 60 | cut -c1-250; "
+        "echo '== nebulascreen.log: pause/resume'; grep -hiE 'pause|resume' $L/nebulascreen.log 2>/dev/null | tail -n 30 | cut -c1-250; "
+        "echo '== moonraker console history (last 300)'; python3 -c 'import json,time,urllib.request as u; "
+        "d=json.load(u.urlopen(\"http://127.0.0.1:7125/server/gcode_store?count=300\",timeout=10))[\"result\"][\"gcode_store\"]; "
+        "[print(time.strftime(\"%H:%M:%S\",time.localtime(e[\"time\"])),e[\"type\"],e[\"message\"][:200]) for e in d]' 2>&1 | tail -n 300",
+        False, None, 60),
     # Run 16 kernel image checks (K1 log levels, G5 sysfs/no debugfs, G3
     # early boot screen), read-only.
     "kernel-run16": ("echo '== kernel'; uname -r; uname -v; "
