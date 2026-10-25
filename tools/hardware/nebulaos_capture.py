@@ -333,11 +333,11 @@ CAPTURE_PROFILES = {
         "echo '== screen process'; ps | grep -E '[n]ebulascreen'",
         False, None, 60),
     # Every (re)start of Klippy, Moonraker and the screen with its time and
-    # what triggered it (update_manager, service restart, FIRMWARE_RESTART),
+    # what triggered it (update_manager, service restart, firmware restart),
     # read-only - "did something restart twice?" (Run 19 test).
     "restarts": ("L=/opt/printer_data/logs; echo '== uptime / now'; uptime; date; "
         "echo '== klippy.log: starts, restarts, config/update lines'; "
-        "grep -nE 'Start printer at|Restarting printer|FIRMWARE_RESTART|RESTART|Git version|Exiting|Unhandled exception|beeper' $L/klippy.log 2>/dev/null | tail -n 40 | cut -c1-250; "
+        "grep -nE 'Start printer at|Restarting printer|_RESTART|Git version|Exiting|Unhandled exception|beeper' $L/klippy.log 2>/dev/null | tail -n 40 | cut -c1-250; "
         "echo '== moonraker.log: updates and service actions'; "
         "grep -nE 'update|Update|restart|Restart|service|Service|Klippy|klippy' $L/moonraker.log 2>/dev/null "
         "| grep -v -e get_file_list -e 'Updating File List' -e server.database | tail -n 60 | cut -c1-250; "
