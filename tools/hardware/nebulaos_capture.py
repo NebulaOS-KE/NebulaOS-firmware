@@ -332,6 +332,20 @@ CAPTURE_PROFILES = {
         "cat /usr/data/nebulaos/apps/nebulascreen/release_info.json 2>&1; "
         "echo '== screen process'; ps | grep -E '[n]ebulascreen'",
         False, None, 60),
+    # Every (re)start of Klippy, Moonraker and the screen with its time and
+    # what triggered it (update_manager, service restart, FIRMWARE_RESTART),
+    # read-only - "did something restart twice?" (Run 19 test).
+    "restarts": ("L=/opt/printer_data/logs; echo '== uptime / now'; uptime; date; "
+        "echo '== klippy.log: starts, restarts, config/update lines'; "
+        "grep -nE 'Start printer at|Restarting printer|FIRMWARE_RESTART|RESTART|Git version|Exiting|Unhandled exception|beeper' $L/klippy.log 2>/dev/null | tail -n 40 | cut -c1-250; "
+        "echo '== moonraker.log: updates and service actions'; "
+        "grep -nE 'update|Update|restart|Restart|service|Service|Klippy|klippy' $L/moonraker.log 2>/dev/null "
+        "| grep -v -e get_file_list -e 'Updating File List' -e server.database | tail -n 60 | cut -c1-250; "
+        "echo '== system.log: init scripts, supervisorctl, screen, refusals'; "
+        "grep -hE 'S55klipper|S56moonraker|S58nebulascreen|supervisorctl|nebulascreen|NebulaOS refused|update-supervisor' $L/system.log 2>/dev/null | tail -n 40 | cut -c1-250; "
+        "echo '== processes (start times)'; ps -o pid,etime,args 2>/dev/null | grep -E '[k]lippy|[m]oonraker|[n]ebulascreen' "
+        "|| ps | grep -E '[k]lippy|[m]oonraker|[n]ebulascreen'",
+        False, None, 60),
     # Run 16 kernel image checks (K1 log levels, G5 sysfs/no debugfs, G3
     # early boot screen), read-only.
     "kernel-run16": ("echo '== kernel'; uname -r; uname -v; "
