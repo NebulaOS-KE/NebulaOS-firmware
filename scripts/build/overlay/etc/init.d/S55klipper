@@ -48,6 +48,12 @@ start() {
 stop() {
 	echo "Stopping klippy"
 	start-stop-daemon -K -p "$PIDFILE" && rm -f "$PIDFILE"
+	# G108: a killed klippy runs no shutdown handler, so a note it was playing
+	# would keep sounding; switch the buzzer channel (owned by
+	# [nebulaos_beeper]) off. Best effort, only when the channel exists.
+	BEEPER_PWM_ENABLE="${BEEPER_PWM_ENABLE:-/sys/class/pwm/pwmchip0/pwm3/enable}"
+	[ -e "$BEEPER_PWM_ENABLE" ] && echo 0 > "$BEEPER_PWM_ENABLE" 2>/dev/null
+	return 0
 }
 
 case "$1" in

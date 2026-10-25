@@ -26,5 +26,19 @@ grep -v '^#' "$f" | grep -qE '^\s*G4\b' && fail "beeper.cfg dwells (G4)" || pass
 grep -q '^\[gcode_shell_command set_camera_quality\]' scripts/build/overlay/etc/nebulaos/klipper/camera.cfg \
 	&& pass "camera.cfg still the gcode_shell_command user (module kept)" || pass "camera.cfg no longer uses gcode_shell_command"
 
+# G108 (architect A6): S55klipper stop switches the buzzer channel off (a
+# killed klippy runs no shutdown handler), and copes with a missing channel
+t=$(mktemp -d) || exit 1
+mkdir -p "$t/bin"
+printf '#!/bin/sh\nexit 0\n' > "$t/bin/start-stop-daemon"; chmod +x "$t/bin/start-stop-daemon"
+echo 1 > "$t/enable"
+PATH="$t/bin:$PATH" BEEPER_PWM_ENABLE="$t/enable" PIDFILE="$t/pid" \
+	sh scripts/build/overlay/etc/init.d/S55klipper stop >/dev/null 2>&1
+[ "$(cat "$t/enable")" = 0 ] && pass "S55klipper stop silences the buzzer" || fail "S55klipper stop leaves the buzzer on"
+PATH="$t/bin:$PATH" BEEPER_PWM_ENABLE="$t/missing" PIDFILE="$t/pid" \
+	sh scripts/build/overlay/etc/init.d/S55klipper stop >/dev/null 2>&1 \
+	&& pass "S55klipper stop without a buzzer channel succeeds" || fail "S55klipper stop fails without a buzzer channel"
+rm -rf "${t:?}"
+
 [ "$fails" -eq 0 ] || exit 1
 echo "beeper-cfg-tests: all pass"
