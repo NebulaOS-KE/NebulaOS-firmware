@@ -364,6 +364,32 @@ CAPTURE_PROFILES = {
         "d=json.load(u.urlopen(\"http://127.0.0.1:7125/server/gcode_store?count=300\",timeout=10))[\"result\"][\"gcode_store\"]; "
         "[print(time.strftime(\"%H:%M:%S\",time.localtime(e[\"time\"])),e[\"type\"],e[\"message\"][:200]) for e in d]' 2>&1 | tail -n 300",
         False, None, 60),
+    # G103 (Run 21 investigation): every recorded boot from the persistent
+    # boot-timing.log - the scripts that took more than 0.5 s and when the
+    # boot was done, read-only.
+    "boot-history": ("L=/opt/printer_data/logs/boot-timing.log; echo \"== $(grep -c EV=begin $L) boots recorded\"; "
+        "awk '/EV=begin/{n++; printf \"\\nBOOT %d \", n} / EV=end /{split($1,t,\"=\"); for(i=1;i<=NF;i++){if($i ~ /^S=/)s=substr($i,3); "
+        "if($i ~ /^DUR=/)d=substr($i,5)} if(d+0>0.5) printf \"%s=%s@%s \", s, d, t[2]} /EV=done/{split($1,t,\"=\"); printf \"DONE@%s\", t[2]}' "
+        "$L | tail -n 12; echo",
+        False, None, 60),
+    # G114 (Run 21 investigation): MCU load per MCU from Klippy's own Stats
+    # lines (mcu_awake, mcu_task_avg/stddev, retransmits) split into idle,
+    # printing (sd_pos present) and SHAPER_CALIBRATE (between its "Testing
+    # axis" and "Recommended shaper" console lines), plus accelerometer
+    # overflow lines. Mainsail's 'load' = task_avg + 3*task_stddev/0.0025 (its
+    # JS precedence: only the spread is scaled); mcu_awake is the busy share.
+    # Read-only.
+    "mcu-load": ("L=/opt/printer_data/logs; for f in $(ls -tr $L/klippy.log* 2>/dev/null); do echo \"== $f ($(wc -l < $f) lines)\"; "
+        "awk '/Testing axis/{st=\"shaper\"} /Recommended shaper/{st=\"\"} /^Stats /{ph=(st!=\"\")?st:((index($0,\"sd_pos=\")>0)?\"print\":\"idle\"); "
+        "m=\"host\"; for(i=3;i<=NF;i++){if($i ~ /:$/){m=substr($i,1,length($i)-1); continue} split($i,kv,\"=\"); k=ph\"|\"m; "
+        "if(kv[1]==\"mcu_awake\"){n[k]++; aw[k]+=kv[2]; if(kv[2]>maw[k])maw[k]=kv[2]} if(kv[1]==\"mcu_task_avg\")ta=kv[2]; "
+        "if(kv[1]==\"mcu_task_stddev\"){ld=ta+3*kv[2]/0.0025; sl[k]+=ld; if(ld>ml[k])ml[k]=ld} "
+        "if(kv[1]==\"bytes_retransmit\"&&kv[2]>rt[k])rt[k]=kv[2]; if(kv[1]==\"sysload\"&&kv[2]>sy[ph])sy[ph]=kv[2]}} "
+        "END{for(k in n) printf \"%-22s n=%-6d awake avg %.4f max %.4f | mainsail-load avg %.1f%% max %.1f%% | retransmit %s\\n\", "
+        "k, n[k], aw[k]/n[k], maw[k], 100*sl[k]/n[k], 100*ml[k], rt[k]; for(p in sy) printf \"sysload max %s: %s\\n\", p, sy[p]}' $f; "
+        "grep -ciE 'overflow' $f | sed 's/^/overflow lines: /'; done; "
+        "echo '== resonance/shaper lines (last 12)'; grep -hE 'Testing axis|Recommended shaper|Wait for calculations|overflow' $L/klippy.log* 2>/dev/null | tail -n 12",
+        False, None, 120),
     # Run 16 kernel image checks (K1 log levels, G5 sysfs/no debugfs, G3
     # early boot screen), read-only.
     "kernel-run16": ("echo '== kernel'; uname -r; uname -v; "
