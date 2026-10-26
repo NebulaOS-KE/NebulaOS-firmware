@@ -386,6 +386,19 @@ CAPTURE_PROFILES = {
         "[ -n \"$k\" ] && sed -n \"$((k>80 ? k-80 : 1)),$((k))p\" $L | grep -v '^Stats ' | tail -n 40 | cut -c1-300; "
         "echo '== Stats before the last Start printer (last 8)'; [ -n \"$k\" ] && head -n $k $L | grep '^Stats ' | tail -n 8 | cut -c1-400",
         False, None, 90),
+    # G117 replication (Run 21): a live stream for up to 20 min - every 2 s
+    # the busiest threads (with RT priority), load, memory and CPU pressure,
+    # Klippy's newest log line and new kernel lines - so the seconds before
+    # a whole-system freeze reach the PC even when nothing is written to
+    # disk any more. Read-only; ends by itself.
+    "live-watch": ("K=/opt/printer_data/logs/klippy.log; d0=$(dmesg | wc -l); i=0; while [ $i -lt 600 ]; do i=$((i+1)); "
+        "echo \"== t=$(cut -d' ' -f1 /proc/uptime) load=$(cut -d' ' -f1-3 /proc/loadavg) "
+        "memavail=$(awk '/MemAvailable/{print $2}' /proc/meminfo)kB cpu_psi=$(head -n 1 /proc/pressure/cpu 2>/dev/null | cut -d' ' -f2) "
+        "mem_psi=$(head -n 1 /proc/pressure/memory 2>/dev/null | cut -d' ' -f2)\"; "
+        "top -b -n 1 -H 2>/dev/null | sed -n '5,12p' | cut -c1-120; "
+        "echo \"klippy: $(tail -c 2000 $K | grep -v '^Stats ' | tail -n 2 | cut -c1-160 | tr '\\n' '|')\"; "
+        "d1=$(dmesg | wc -l); [ $d1 -gt $d0 ] && dmesg | tail -n $((d1-d0)) | cut -c1-200; d0=$d1; sleep 2; done; echo '== live-watch ended (20 min)'",
+        False, None, 1260),
     # G103 (Run 21 investigation): every recorded boot from the persistent
     # boot-timing.log - the scripts that took more than 0.5 s and when the
     # boot was done, read-only.
