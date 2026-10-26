@@ -377,7 +377,14 @@ CAPTURE_PROFILES = {
         "echo '== Stats around the end (last 5)'; grep '^Stats ' $L | tail -n 5 | cut -c1-400; "
         "echo '== kernel: oom / killed / segfault'; dmesg | grep -iE 'oom|killed process|segfault|out of memory' | tail -n 15; "
         "echo '== memguard'; tail -n 20 /usr/data/nebulaos/logs/memguard.log 2>/dev/null; "
-        "echo '== shaper CSVs in /tmp'; ls -la /tmp/calibration_data_* /tmp/resonances_* 2>&1 | tail -n 10",
+        "echo '== shaper CSVs in /tmp'; ls -la /tmp/calibration_data_* /tmp/resonances_* 2>&1 | tail -n 10; "
+        "S=/opt/printer_data/logs/system.log; echo '== system.log (persistent): oom/killed/memguard/watchdog/panic, last 40'; "
+        "grep -hiE 'oom|killed process|out of memory|memguard|watchdog|panic|hung_task|blocked for more|soft lockup|rcu' $S.0 $S 2>/dev/null | grep -viE 'psk|passw' | tail -n 40 | cut -c1-300; "
+        "echo '== system.log: last 30 lines before the last syslogd start'; b=$(grep -n 'syslogd started' $S | tail -n 1 | cut -d: -f1); "
+        "[ -n \"$b\" ] && sed -n \"$((b>30 ? b-30 : 1)),$((b))p\" $S | grep -viE 'psk|passw' | cut -c1-300; "
+        "echo '== klippy.log: lines before the last Start printer'; k=$(grep -n 'Start printer at' $L | tail -n 1 | cut -d: -f1); "
+        "[ -n \"$k\" ] && sed -n \"$((k>80 ? k-80 : 1)),$((k))p\" $L | grep -v '^Stats ' | tail -n 40 | cut -c1-300; "
+        "echo '== Stats before the last Start printer (last 8)'; [ -n \"$k\" ] && head -n $k $L | grep '^Stats ' | tail -n 8 | cut -c1-400",
         False, None, 90),
     # G103 (Run 21 investigation): every recorded boot from the persistent
     # boot-timing.log - the scripts that took more than 0.5 s and when the
