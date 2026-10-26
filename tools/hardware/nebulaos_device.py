@@ -588,7 +588,7 @@ class SshDeviceSession(DeviceSession):
             "-o", "BatchMode=no",
         ]
 
-    def _run(self, script, timeout=120):
+    def _run(self, script, timeout=120, keep_partial=False):
         """Run a shell script composed BY THIS MODULE on the device.
 
         Private by convention and by review: no method of DeviceSession exposes
@@ -597,11 +597,23 @@ class SshDeviceSession(DeviceSession):
         env = dict(os.environ)
         env["SSH_ASKPASS"] = self._ensure_askpass()
         env["SSH_ASKPASS_REQUIRE"] = "force"
-        argv = ["ssh"] + self._ssh_opts() + ["%s@%s" % (self.username, self.address), script]
+        opts = self._ssh_opts()
+        if keep_partial:
+            # G117 (Run 21): a capture must keep what it already received
+            # when the printer freezes - ssh gives up ~15 s after the device
+            # stops answering (rc 255, output kept), and a timeout returns
+            # the partial output instead of dropping it.
+            opts = opts + ["-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=3"]
+        argv = ["ssh"] + opts + ["%s@%s" % (self.username, self.address), script]
         try:
             proc = subprocess.run(argv, capture_output=True, text=True,
                                   timeout=timeout, env=env)
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as exc:
+            partial = exc.stdout or ""
+            if isinstance(partial, bytes):
+                partial = partial.decode("utf-8", "replace")
+            if keep_partial and partial:
+                return -1, partial + "\nCAPTURE_TIMED_OUT=YES after %ds\n" % timeout, ""
             raise DeviceError("command timed out after %ds against %s" % (timeout, self.address))
         return proc.returncode, proc.stdout, proc.stderr
 
@@ -837,9 +849,11 @@ class SshDeviceSession(DeviceSession):
             script, timeout = captures.capture_script(profile)
         except captures.CaptureError as exc:
             raise DeviceError(str(exc))
-        rc, out, err = self._run(script, timeout=timeout + 60)
+        rc, out, err = self._run(script, timeout=timeout + 60, keep_partial=True)
         if rc != 0 and not out:
             raise DeviceError("capture %s failed (rc=%d): %s" % (profile, rc, err.strip()[:300]))
+        if rc == 255:
+            out += "\nCAPTURE_CONNECTION_LOST=YES (the printer stopped answering)\n"
         return out
 
     def exercise(self, profile):

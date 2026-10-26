@@ -396,7 +396,7 @@ CAPTURE_PROFILES = {
         "memavail=$(awk '/MemAvailable/{print $2}' /proc/meminfo)kB cpu_psi=$(head -n 1 /proc/pressure/cpu 2>/dev/null | cut -d' ' -f2) "
         "mem_psi=$(head -n 1 /proc/pressure/memory 2>/dev/null | cut -d' ' -f2)\"; "
         "top -b -n 1 -H 2>/dev/null | sed -n '5,12p' | cut -c1-120; "
-        "echo \"klippy: $(tail -c 2000 $K | grep -v '^Stats ' | tail -n 2 | cut -c1-160 | tr '\\n' '|')\"; "
+        "echo \"klippy: $(tail -n 60 $K | grep -v '^Stats ' | tail -n 2 | cut -c1-160 | tr '\\n' '|')\"; "
         "d1=$(dmesg | wc -l); [ $d1 -gt $d0 ] && dmesg | tail -n $((d1-d0)) | cut -c1-200; d0=$d1; sleep 2; done; echo '== live-watch ended (20 min)'",
         False, None, 1260),
     # G103 (Run 21 investigation): every recorded boot from the persistent
