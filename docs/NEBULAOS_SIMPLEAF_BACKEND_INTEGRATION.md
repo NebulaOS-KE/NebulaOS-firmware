@@ -231,19 +231,20 @@ Now that `START_PRINT`/`END_PRINT` actually exist (they didn't before this
 mission), their real parameter contract, read directly from
 `simpleaf/start_end.cfg`:
 
-- `START_PRINT BED_TEMP=<float, default 65> EXTRUDER_TEMP=<float, default 230>`
+- `START_PRINT BED_TEMP=<float, default 65> EXTRUDER_TEMP=<float, default 230> [BED_SOAK=0|1]`
   - Both optional - slicer can omit either and get a safe default.
   - Owns, in order: pre-heat nozzle to a non-oozing 150°C, start bed
     heating, home (only if not already homed), wait for bed temp (with a
-    "bed warp stabilisation" soak if enabled - off by default,
-    `Bed_Warp_Stabilisation` output pin defaults to `value: 1` meaning ON;
-    verify this default is what's wanted before relying on it for a real
-    print), clear any stale bed mesh, adaptive `BED_MESH_CALIBRATE`, smart-park
+    "bed warp stabilisation" soak only when asked - off by default since
+    Run 20 (G112): `START_PRINT ... BED_SOAK=1` soaks (8 s per degree C to
+    heat), `BED_SOAK=0` skips, without `BED_SOAK` the
+    `Bed_Warp_Stabilisation` output pin decides, which starts at `value: 0`),
+    clear any stale bed mesh, adaptive `BED_MESH_CALIBRATE`, smart-park
     near the print area, wait for nozzle temp, line purge. **The slicer
     must NOT also home, heat, or mesh-calibrate in its own start gcode** -
     `START_PRINT` owns the entire sequence.
 - `END_PRINT` - no parameters. Restores velocity/accel limits, clears bed
-  mesh, retracts, parks (in front of the aux fan if a cooldown applies),
+  mesh, retracts, parks at X2 Y218 (G111; in front of the aux fan while a cooldown runs),
   turns off heaters/fans (or runs a nozzle cooldown-and-park sequence first,
   if `end_print_cool_down` is enabled, which it is by default). **The
   slicer's own end gcode should be empty or minimal** - do not have the

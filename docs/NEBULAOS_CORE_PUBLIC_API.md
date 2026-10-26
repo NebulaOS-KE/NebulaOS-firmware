@@ -92,11 +92,11 @@ fails with an unknown-command error: replace it with `M300 S<hz> P<ms>` (or
 
 | CANONICAL_NAME | OWNER | DATA_SOURCE | USER_SURFACE | MAINSAIL_GROUP/PANEL | STATE_RESTRICTIONS | STATUS |
 |---|---|---|---|---|---|---|
-| `START_PRINT` | SimpleAF-derived (`start_end.cfg` lineage) | Bed-warp stabilisation wait, adaptive bed-mesh dispatch (`_START_PRINT_BED_MESH`), `_SMART_PARK`, `_LINE_PURGE` (KAMP-derived) | Slicer "start gcode" (not a manual button) | Not in any `DEFAULT_GROUPS` entry | n/a | OK — correctly excluded; a print is already running by the time this could be clicked |
-| `END_PRINT` | SimpleAF-derived | Cooldown routine, park, `_RESTORE_VELOCITY_ACCEL`, `BED_MESH_CLEAR` | Slicer "end gcode" | Not in any group | n/a | OK |
+| `START_PRINT` | SimpleAF-derived (`start_end.cfg` lineage) | Params `BED_TEMP`, `EXTRUDER_TEMP`, `BED_SOAK=0\|1` (G112 Run 20: soak off by default; without it the `Bed_Warp_Stabilisation` switch, default 0), bed-warp stabilisation wait, adaptive bed-mesh dispatch (`_START_PRINT_BED_MESH`), `_SMART_PARK`, `_LINE_PURGE` (KAMP-derived) | Slicer "start gcode" (not a manual button) | Not in any `DEFAULT_GROUPS` entry | n/a | OK — correctly excluded; a print is already running by the time this could be clicked |
+| `END_PRINT` | SimpleAF-derived | Cooldown routine, park at X2 Y218 (G111), `_RESTORE_VELOCITY_ACCEL`, `BED_MESH_CLEAR` | Slicer "end gcode" | Not in any group | n/a | OK |
 | `PAUSE` | SimpleAF-derived (`rename_existing: PAUSE_BASE`) | Saves extruder temp/idle_timeout, calls `_TOOLHEAD_PARK_PAUSE` | Mainsail's **native** pause toolbar button (built-in Klipper macro-override convention — Mainsail doesn't need this in a macro group to find it) | Not in any group (by design — native surface, not a group-listed macro) | n/a | OK |
 | `RESUME` | SimpleAF-derived (`rename_existing: RESUME_BASE`) | Restores extruder temp/idle_timeout, filament-sensor/can-extrude gating, `_CLIENT_EXTRUDE` | Mainsail's native resume toolbar button | Not in any group | n/a | OK |
-| `CANCEL_PRINT` | SimpleAF-derived (`rename_existing: CANCEL_PRINT_BASE`) | Restores idle_timeout, parks, retracts, `TURN_OFF_HEATERS`, `BED_MESH_CLEAR` | Mainsail's native cancel toolbar button | Not in any group | n/a | OK |
+| `CANCEL_PRINT` | SimpleAF-derived (`rename_existing: CANCEL_PRINT_BASE`) | Restores idle_timeout, parks at X2 Y218 (G111, not when paused), retracts, `TURN_OFF_HEATERS`, `BED_MESH_CLEAR` | Mainsail's native cancel toolbar button | Not in any group | n/a | OK |
 
 ## 8. Raw registered commands with NO `[gcode_macro]` wrapper at all
 
