@@ -364,6 +364,21 @@ CAPTURE_PROFILES = {
         "d=json.load(u.urlopen(\"http://127.0.0.1:7125/server/gcode_store?count=300\",timeout=10))[\"result\"][\"gcode_store\"]; "
         "[print(time.strftime(\"%H:%M:%S\",time.localtime(e[\"time\"])),e[\"type\"],e[\"message\"][:200]) for e in d]' 2>&1 | tail -n 300",
         False, None, 60),
+    # Why Klippy crashed or shut down (Run 21 Q1 test, Tim 2026-10-26): the
+    # live state, the last traceback / shutdown with context, the last
+    # non-Stats lines, kernel OOM lines, memguard, the shaper CSVs in /tmp.
+    # Read-only.
+    "klippy-crash": ("L=/opt/printer_data/logs/klippy.log; echo '== now'; date; uptime; free; "
+        "echo '== klippy state'; wget -q -O - 'http://127.0.0.1:7125/printer/info' 2>&1 | head -c 1500; echo; "
+        "echo '== processes'; ps w | grep -E '[k]lippy|[k]lipper_mcu|[m]oonraker|[n]ebulascreen'; "
+        "echo '== last Traceback / shutdown (with context)'; n=$(grep -nE 'Traceback|Transition to shutdown|MCU .* shutdown|Lost communication|Unhandled exception|Exiting|Timeout with MCU' $L | tail -n 1 | cut -d: -f1); "
+        "[ -n \"$n\" ] && sed -n \"$((n>60 ? n-60 : 1)),$((n+40))p\" $L | grep -v '^Stats ' | cut -c1-300; "
+        "echo '== last 50 non-Stats lines'; grep -v '^Stats ' $L | tail -n 50 | cut -c1-300; "
+        "echo '== Stats around the end (last 5)'; grep '^Stats ' $L | tail -n 5 | cut -c1-400; "
+        "echo '== kernel: oom / killed / segfault'; dmesg | grep -iE 'oom|killed process|segfault|out of memory' | tail -n 15; "
+        "echo '== memguard'; tail -n 20 /usr/data/nebulaos/logs/memguard.log 2>/dev/null; "
+        "echo '== shaper CSVs in /tmp'; ls -la /tmp/calibration_data_* /tmp/resonances_* 2>&1 | tail -n 10",
+        False, None, 90),
     # G103 (Run 21 investigation): every recorded boot from the persistent
     # boot-timing.log - the scripts that took more than 0.5 s and when the
     # boot was done, read-only.
