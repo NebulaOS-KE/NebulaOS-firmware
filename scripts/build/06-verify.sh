@@ -1041,6 +1041,15 @@ if echo "$FILE_MANAGER_SECTION_BODY" | grep -qE "^(config_path|log_path): "; the
 else
 	echo "OK   [file_manager] contains no config_path/log_path override"
 fi
+# G110 (Run 20): exclude objects, the adaptive mesh and the purge next to
+# the print need Moonraker's object processing - the shipped seed keeps it on.
+# Reporting only (not check_required: not a lifecycle function, and a partial
+# build has no rootfs to read); the gate is tests/moonraker-object-processing-tests.sh.
+if echo "$FILE_MANAGER_SECTION_BODY" | grep -qE "^enable_object_processing:[[:space:]]*[Tt]rue[[:space:]]*$"; then
+	echo "OK   [file_manager] enable_object_processing: True (exclude objects, adaptive mesh)"
+else
+	echo "MISS [file_manager] enable_object_processing: True is missing from the shipped moonraker.conf (exclude objects, adaptive mesh and the purge next to the print need it)"
+fi
 # Extracts just the [update_manager klipper] and [update_manager moonraker]
 # sections own body (up to the next [section] header) - scoped
 # deliberately, since path/type ARE legitimate, needed options under the
