@@ -9,10 +9,11 @@ with a 180 degree turn (splash.meta ROTATE="2", GuppyScreen display_rotate 2).
 So this asset is a LANDSCAPE card stored rotated 180 degrees, the same transform
 nebulaos_osconfig/bootdisplay.py applies to its built-in splash.
 
-The card copies bootdisplay.builtin_image(): the same background, the same
-"NebulaOS" / "starting..." text, sizes, positions and colours, so the RTOS logo
-and the S01 splash read as one continuous screen. The splash adds the build's
-short SHA at the bottom later; a static pre-Linux image cannot know it.
+G116 (Run 21, Tim): the logo is the shipped boot logo "NebulaOS Ender-3
+Blueprint Interface" (overlay usr/share/nebulaos/boot-logos/, made by
+make-boot-logos.py), the default boot screen of a fresh install, so a fresh
+install shows the same picture before and after Linux starts. Until Run 21 it
+was bootdisplay.builtin_image()'s "NebulaOS / starting..." text card.
 
 ROTATION IS A PARAMETER. The final orientation is confirmed on the printer.
 --rotate takes 0, 90, 180 or 270 clockwise degrees (default 180), applied like
@@ -21,11 +22,13 @@ the card is laid out portrait (272x480) first, so the stored JPEG is always
 480x272.
 
 ENCODING. Baseline JPEG (SOF0), 4:2:0, Pillow's standard Huffman tables
-(optimize off), no EXIF, quality 90: the same structure as the stock asset, so
-the RTOS decoder sees nothing new. The result must fit the 10899-byte slot.
+(optimize off), no EXIF: the same structure as the stock asset, so the RTOS
+decoder sees nothing new. The result must fit the 10899-byte slot: the detailed
+Blueprint picture fits at quality 22 (checked by eye against softened variants,
+Run 21).
 
-REPRODUCIBILITY. Text rasterisation and JPEG encoding depend on the Pillow,
-FreeType and libjpeg versions, so the committed bytes - pinned by sha256 in
+REPRODUCIBILITY. JPEG decoding and encoding depend on the Pillow and
+libjpeg versions, so the committed bytes - pinned by sha256 in
 rtos_logo.py and manifests/dependencies.conf - are the asset, not this script's
 output on an arbitrary host. `--check` regenerates in memory and reports whether
 this host reproduces them. The asset in the repository was generated with the
@@ -45,25 +48,18 @@ sys.path.insert(0, HERE)
 import rtos_logo  # noqa: E402
 
 WIDTH, HEIGHT = rtos_logo.LOGO_WIDTH, rtos_logo.LOGO_HEIGHT
-QUALITY = 90
-
-# bootdisplay.builtin_image()
-BACKGROUND = (10, 12, 28)
-TITLE = ("NebulaOS", -46, 52, (220, 226, 255))
-SUBTITLE = ("starting...", 22, 20, (150, 160, 200))
+QUALITY = 22
+SOURCE = os.path.join(HERE, "..", "build", "overlay", "usr", "share", "nebulaos", "boot-logos",
+                      "NebulaOS Ender-3 Blueprint Interface.jpg")
 
 
 def card(width, height):
-    from PIL import Image, ImageDraw, ImageFont
-    img = Image.new("RGB", (width, height), BACKGROUND)
-    draw = ImageDraw.Draw(img)
-    for text, dy, size, colour in (TITLE, SUBTITLE):
-        try:
-            font = ImageFont.load_default(size=size)
-        except TypeError:
-            sys.exit("FATAL: this Pillow cannot size its default font (needs >= 10.1 with FreeType)")
-        box = draw.textbbox((0, 0), text, font=font)
-        draw.text(((width - (box[2] - box[0])) // 2, height // 2 + dy), text, font=font, fill=colour)
+    """The shipped 480x272 boot logo (laid out portrait for 90/270)."""
+    from PIL import Image
+    with Image.open(SOURCE) as src:
+        img = src.convert("RGB")
+    if (width, height) != img.size:
+        img = img.rotate(90, expand=True)
     return img
 
 
@@ -88,8 +84,7 @@ def render(rotate):
 def versions():
     import PIL
     from PIL import features
-    return "pillow=%s freetype2=%s libjpeg_turbo=%s" % (
-        PIL.__version__, features.version("freetype2"), features.version("libjpeg_turbo"))
+    return "pillow=%s libjpeg_turbo=%s" % (PIL.__version__, features.version("libjpeg_turbo"))
 
 
 def main(argv):

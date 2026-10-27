@@ -74,6 +74,7 @@ seed_log() {
 }
 APPS="${APPS:-/usr/data/nebulaos/apps}"
 SYSTEM="${SYSTEM:-/usr/data/nebulaos/system}"
+OSCONFIG="${OSCONFIG:-/usr/libexec/nebulaos/nebulaos-osconfig}"
 ENVS="${ENVS:-/usr/data/nebulaos/envs}"
 LOCKDIR="${LOCKDIR:-/usr/data/nebulaos/updates/locks}"
 # Overridable for tests (points fixtures at the same real, tracked shared
@@ -592,6 +593,14 @@ record_initial_generation() {
 		sed -E 's/.*"([^"]*)"$/\1/' | head -1)
 	[ -n "$version" ] || return 0
 	[ -e "$SYSTEM/app-generation.json" ] && return 0
+	# G116 (Run 21): a fresh install starts with the shipped Blueprint logo
+	# as its boot screen (the packaged power-on logo is the same picture).
+	# Never changes a printer that already has a boot display setting; a
+	# failure only leaves the built-in logo.
+	if [ -x "$OSCONFIG" ]; then
+		"$OSCONFIG" boot-display fresh-default >/dev/null 2>&1 \
+			|| log "boot logo: fresh-install default not applied (built-in logo stays)"
+	fi
 	mkdir -p "$SYSTEM"
 	klipper_commit=$( [ -d "$APPS/klipper/.git" ] && git -C "$APPS/klipper" rev-parse HEAD 2>/dev/null || echo "unseeded")
 	extensions_commit=$( [ -d "$APPS/nebulaos-klipper-extensions/.git" ] && git -C "$APPS/nebulaos-klipper-extensions" rev-parse HEAD 2>/dev/null || echo "unseeded")

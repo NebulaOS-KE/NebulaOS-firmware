@@ -1,14 +1,18 @@
 nebulaos-rtos-logo.jpg - the NebulaOS logo in the RTOS (zero.bin) logo slot
 
 generator: scripts/package/make-rtos-logo.py --out assets/nebulaos-rtos-logo.jpg --rotate 180
-versions:  pillow=12.3.0 freetype2=2.14.3 libjpeg_turbo=3.1.3
-format:    baseline JPEG (SOF0), 480x272, 4:2:0, quality 90, standard Huffman tables, no EXIF
-bytes:     8722 (the slot holds 10899)
-sha256:    78341088f844990e0efd1ae2efa1dae618516c1639a48381ac270b1c8c671096
-content:   bootdisplay.builtin_image()'s "NebulaOS / starting..." card, landscape,
-           stored rotated 180 degrees (the splash's ROTATE="2" convention).
-           Orientation on the panel is still to be confirmed on hardware.
+versions:  pillow=12.3.0 libjpeg_turbo=3.1.3
+format:    baseline JPEG (SOF0), 480x272, 4:2:0, quality 22, standard Huffman tables, no EXIF
+bytes:     10776 (the slot holds 10899)
+sha256:    099a8433ac8e50194f55429169605107e05dc501bceb30c94629930fd854a161
+content:   G116 (Run 21): the shipped boot logo "NebulaOS Ender-3 Blueprint Interface"
+           (overlay usr/share/nebulaos/boot-logos/), stored rotated 180 degrees (the
+           splash's ROTATE="2" convention, upright on ke-dev since 2026-10-15).
+           Until Run 21: the "NebulaOS / starting..." text card (sha256 78341088...).
 
-The bytes are the asset; they are pinned in scripts/package/rtos_logo.py and
-manifests/dependencies.conf. Another Pillow/FreeType/libjpeg may render
-different bytes: `make-rtos-logo.py --check` says whether this host reproduces them.
+The bytes are the asset; they are pinned in scripts/package/rtos_logo.py,
+manifests/dependencies.conf and tools/hardware/CONTROL_MANIFEST. Another
+Pillow/libjpeg may produce different bytes: `make-rtos-logo.py --check` says
+whether this host reproduces them. The patched zero.bin sha256 (242b8e8a...) was
+computed from an rtos2 backup whose frame matches poweronlogo.FRAME_SHA256 (the
+same method reproduces the previous pin bd29e775...).

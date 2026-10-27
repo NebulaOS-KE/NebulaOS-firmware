@@ -62,6 +62,7 @@ class Env(object):
             "NEBULAOS_NETAPPLY": self.netapply,
             "NEBULAOS_BACKLIGHT_CLI": self.backlight,
             "NEBULAOS_BOOT_UPLOAD_DIR": self.config_root,
+            "NEBULAOS_BOOT_SHIPPED_DIR": os.path.join(self.tmp, "shipped-logos"),
             "NEBULAOS_SEED_MANIFEST": os.path.join(self.tmp, "seed.json"),
             "NEBULAOS_GUPPY_CONFIG": os.path.join(self.tmp, "guppy.json"),
             "NEBULAOS_DATA_MOUNT": self.tmp,
@@ -476,6 +477,67 @@ class BootDisplayTests(unittest.TestCase):
         for bad in ("usb/../etc/passwd", "usb/sda1/../../x", "gcodes/x.png"):
             with self.assertRaises(self.e.common.OsConfigError):
                 b.import_usb(bad)
+
+    def _shipped(self, name, colour=(0, 0, 255)):
+        os.makedirs(self.b.SHIPPED_DIR, exist_ok=True)
+        path = os.path.join(self.b.SHIPPED_DIR, name)
+        self.Image.new("RGB", (480, 272), colour).save(path, "JPEG")
+        return path
+
+    def test_shipped_logos(self):
+        # G116 (Run 21): the shipped logos are listed first, can be applied and
+        # previewed, never deleted; an upload with the same name wins
+        b = self.b
+        b.PREVIEW_DIR = os.path.join(self.e.tmp, "preview")
+        self._shipped("NebulaOS Deep Space.jpg")
+        self._shipped(b.FRESH_DEFAULT)
+        self._png("mine.png")
+        lst = b.list_images()
+        self.assertEqual([(i["name"], i.get("shipped", False)) for i in lst["images"]],
+                         [("NebulaOS Deep Space.jpg", True), (b.FRESH_DEFAULT, True),
+                          ("mine.png", False)])
+        out = b.set_image("NebulaOS Deep Space.jpg")
+        self.assertEqual(out["result"], "APPLIED")
+        self.assertEqual(len(self.written), 1)                                   # power-on logo too
+        self.assertEqual(b.list_images()["selected"], "NebulaOS Deep Space.jpg")
+        self.assertEqual(b.custom_path(), os.path.join(b.BOOT_DIR, "custom.jpg"))
+        self.assertEqual(b.preview("NebulaOS Deep Space.jpg")["result"], "OK")
+        with self.assertRaises(self.e.common.OsConfigError) as cm:
+            b.delete_image("NebulaOS Deep Space.jpg")
+        self.assertEqual(cm.exception.code, "SHIPPED_IMAGE")
+        self.assertTrue(os.path.isfile(os.path.join(b.SHIPPED_DIR, "NebulaOS Deep Space.jpg")))
+        # an upload of the same name shadows the shipped one (and can be deleted)
+        self._png("NebulaOS Deep Space.jpg")
+        names = [i["name"] for i in b.list_images()["images"]]
+        self.assertEqual(names.count("NebulaOS Deep Space.jpg"), 1)
+        self.assertEqual(b.resolve_image("NebulaOS Deep Space.jpg"),
+                         os.path.join(os.path.realpath(b.UPLOAD_DIR), "NebulaOS Deep Space.jpg"))
+        b.delete_image("NebulaOS Deep Space.jpg")
+        self.assertEqual(b.resolve_image("NebulaOS Deep Space.jpg"),
+                         os.path.join(os.path.realpath(b.SHIPPED_DIR), "NebulaOS Deep Space.jpg"))
+        for bad in ("../x.jpg", "a/b.jpg", ".hidden.jpg"):
+            with self.assertRaises(self.e.common.OsConfigError):
+                b.resolve_image(bad)
+
+    def test_fresh_install_default(self):
+        # G116: the first seed selects Blueprint for the boot screen only (the
+        # packaged power-on logo is that picture already)
+        b = self.b
+        self.assertEqual(b.fresh_install_default()["result"], "UNCHANGED")       # nothing shipped
+        self.assertFalse(os.path.exists(b.CONFIG))
+        self._shipped(b.FRESH_DEFAULT)
+        out = b.fresh_install_default()
+        self.assertEqual(out["result"], "APPLIED")
+        self.assertEqual(b.load_config()[0], {"schema": 1, "mode": "logo", "image": "custom",
+                                              "source": b.FRESH_DEFAULT})
+        self.assertEqual(b.list_images()["selected"], b.FRESH_DEFAULT)
+        self.assertEqual(open(b.custom_path(), "rb").read(),
+                         open(os.path.join(b.SHIPPED_DIR, b.FRESH_DEFAULT), "rb").read())
+        self.assertEqual(self.written, [])                                      # RTOS untouched
+        # an existing setting is never changed: the built-in choice stays
+        b.reset_image()
+        self.assertEqual(b.fresh_install_default()["result"], "UNCHANGED")
+        self.assertEqual(b.load_config()[0]["image"], "builtin")
 
     def test_upload_name_confinement(self):
         # G61 (2026-10-16): ordinary names with spaces etc. are allowed (the

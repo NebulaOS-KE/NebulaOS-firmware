@@ -30,6 +30,7 @@
 #   nebulaos-osconfig boot-display import-usb --file usb/<dev>/<path> | delete-image --file NAME
 #   nebulaos-osconfig boot-display set-image --file NAME_IN_UPLOAD_ROOT
 #   nebulaos-osconfig boot-display render [--if-stale]
+#   nebulaos-osconfig boot-display fresh-default   (S04nebulaos-factory-seed, first seed only)
 #   nebulaos-osconfig display status|sleep|wake
 #   nebulaos-osconfig display set-brightness --level 25|50|75|100
 #   nebulaos-osconfig mcu status|list
@@ -207,6 +208,9 @@ def _dispatch(argv):
                 return bootdisplay.delete_image(_opts(rest, {"file": True}).get("file"))
             if verb == "preview":
                 return bootdisplay.preview(_opts(rest, {"file": True}).get("file") or "")
+            if verb == "fresh-default":
+                _opts(rest, {})
+                return bootdisplay.fresh_install_default()
             if verb == "render":
                 return bootdisplay.render(
                     if_stale=bool(_opts(rest, {"if-stale": False}).get("if-stale")))

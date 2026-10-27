@@ -6,6 +6,8 @@
 #   printer_data/config/uploads/boot-logo/  images to pick from (G63
 #                            2026-10-16, inside the config root; was
 #                            printer_data/uploads, before that boot/uploads)
+#   /usr/share/nebulaos/boot-logos/  the logos NebulaOS ships (G116, Run 21):
+#                            listed with the uploads, read-only, never deleted
 #   boot/custom.png|bmp|jpg  validated copy of the selected image
 #   boot/cache/splash.raw    framebuffer-native render (derived)
 #   boot/cache/splash.meta   geometry + source identity of the render
@@ -44,6 +46,11 @@ META = os.path.join(CACHE_DIR, "splash.meta")
 # place an image may be picked from.
 UPLOAD_DIR = os.environ.get("NEBULAOS_BOOT_UPLOAD_DIR",
                             "/opt/printer_data/config/uploads/boot-logo")
+# G116 (Run 21): the shipped logos (an upload with the same name wins), and
+# the boot screen a fresh install starts with - the same picture as the
+# packaged power-on logo (scripts/package/make-rtos-logo.py).
+SHIPPED_DIR = os.environ.get("NEBULAOS_BOOT_SHIPPED_DIR", "/usr/share/nebulaos/boot-logos")
+FRESH_DEFAULT = "NebulaOS Ender-3 Blueprint Interface.jpg"
 FB_DEV = os.environ.get("NEBULAOS_FB_DEV", "/dev/fb0")
 FB_SYSFS = os.environ.get("NEBULAOS_FB_SYSFS", "/sys/class/graphics/fb0")
 GUPPY_CONFIG = os.environ.get("NEBULAOS_GUPPY_CONFIG", "/opt/nebulascreen/nebulascreen.json")
@@ -392,6 +399,25 @@ def resolve_upload(filename):
     return full
 
 
+def _shipped(filename):
+    """The shipped logo of that name, or None."""
+    if not _plain_name(filename):
+        return None
+    root = os.path.realpath(SHIPPED_DIR)
+    full = os.path.realpath(os.path.join(root, filename))
+    if os.path.dirname(full) != root or not os.path.isfile(full):
+        return None
+    return full
+
+
+def resolve_image(filename):
+    """An upload, else a shipped logo of that name (G116)."""
+    full = resolve_upload(filename)
+    if not os.path.exists(full):
+        return _shipped(filename) or full
+    return full
+
+
 # Run 10 test (2026-10-17): Apply changes the boot screen AND the power-on
 # logo, or neither. The power-on logo is converted and the RTOS checked first;
 # if writing it still fails, the boot screen goes back to what it was.
@@ -437,7 +463,7 @@ def _apply_both(change_boot, slot_bytes):
 # change around them hold the maintenance lock and are refused while busy.
 @common.maintenance("boot-logo")
 def set_image(filename):
-    src = resolve_upload(filename)
+    src = resolve_image(filename)
     fmt, width, height = validate_image_file(src)
     with open(src, "rb") as handle:
         data = handle.read(MAX_FILE_BYTES + 1)
@@ -537,7 +563,11 @@ def _usb_images():
 def list_images():
     cfg, _ = load_config()
     selected = cfg.get("source") if cfg["image"] == "custom" else None
-    images = _images_in(UPLOAD_DIR)
+    uploads = _images_in(UPLOAD_DIR)
+    names = set(i["name"] for i in uploads)
+    # G116: the shipped logos first ("shipped": no Delete), then the uploads
+    images = [dict(i, shipped=True) for i in _images_in(SHIPPED_DIR)
+              if i["name"] not in names] + uploads
     if selected and selected not in [i["name"] for i in images]:
         selected = None            # the upload was deleted; the copy still shows
     return {"images": images, "selected": selected or "", "custom_active": cfg["image"] == "custom",
@@ -583,6 +613,8 @@ def import_usb(file_id):
 def delete_image(filename):
     path = resolve_upload(filename)
     if not os.path.isfile(path):
+        if _shipped(filename):
+            raise invalid("SHIPPED_IMAGE", "the logos that come with NebulaOS cannot be deleted")
         raise invalid("FILE_GONE", "the image is no longer there")
     os.unlink(path)
     return {"result": "DELETED", "name": filename}
@@ -596,7 +628,7 @@ def preview(filename):
         img = builtin_image(480, 272)
         key = "builtin-" + firmware_short_sha()
     else:
-        path = resolve_upload(filename)
+        path = resolve_image(filename)
         validate_image_file(path)
         st = os.stat(path)
         key = hashlib.sha256(("%s|%d|%d" % (filename, st.st_size, int(st.st_mtime))).encode()).hexdigest()[:16]
@@ -613,3 +645,23 @@ def preview(filename):
         img.resize(PREVIEW_SIZE, Image.LANCZOS).save(out + ".tmp", "PNG")
         os.replace(out + ".tmp", out)
     return {"result": "OK", "path": out, "width": PREVIEW_SIZE[0], "height": PREVIEW_SIZE[1]}
+
+
+def fresh_install_default():
+    """G116: a fresh install (S04nebulaos-factory-seed's first seed) starts with
+    the shipped Blueprint logo as its boot screen. Only the boot screen: the
+    packaged power-on logo is already that picture. Never changes a printer
+    that has a boot display setting or a custom image."""
+    if os.path.exists(CONFIG) or custom_path() is not None:
+        return {"result": "UNCHANGED"}
+    src = _shipped(FRESH_DEFAULT)
+    if src is None:
+        return {"result": "UNCHANGED", "reason": "no shipped default logo"}
+    validate_image_file(src)
+    with open(src, "rb") as handle:
+        data = handle.read(MAX_FILE_BYTES + 1)
+    os.makedirs(BOOT_DIR, exist_ok=True)
+    common.atomic_write(os.path.join(BOOT_DIR, "custom.jpg"), data)
+    cfg = {"schema": SCHEMA, "mode": "logo", "image": "custom", "source": FRESH_DEFAULT}
+    _persist(cfg)
+    return {"result": "APPLIED", "config": cfg}

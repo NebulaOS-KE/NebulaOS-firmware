@@ -8,8 +8,8 @@
 
 6fe0496042b0cf3c0b81d5687ba7fd288c67250f0e3e20045f613895279b77d4  on-device  scripts/flash-spare-slot.sh
 8109104f40d2ecced05226a5fb86d606dc2222ad8eeb11a03c97e9428a7cd6b9  on-device  scripts/build/overlay/usr/libexec/nebulaos-datafs.sh
-78341088f844990e0efd1ae2efa1dae618516c1639a48381ac270b1c8c671096  host  scripts/package/assets/nebulaos-rtos-logo.jpg
-5301e36b74f2592a2f9ffd86e199538280f212d6852348d6d960ea45b287a091  host  scripts/package/rtos_logo.py
+099a8433ac8e50194f55429169605107e05dc501bceb30c94629930fd854a161  host  scripts/package/assets/nebulaos-rtos-logo.jpg
+188490dd44677373935002f0944006e039eb956132444c1d7ea47d3c980c5ea7  host  scripts/package/rtos_logo.py
 9690c4b144d80abb028a8f4e45db8fbf6527590c23a54a23aee714d8a81a13e5  host  tools/attest/nebulaos-attest.py
 f2e1c2a7cca56006ae760a0ebe000aacb20869f5ddc44c17c71ad967e11cf8cb  host  tools/emmc/nebulaos_layout.py
 87602c4d4b9027232671a8e6303d7ac415dcd58586824a4906c2a7872f07d67b  host  tools/hardware/nebulaos_agent.py

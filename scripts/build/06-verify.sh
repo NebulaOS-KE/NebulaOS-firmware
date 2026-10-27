@@ -1705,6 +1705,15 @@ check /etc/init.d/S01restore-clock
 check /etc/init.d/S99nebulaos-housekeeping
 check /usr/lib/nebulaos/python/rtos_logo.py
 check /usr/lib/nebulaos/python/assets/nebulaos-rtos-logo.jpg
+# G116 (Run 21): the shipped boot logos, incl. the fresh-install default (names
+# have spaces, so list the folder instead of stat-ing each file)
+BOOT_LOGOS=$(debugfs -R "ls -p /usr/share/nebulaos/boot-logos" ${IMAGES}/rootfs.ext2 2>/dev/null | grep -c '\.jpg/')
+if [ "$BOOT_LOGOS" -ge 11 ] && debugfs -R "ls -p /usr/share/nebulaos/boot-logos" ${IMAGES}/rootfs.ext2 2>/dev/null \
+	| grep -qF '/NebulaOS Ender-3 Blueprint Interface.jpg/'; then
+	echo "OK   /usr/share/nebulaos/boot-logos ($BOOT_LOGOS logos, Blueprint default present)"
+else
+	echo "MISS /usr/share/nebulaos/boot-logos ($BOOT_LOGOS logos, Blueprint default required)"
+fi
 check /etc/init.d/S99nebulaos-image-trial
 check /etc/init.d/S02nebulaos-early-ssh
 check /usr/bin/7za
