@@ -163,5 +163,18 @@ check "S01wifi falls back to stock ifup" 'grep -q "^		/sbin/ifup wlan0 2>/dev/nu
 check "S01wifi probes static in background" 'grep -q "nnet_static_probe >/dev/null 2>&1 &" "$S01WIFI"'
 check "stock interfaces file still DHCP" 'grep -qx "iface wlan0 inet dhcp" "$OVERLAY/etc/network/interfaces"'
 
+# --- G103 P1: S40nebulaos-ntpsync waits for a default route itself -------------
+NTP="$OVERLAY/etc/init.d/S40nebulaos-ntpsync"
+sed -n '/^ROUTE_SRC=/,/^sync_clock() {/p' "$NTP" | sed '$d' > "$T/ntp-route.sh"
+printf 'Iface\tDestination\tGateway\nwlan0\t0001A8C0\t00000000\n' > "$T/route-none"
+printf 'Iface\tDestination\tGateway\nwlan0\t00000000\t0101A8C0\nwlan0\t0001A8C0\t00000000\n' > "$T/route-default"
+NEBULAOS_ROUTE_SRC="$T/route-default" sh -c ". '$T/ntp-route.sh'; have_default_route"; rc=$?
+check "ntpsync: default route seen" '[ $rc -eq 0 ]'
+NEBULAOS_ROUTE_SRC="$T/route-none" sh -c ". '$T/ntp-route.sh'; have_default_route"; rc=$?
+check "ntpsync: a subnet route is not a default route" '[ $rc -ne 0 ]'
+NEBULAOS_ROUTE_SRC="$T/route-none" NEBULAOS_NTP_ROUTE_WAIT=1 sh -c ". '$T/ntp-route.sh'; wait_for_route"; rc=$?
+check "ntpsync: route wait is bounded" '[ $rc -ne 0 ]'
+check "ntpsync: sync waits for the route first" 'grep -q "wait_for_route ||" "$NTP"'
+
 echo "nebulaos-network-boot-tests: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]

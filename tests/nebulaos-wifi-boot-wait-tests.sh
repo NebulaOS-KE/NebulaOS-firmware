@@ -233,7 +233,7 @@ chmod +x "$SB/bin/"*
 s01() { env PATH="$SB/bin:$PATH" NEBULAOS_WIFI_BOOT_WAIT_MARKER="$SB/maint/wifi-boot-wait-mode" \
 	NEBULAOS_WIFI_BOOT_WAIT_RESULT="$SB/result" NEBULAOS_WIFI_BOOT_WAIT_MIN=0 NEBULAOS_WIFI_BOOT_WAIT_FIXED_SLEEP=0 \
 	NEBULAOS_WIFI_UPTIME_SRC=/proc/uptime IFUP_RC="${IFUP_RC:-0}" NEBULAOS_WLAN_SYSFS="${WLAN_SYSFS:-$SB}" \
-	NEBULAOS_WLAN_WAIT_TENTHS="${WLAN_TENTHS:-100}" sh "$SB/S01wifi" start > "$SB/out" 2>&1; }
+	NEBULAOS_WLAN_WAIT_TENTHS="${WLAN_TENTHS:-100}" NEBULAOS_WIFI_FOREGROUND=1 sh "$SB/S01wifi" start > "$SB/out" 2>&1; }
 printf 'event-driven\n' > "$SB/maint/wifi-boot-wait-mode"
 IFUP_RC=0; s01; rc=$?
 [ $rc -eq 0 ] && grep -qx 'MODE=event-driven' "$SB/result" && grep -qx 'OUTCOME=associated' "$SB/result" \
@@ -253,6 +253,19 @@ WLAN_SYSFS="$SB/late-wlan0"; s01; rc=$?; WLAN_SYSFS=
 s0=$(date +%s); WLAN_SYSFS="$SB/never-wlan0"; WLAN_TENTHS=5; s01; rc=$?; WLAN_SYSFS=; WLAN_TENTHS=; s1=$(date +%s)
 [ $rc -eq 0 ] && grep -q 'wlan0 did not appear' "$SB/out" && [ $((s1 - s0)) -le 3 ] && pass \
 	|| fail "S01 missing-wlan0 case not bounded/safe (rc=$rc $((s1 - s0))s, $(cat "$SB/out"))"
+
+# G103 P1: by default the boot does not wait for wlan0 / wpa_supplicant / ifup
+rm -f "$SB/calls"; s0=$(date +%s)
+env PATH="$SB/bin:$PATH" NEBULAOS_WIFI_BOOT_WAIT_MARKER="$SB/maint/wifi-boot-wait-mode" \
+	NEBULAOS_WIFI_BOOT_WAIT_RESULT="$SB/result" NEBULAOS_WIFI_BOOT_WAIT_MIN=0 NEBULAOS_WIFI_BOOT_WAIT_FIXED_SLEEP=0 \
+	NEBULAOS_WIFI_UPTIME_SRC=/proc/uptime NEBULAOS_WLAN_SYSFS="$SB/late-wlan1" NEBULAOS_WLAN_WAIT_TENTHS=20 \
+	sh "$SB/S01wifi" start > "$SB/out" 2>&1; rc=$?; s1=$(date +%s)
+[ $rc -eq 0 ] && [ $((s1 - s0)) -le 1 ] && [ ! -e "$SB/calls" ] && pass \
+	|| fail "S01 default start waited for Wi-Fi (rc=$rc $((s1 - s0))s)"
+n=0; while [ ! -e "$SB/calls" ] || ! grep -q '^ifup wlan0' "$SB/calls"; do
+	n=$((n + 1)); [ $n -gt 60 ] && break; sleep 0.1; done
+grep -q '^ssd -S' "$SB/calls" 2>/dev/null && grep -q '^ifup wlan0' "$SB/calls" && pass \
+	|| fail "S01 background bring-up did not start wpa_supplicant and ifup"
 
 echo ""
 echo "$PASS passed, $FAIL failed"

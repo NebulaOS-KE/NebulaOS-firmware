@@ -22,7 +22,27 @@ log() {
 	echo "S40nebulaos-ntpsync: $1"
 }
 
+# G103 P1 (Run 21): S01wifi brings the network up in the background, so wait
+# here (bounded, in this script's own background job) for a default route.
+ROUTE_SRC="${NEBULAOS_ROUTE_SRC:-/proc/net/route}"
+ROUTE_WAIT_SECONDS="${NEBULAOS_NTP_ROUTE_WAIT:-60}"
+
+have_default_route() {
+	awk 'NR > 1 && $2 == "00000000" { found = 1 } END { exit !found }' "$ROUTE_SRC" 2>/dev/null
+}
+
+wait_for_route() {
+	_w=0
+	while ! have_default_route; do
+		[ "$_w" -ge "$ROUTE_WAIT_SECONDS" ] && return 1
+		sleep 1
+		_w=$((_w + 1))
+	done
+	return 0
+}
+
 sync_clock() {
+	wait_for_route || log "no default route after ${ROUTE_WAIT_SECONDS} s - trying anyway"
 	for server in $NTP_SERVERS; do
 		if ntpd -n -q -p "$server" >/tmp/ntpsync.log 2>&1; then
 			log "clock synced via $server: $(date -u)"

@@ -101,19 +101,14 @@ PIDFILE=/var/run/wpa_supplicant-wlan0.pid
 # for this boot, in the background.
 NNET_LIB="${NNET_LIB:-/etc/nebulaos-network.sh}"
 
-start() {
-	CONF=""
-	if [ -f /etc/nebulaos-wifi-migrate.sh ]; then
-		. /etc/nebulaos-wifi-migrate.sh
-		nebulaos_wifi_migrate
-		CONF="$NEBULAOS_WIFI_CONF"
-	else
-		echo "S01wifi: /etc/nebulaos-wifi-migrate.sh missing - cannot safely determine the Wi-Fi config path, not starting wpa_supplicant"
-	fi
-	if [ -z "$CONF" ] || [ ! -f "$CONF" ]; then
-		echo "S01wifi: no usable Wi-Fi config path, skipping"
-		return 0
-	fi
+# G103 P1 (Run 21): the boot does not wait for Wi-Fi. The config path and the
+# host name are settled here (syslogd, the screen and Moonraker read them);
+# waiting for wlan0, wpa_supplicant, the association settle and ifup run in
+# the background (2.8-5.7 s that used to sit before the screen). Nothing
+# later in the boot needs an address: SSH and Moonraker listen on every
+# interface, S40nebulaos-ntpsync waits for a default route itself.
+# NEBULAOS_WIFI_FOREGROUND=1 keeps the old order (tests).
+wifi_bringup() {
 	# BOOT-06: brcmfmac registers wlan0 asynchronously, and the kernel no
 	# longer holds root for 2 s after the SDIO insert, so userspace can get
 	# here first (measured before the change: wlan0 up at ~1.7 s, root at
@@ -129,11 +124,6 @@ start() {
 		[ "$_wlan_wait" -gt 0 ] && echo "S01wifi: waited $((_wlan_wait / 10)).$((_wlan_wait % 10)) s for wlan0"
 	else
 		echo "S01wifi: wlan0 did not appear within $((_wlan_wait / 10)) s - continuing (Wi-Fi may be unavailable this boot)"
-	fi
-	NNET_READY=0
-	if [ -f "$NNET_LIB" ]; then
-		. "$NNET_LIB"
-		nnet_boot_prepare && NNET_READY=1
 	fi
 	if [ -f /etc/nebulaos-stable-mac.sh ]; then
 		. /etc/nebulaos-stable-mac.sh
@@ -172,6 +162,32 @@ start() {
 	fi
 	if command -v nebulaos_wifi_boot_wait_record_ifup >/dev/null 2>&1; then
 		nebulaos_wifi_boot_wait_record_ifup "$ifup_rc"
+	fi
+	return 0
+}
+
+start() {
+	CONF=""
+	if [ -f /etc/nebulaos-wifi-migrate.sh ]; then
+		. /etc/nebulaos-wifi-migrate.sh
+		nebulaos_wifi_migrate
+		CONF="$NEBULAOS_WIFI_CONF"
+	else
+		echo "S01wifi: /etc/nebulaos-wifi-migrate.sh missing - cannot safely determine the Wi-Fi config path, not starting wpa_supplicant"
+	fi
+	if [ -z "$CONF" ] || [ ! -f "$CONF" ]; then
+		echo "S01wifi: no usable Wi-Fi config path, skipping"
+		return 0
+	fi
+	NNET_READY=0
+	if [ -f "$NNET_LIB" ]; then
+		. "$NNET_LIB"
+		nnet_boot_prepare && NNET_READY=1
+	fi
+	if [ "${NEBULAOS_WIFI_FOREGROUND:-0}" = 1 ]; then
+		wifi_bringup
+	else
+		wifi_bringup &
 	fi
 	return 0
 }
