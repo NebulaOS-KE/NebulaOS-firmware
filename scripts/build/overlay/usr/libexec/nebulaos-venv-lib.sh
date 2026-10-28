@@ -206,8 +206,13 @@ swap_venv_into_place() {
 #                      site-packages listing (installs, removals, upgrades
 #                      change dist-info entries, sizes or times), and whether
 #                      a torn-swap "<env>.old" exists (recovery pending)
-#   the components     the git HEAD of every app checkout under $APPS
 #   the question       the smoke-test import list itself
+#
+# Not the app checkouts (G103 P3, Run 21): the check runs the venv's own
+# interpreter on a fixed import list, so an app's git HEAD cannot change its
+# answer, and whatever an app update installs shows in the site-packages
+# listing. With the HEADs in the key, every Klipper/extensions/Moonraker
+# update cost the next boot both full checks (4.8-7.5 s on ke-dev).
 #
 # The key is written to the stamp only after venv_is_usable() succeeded, and
 # the stamp is deleted when it fails, so a stamp can never vouch for an
@@ -223,31 +228,11 @@ VENV_VALIDATION_DIR="${VENV_VALIDATION_DIR:-${SYSTEM:-${NEBULAOS_ROOT:-/usr/data
 VENV_REVALIDATE_MARKER="${VENV_REVALIDATE_MARKER:-${NEBULAOS_ROOT:-/usr/data/nebulaos}/maintenance/revalidate-venvs}"
 VENV_SYSTEM_PYTHON="${VENV_SYSTEM_PYTHON:-/usr/bin/python3}"
 VENV_IMAGE_MANIFEST="${VENV_IMAGE_MANIFEST:-${SEEDS:-/opt/nebulaos-seeds}/seed-manifest.json}"
-VENV_APPS_DIR="${VENV_APPS_DIR:-${APPS:-${NEBULAOS_ROOT:-/usr/data/nebulaos}/apps}}"
-
-# git HEAD of one checkout without running git: HEAD, then the ref it names
-# (loose or packed). Empty when there is no checkout.
-_venv_git_head() {
-	_vgh_g="$1/.git"
-	[ -f "$_vgh_g/HEAD" ] || return 0
-	read -r _vgh_h < "$_vgh_g/HEAD" 2>/dev/null || return 0
-	case "$_vgh_h" in
-		"ref: "*)
-			_vgh_r=${_vgh_h#ref: }
-			if [ -f "$_vgh_g/$_vgh_r" ]; then
-				cat "$_vgh_g/$_vgh_r" 2>/dev/null
-			else
-				grep " $_vgh_r\$" "$_vgh_g/packed-refs" 2>/dev/null | cut -d' ' -f1
-			fi
-			;;
-		*) echo "$_vgh_h" ;;
-	esac
-}
 
 # The identity key for <envdir> <smoke> on stdout.
 venv_validation_key() {
 	_vvk_d="$1"
-	echo "v1"
+	echo "v2"
 	echo "smoke=$2"
 	echo "image=$(cksum < "$VENV_IMAGE_MANIFEST" 2>/dev/null)"
 	echo "python=$(ls -lnL "$VENV_SYSTEM_PYTHON" 2>/dev/null)"
@@ -260,10 +245,6 @@ venv_validation_key() {
 		echo "sp=$_vvk_sp $(ls -lna "$_vvk_sp" 2>/dev/null | cksum)"
 	done
 	[ -e "$_vvk_d.old" ] && echo "old=present"
-	for _vvk_a in "$VENV_APPS_DIR"/*; do
-		[ -d "$_vvk_a/.git" ] || continue
-		echo "app=${_vvk_a##*/} $(_venv_git_head "$_vvk_a")"
-	done
 }
 
 _venv_stamp_path() {

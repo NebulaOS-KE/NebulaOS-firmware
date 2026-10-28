@@ -91,10 +91,13 @@ echo "system python 3.12.15 build B - longer" > "$VENV_SYSTEM_PYTHON"; changed "
 printf 'home = /usr/bin\nversion = 3.12.15\n' > "$E/pyvenv.cfg"; changed "changed pyvenv.cfg"
 : > "$E/lib/python3.12/site-packages/pkg_b-2.0.dist-info"; changed "package installed in the venv"
 rm -f "$E/lib/python3.12/site-packages/pkg_b-2.0.dist-info"; changed "package removed from the venv"
-echo "2222222222222222222222222222222222222222" > "$APPS/klipper/.git/refs/heads/master"; changed "klipper checkout moved (component identity)"
-echo "3333333333333333333333333333333333333333" > "$APPS/nebulaos-klipper-extensions/.git/refs/heads/master"; changed "extensions checkout moved"
-rm -f "$APPS/moonraker/.git/refs/heads/master"
-echo "4444444444444444444444444444444444444444 refs/heads/master" > "$APPS/moonraker/.git/packed-refs"; changed "moonraker HEAD via packed-refs"
+# G103 P3: an app update (its checkout moves) cannot change the import
+# answer - the stamp stays valid, no full check on the next boot
+echo "2222222222222222222222222222222222222222" > "$APPS/klipper/.git/refs/heads/master"
+check 0 stamp "klipper checkout moved: the stamp must stay valid"
+echo "3333333333333333333333333333333333333333" > "$APPS/nebulaos-klipper-extensions/.git/refs/heads/master"
+check 0 stamp "extensions checkout moved: the stamp must stay valid"
+[ "$LAST_STARTS" = 0 ] && pass || fail "an app update started the interpreter ($LAST_STARTS)"
 mkdir -p "$E.old"; changed "torn swap pending recovery (<env>.old present)"; rmdir "$E.old"; changed "recovery finished"
 
 # 4. different question (smoke list) is never answered by another one's stamp
