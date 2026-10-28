@@ -270,13 +270,27 @@ def to_framebuffer(img, geo):
     return bytes(out)
 
 
+def _file_digest(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        digest.update(handle.read())
+    return digest.hexdigest()
+
+
+def builtin_path():
+    """Run 21 (Tim): "NebulaOS" is the Blueprint logo on the boot screen too,
+    the same picture as the packaged power-on logo, so the whole boot shows
+    one logo. The text card is only the fallback when the file is missing."""
+    return _shipped(FRESH_DEFAULT)
+
+
 def _source_identity(cfg):
     path = custom_path() if cfg["image"] == "custom" else None
     if path:
-        digest = hashlib.sha256()
-        with open(path, "rb") as handle:
-            digest.update(handle.read())
-        return "custom", path, digest.hexdigest()
+        return "custom", path, _file_digest(path)
+    path = builtin_path()
+    if path:
+        return "builtin", path, "builtin-logo-%s" % _file_digest(path)
     return "builtin", None, "builtin-%s-%s" % (RENDERER_VERSION, firmware_short_sha())
 
 
@@ -624,11 +638,11 @@ def preview(filename):
     """A small PNG of exactly what the boot screen will show (fitted on
     black), for the screen. "" or "NebulaOS" = the built-in logo."""
     Image, _, _ = _pil()
-    if filename in ("", None, "builtin"):
+    if filename in ("", None, "builtin") and builtin_path() is None:
         img = builtin_image(480, 272)
         key = "builtin-" + firmware_short_sha()
     else:
-        path = resolve_image(filename)
+        path = builtin_path() if filename in ("", None, "builtin") else resolve_image(filename)
         validate_image_file(path)
         st = os.stat(path)
         key = hashlib.sha256(("%s|%d|%d" % (filename, st.st_size, int(st.st_mtime))).encode()).hexdigest()[:16]

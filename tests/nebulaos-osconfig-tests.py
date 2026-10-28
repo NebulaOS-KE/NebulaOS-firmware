@@ -520,6 +520,25 @@ class BootDisplayTests(unittest.TestCase):
             with self.assertRaises(self.e.common.OsConfigError):
                 b.resolve_image(bad)
 
+    def test_builtin_is_the_blueprint_logo(self):
+        # Run 21 (Tim): "NebulaOS" shows the Blueprint logo on the boot screen
+        # as well, not the text card; the render and preview follow the file
+        b = self.b
+        b.PREVIEW_DIR = os.path.join(self.e.tmp, "preview")
+        geo = fake_geometry(xres=96, yres=54)
+        path = self._shipped(b.FRESH_DEFAULT, colour=(0, 255, 0))
+        self.assertEqual(b.builtin_path(), os.path.realpath(path))
+        self.assertEqual(b.render(geo=geo)["result"], "RENDERED")
+        meta = open(b.META).read()
+        self.assertIn('KIND="builtin"', meta)
+        self.assertIn('SOURCE="builtin-logo-', meta)
+        raw = open(b.RAW, "rb").read()
+        mid = 27 * geo["stride"] + 48 * 4
+        self.assertTrue(raw[mid + 1] > 200 and raw[mid] < 60 and raw[mid + 2] < 60)  # green logo (BGRX)
+        self.assertEqual(b.preview("")["result"], "OK")
+        self._shipped(b.FRESH_DEFAULT, colour=(255, 0, 0))                    # a new logo re-renders
+        self.assertEqual(b.render(if_stale=True, geo=geo)["result"], "RENDERED")
+
     def test_fresh_install_default(self):
         # G116: the first seed selects Blueprint for the boot screen only (the
         # packaged power-on logo is that picture already)
