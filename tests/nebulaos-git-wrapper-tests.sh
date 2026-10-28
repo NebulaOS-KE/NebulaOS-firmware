@@ -144,5 +144,14 @@ PATH=$OLDPATH
 grep -q 'export PATH="/usr/libexec/nebulaos/bin:$PATH"' "$REPO_ROOT/scripts/build/overlay/etc/init.d/S56moonraker" \
 	&& pass "S56moonraker puts the wrapper first on Moonraker's PATH" || fail "S56moonraker PATH export missing"
 
+# G102: the update supervisor's own git runs by path, never via the wrapper
+SUP="$REPO_ROOT/scripts/build/overlay/etc/nebulaos-update-supervisor.sh"
+if grep -v '^[[:space:]]*#' "$SUP" | grep -qE '(^|[;&|(\$][[:space:]]*|^[[:space:]]+)git -C'; then
+	fail "G102: the update supervisor still calls a bare git (PATH may hold the wrapper)"
+else
+	grep -q '^GIT="${NEBULAOS_GIT_REAL:-/usr/bin/git}"' "$SUP" \
+		&& pass "G102: the update supervisor's git is /usr/bin/git by path" || fail "G102: \$GIT not set in the supervisor"
+fi
+
 echo "nebulaos-git-wrapper-tests: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

@@ -598,6 +598,19 @@ ndq_apply_backlight() {
 		return 1
 	fi
 
+	# G103 P4 (Run 21): S97's background apply comes after S98 restored the
+	# user's level; a backlight that is already on is kept as it is, so the
+	# screen does not jump to safe-on and back (NDQ_BACKLIGHT_KEEP_ON=1).
+	if [ "${NDQ_BACKLIGHT_KEEP_ON:-0}" = 1 ] \
+		&& [ "$(cat "$NDQ_BACKLIGHT_SYSFS/bl_power" 2>/dev/null)" = 0 ]; then
+		actual=$(cat "$NDQ_BACKLIGHT_SYSFS/actual_brightness" 2>/dev/null)
+		case "$actual" in
+		'' | *[!0-9]* | 0) ;;
+		*)
+			ndq_log "apply-backlight: already on (actual_brightness $actual) - kept, no safe-on write"
+			return 0 ;;
+		esac
+	fi
 	if ! printf '0' > "$NDQ_BACKLIGHT_SYSFS/bl_power" 2>/dev/null; then
 		ndq_log "apply-backlight: write of 0 to $NDQ_BACKLIGHT_SYSFS/bl_power failed"
 		return 1

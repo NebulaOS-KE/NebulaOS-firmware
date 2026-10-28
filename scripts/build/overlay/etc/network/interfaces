@@ -14,6 +14,10 @@
 auto lo
 iface lo inet loopback
 
-auto wlan0
+# G103 P1 (Run 21): no `auto wlan0`. S01wifi brings wlan0 up in the
+# background now, so S40network's `ifup -a` could win the race and configure
+# wlan0 from this file (DHCP without the rendered hostname / static address,
+# two udhcpc on one interface). wlan0 is owned by S01wifi alone; this stanza
+# is only its fallback (`ifup wlan0`) when the rendered file is missing.
 iface wlan0 inet dhcp
   wait-delay 15

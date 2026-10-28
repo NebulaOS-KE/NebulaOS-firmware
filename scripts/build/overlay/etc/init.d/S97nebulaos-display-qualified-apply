@@ -177,9 +177,10 @@ start() {
 	exit 0
 }
 
-# The user's brightness after the apply: ndq_apply_backlight sets safe-on and
-# leaves the persisted level to S98, which now runs before this finishes - so
-# restore it here too, the same way S98 does.
+# The user's brightness after the apply: S98 now runs before this finishes.
+# ndq_apply_backlight keeps a backlight that is already on (NDQ_BACKLIGHT_KEEP_ON,
+# no jump to safe-on); when it did write safe-on (backlight was off), restore
+# the persisted level here, the same way S98 does.
 restore_brightness() {
 	[ -f "$NBL_LIB" ] || return 0
 	( . "$NBL_LIB" && nbl_boot_restore ) || log "brightness restore did not apply"
@@ -192,7 +193,7 @@ apply_when_healthy() {
 	fi
 	log "health gates passed (Klipper/Moonraker ready, NebulaScreen running, networking up, display driver responding)"
 
-	if ndq_apply_all "$NDQ_CONFIG_FILE"; then
+	if NDQ_BACKLIGHT_KEEP_ON=1 ndq_apply_all "$NDQ_CONFIG_FILE"; then
 		log "qualified display configuration applied"
 	else
 		log "qualified display configuration NOT applied (see the reason logged above) - both drivers remain at their own safe boot defaults, this is the correct, safe outcome"

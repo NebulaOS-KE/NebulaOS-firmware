@@ -548,6 +548,26 @@ fi
 [ "$(cat "$NDQ_BACKLIGHT_SYSFS/bl_power")" = "0" ] && [ "$(cat "$NDQ_BACKLIGHT_SYSFS/brightness")" = "4" ] && pass \
 	|| fail "fixed-safe-on apply did not write bl_power=0 and brightness=4"
 
+# G103 P4: S97's background apply keeps a backlight that S98 already turned
+# on (no jump to safe-on and back); an off backlight still gets safe-on.
+reset_fake_kernel
+printf '0\n' > "$NDQ_BACKLIGHT_SYSFS/bl_power"; printf '2\n' > "$NDQ_BACKLIGHT_SYSFS/brightness"
+printf '2\n' > "$NDQ_BACKLIGHT_SYSFS/actual_brightness"
+if NDQ_BACKLIGHT_KEEP_ON=1 ndq_apply_backlight pwm 50 >/dev/null 2>&1 \
+	&& [ "$(cat "$NDQ_BACKLIGHT_SYSFS/brightness")" = 2 ]; then
+	pass
+else
+	fail "KEEP_ON: an already-on backlight was rewritten to safe-on ($(cat "$NDQ_BACKLIGHT_SYSFS/brightness"))"
+fi
+reset_fake_kernel
+printf '1\n' > "$NDQ_BACKLIGHT_SYSFS/bl_power"
+if NDQ_BACKLIGHT_KEEP_ON=1 ndq_apply_backlight pwm 50 >/dev/null 2>&1 \
+	&& [ "$(cat "$NDQ_BACKLIGHT_SYSFS/bl_power")" = 0 ] && [ "$(cat "$NDQ_BACKLIGHT_SYSFS/brightness")" = 4 ]; then
+	pass
+else
+	fail "KEEP_ON: a backlight that is off did not get safe-on"
+fi
+
 # Readback failure: the kernel does not report full -> failure.
 reset_fake_kernel
 printf '0\n' > "$NDQ_BACKLIGHT_SYSFS/actual_brightness"

@@ -28,19 +28,21 @@ echo "$body" | grep -q 'nfs_check' && fail "the eth0 nfs_check pre-up hook is st
 
 echo "$body" | grep -qxE 'auto lo' && pass || fail "auto lo missing"
 echo "$body" | grep -qxE 'iface lo inet loopback' && pass || fail "lo loopback stanza missing"
-echo "$body" | grep -qxE 'auto wlan0' && pass || fail "auto wlan0 missing"
+# G103 P1: S01wifi alone brings wlan0 up (in the background); an `auto wlan0`
+# would let S40network's `ifup -a` race it.
+echo "$body" | grep -qE '^auto([[:space:]].*)?[[:space:]]wlan0' && fail "auto wlan0 present (S40network would race S01wifi)" || pass
 echo "$body" | grep -qxE 'iface wlan0 inet dhcp' && pass || fail "wlan0 dhcp stanza missing"
 
 # Every auto interface must be one the KE actually has (lo, wlan0).
 for i in $(echo "$body" | awk '$1 == "auto" { for (n = 2; n <= NF; n++) print $n }'); do
 	case "$i" in
-		lo|wlan0) pass ;;
+		lo) pass ;;
 		*) fail "auto interface '$i' is not hardware the KE has" ;;
 	esac
 done
 
-# The only wait-delay left belongs to wlan0, which exists by the time
-# S40network runs (S01wifi brings it up first).
+# The only wait-delay left belongs to wlan0, used by S01wifi's own
+# fallback `ifup wlan0` (S40network's `ifup -a` no longer touches wlan0).
 stanza=""
 echo "$body" | while read -r k v _; do
 	case "$k" in

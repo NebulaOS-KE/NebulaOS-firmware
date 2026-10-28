@@ -1421,9 +1421,14 @@ check /etc/nebulaos-wifi-boot-wait.sh
 check /etc/init.d/S99confirm-good
 # G117(b): the one hardware-watchdog feeder (NebulaOS-owned, off until
 # enabled); Buildroot's own S15watchdog would be a second feeder.
-check /etc/init.d/S02nebulaos-watchdog
-check /sbin/watchdog
-check_absent /etc/init.d/S15watchdog
+check_required /etc/init.d/S02nebulaos-watchdog "G117(b) watchdog feeder"
+check_required /sbin/watchdog "BusyBox watchdog, run by S02nebulaos-watchdog"
+if debugfs -R "stat /etc/init.d/S15watchdog" ${IMAGES}/rootfs.ext2 2>&1 | grep -q "Inode:"; then
+	echo "MISS /etc/init.d/S15watchdog is present   <== REQUIRED absent - a second watchdog feeder"
+	MISS_REQUIRED=$((MISS_REQUIRED + 1))
+else
+	echo "OK   /etc/init.d/S15watchdog is absent"
+fi
 check /etc/ota_marker.sh
 # RESTORED 2026-09-24 after architecture review. This was `check` until
 # 8889ef0e (2026-09-05) flipped it in place, in the same commit that wrongly
@@ -1717,7 +1722,8 @@ if [ "$BOOT_LOGOS" -ge 11 ] && debugfs -R "ls -p /usr/share/nebulaos/boot-logos"
 	| grep -qF '/NebulaOS Ender-3 Blueprint Interface.jpg/'; then
 	echo "OK   /usr/share/nebulaos/boot-logos ($BOOT_LOGOS logos, Blueprint default present)"
 else
-	echo "MISS /usr/share/nebulaos/boot-logos ($BOOT_LOGOS logos, Blueprint default required)"
+	echo "MISS /usr/share/nebulaos/boot-logos ($BOOT_LOGOS logos, Blueprint default required)   <== REQUIRED"
+	MISS_REQUIRED=$((MISS_REQUIRED + 1))
 fi
 check /etc/init.d/S99nebulaos-image-trial
 check /etc/init.d/S02nebulaos-early-ssh

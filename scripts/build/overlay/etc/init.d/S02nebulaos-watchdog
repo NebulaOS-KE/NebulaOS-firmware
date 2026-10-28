@@ -25,7 +25,7 @@
 # Off until qualified on ke-dev: it arms only when
 # $NEBULAOS_SYSTEM_DIR/watchdog.enable exists (and watchdog.disable does not).
 # The kernel fix that makes arming safe (start() programs the timeout and
-# clears the counter before enabling) is NebulaOS-kernel f28a670; the first
+# clears the counter before enabling) is NebulaOS-kernel f28a670 (+ 38c467b marker); the first
 # live arming is a one-shot through the Hardware Agent, never a first boot.
 #
 # The daemon keeps no fd or cwd on /usr/data (the datafs repair kills the

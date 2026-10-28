@@ -4,10 +4,13 @@
 # See /etc/nebulaos-display-sleep-wake-controller.sh's own header for the
 # full design rationale and the sysfs interfaces it uses.
 #
-# Numbered S98 - right after S97nebulaos-display-qualified-apply (whose own
-# ndq_apply_deferred_fields() may ALSO invoke this script's start() early,
-# once sleep_enabled=1/touch_wake_mode=polling are confirmed applied - see
-# that file) and still before S99confirm-good, the final OTA-marker gate.
+# Numbered S98 - after S97nebulaos-display-qualified-apply's start, and
+# still before S99confirm-good. Since G103 P4 (Run 21) S97 only checks its
+# config and then waits for health and applies in the BACKGROUND, so this
+# usually runs (restore + watcher decision) BEFORE the qualified apply; S97's
+# ndq_apply_deferred_fields() may then invoke this script's start() again
+# once sleep_enabled=1/touch_wake_mode=polling are confirmed applied, and
+# S97 keeps the restored brightness (NDQ_BACKLIGHT_KEEP_ON).
 # Running twice (once via S97's own explicit start request, once again
 # here in the normal S* boot sequence) is always safe: start-stop-daemon's
 # own pidfile check makes a second start() call here a genuine no-op
@@ -31,8 +34,9 @@ PIDFILE=/var/run/nebulaos-display-sleep-wake-controller.pid
 [ -f "$NDQ_SLEEP_WAKE_LIB" ] && . "$NDQ_SLEEP_WAKE_LIB"
 
 # GUI/service readiness mission (2026-10-09): S98 also restores the
-# persisted display brightness (/etc/nebulaos-backlight.sh) - after S97, i.e.
-# after the kernel's boot-safe default and any qualified apply. Nothing
+# persisted display brightness (/etc/nebulaos-backlight.sh) - after the
+# kernel's boot-safe default (a qualified apply now usually follows it, see
+# above; S97 keeps the level, or restores it if it had to write safe-on). Nothing
 # persisted, 100, or anything invalid: nothing is done. It runs before the
 # watcher decision and never affects it.
 : "${NBL_LIB:=/etc/nebulaos-backlight.sh}"

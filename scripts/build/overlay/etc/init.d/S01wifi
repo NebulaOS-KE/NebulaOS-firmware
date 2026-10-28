@@ -28,10 +28,9 @@
 # share a number) - conflicts resolve alphabetically ("persistent-
 # datastore" < "wifi"), so the mount always completes first.
 #
-# Still runs before S40nebulaos-ntpsync's `ifup -a`-equivalent bring-up,
-# so wlan0 has already associated by the time udhcpc tries it (this
-# script also explicitly re-runs `ifup wlan0` itself after associating,
-# as a real belt-and-suspenders rather than relying on ordering alone).
+# This script alone brings wlan0 up (G103 P1: in the background, `ifup
+# wlan0` after associating). /etc/network/interfaces has no `auto wlan0`,
+# so Buildroot's S40network (`ifup -a`) never races it.
 #
 # ctrl_interface=/var/run/wpa_supplicant in the config already matches what
 # GuppyScreen's own guppyconfig.json expects for its WiFi panel (confirmed

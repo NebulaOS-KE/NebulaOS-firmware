@@ -56,8 +56,11 @@ run stop
 case "$(calls)" in *"-K -s TERM -p $WORK/wd.pid"*) pass "stop sends TERM (magic close), never KILL" ;; *) fail "stop: $(calls)" ;; esac
 [ ! -e "$WORK/wd.pid" ] && pass "stop removes the pidfile" || fail "pidfile left"
 
-grep -q 'check_absent /etc/init.d/S15watchdog' "$REPO_ROOT/scripts/build/06-verify.sh" \
-	&& pass "06-verify refuses a second feeder (Buildroot S15watchdog)" || fail "06-verify S15watchdog check missing"
+V="$REPO_ROOT/scripts/build/06-verify.sh"
+grep -q 'check_required /etc/init.d/S02nebulaos-watchdog' "$V" && grep -q 'check_required /sbin/watchdog' "$V" \
+	&& pass "06-verify requires the feeder and /sbin/watchdog (build fails without)" || fail "06-verify does not require the feeder"
+grep -A3 'stat /etc/init.d/S15watchdog' "$V" | grep -q 'MISS_REQUIRED=' \
+	&& pass "06-verify fails the build on a second feeder (Buildroot S15watchdog)" || fail "06-verify S15watchdog check does not fail the build"
 
 echo "watchdog-init-tests: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

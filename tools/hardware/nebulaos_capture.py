@@ -847,21 +847,26 @@ EXERCISE_PROFILES.update({
         "[ -n \"${N0:-}\" ] && echo $N0 > $W; echo \"tty_flip_nice_restored=$(cat $W 2>/dev/null)\"",
         600),
 })
-# HWDP-MEM-6: the same memory ramp at swappiness 100 (MEM-T11 ships 60).
 # G117(b) (Run 21): the first live arming of the hardware watchdog, as a
-# one-shot (never a first boot of an image that arms it). Reads the WDT
-# registers (TDR +0, TCER +4, TCNT +8, TCSR +0xC at 0x10002000), arms
-# BusyBox watchdog -F -T 60 -t 10 in the background, shows the printer keeps
-# running for 30 s (a leftover-TDR instant reset would end the session
-# here), then stops it with TERM (magic close) and reads TCER back (0 =
-# disarmed). Cleanup TERMs it too. Needs NebulaOS-kernel f28a670+.
+# one-shot (never a first boot of an image that arms it). Refused unless the
+# running kernel has the arming fix (NebulaOS-kernel 38c467b+ exposes
+# /sys/module/ingenic_wdt/parameters/nebulaos_arm_fix = Y; the vendor start()
+# armed a leftover TDR - an instant reset). Reads the WDT registers (TDR +0,
+# TCER +4, TCNT +8, TCSR +0xC at 0x10002000), arms BusyBox watchdog -F -T 60
+# -t 10 at oom_score_adj -1000 in the background, shows the printer keeps
+# running for 30 s, then stops it with TERM (magic close) and reads TCER back
+# (0 = disarmed). A lost session (HUP/PIPE) and the cleanup TERM it too.
 _WDT_REGS = ("for o in 0x10002000 0x10002004 0x10002008 0x1000200c; do "
              "echo \"$o=$(devmem $o 32 2>/dev/null)\"; done")
 EXERCISE_PROFILES["watchdog-arm"] = (
     "[ -c /dev/watchdog ] || { echo NO_WATCHDOG_DEVICE; exit 3; }; "
+    "[ \"$(cat /sys/module/ingenic_wdt/parameters/nebulaos_arm_fix 2>/dev/null)\" = Y ] "
+    "|| { echo KERNEL_WITHOUT_ARM_FIX; exit 3; }; "
     "pidof watchdog >/dev/null && { echo WATCHDOG_ALREADY_FED; exit 3; }; "
     "echo \"== kernel $(uname -v)\"; echo '== registers before'; " + _WDT_REGS + "; "
-    "U0=$(cut -d' ' -f1 /proc/uptime); watchdog -F -T 60 -t 10 /dev/watchdog & W=$!; "
+    "U0=$(cut -d' ' -f1 /proc/uptime); "
+    "( echo -1000 > /proc/self/oom_score_adj; exec watchdog -F -T 60 -t 10 /dev/watchdog ) & W=$!; "
+    "trap '[ -n \"${W:-}\" ] && kill -TERM $W 2>/dev/null' HUP PIPE; "
     "echo \"armed pid=$W uptime=$U0\"; sleep 2; echo '== registers armed'; " + _WDT_REGS + "; "
     "i=0; while [ $i -lt 30 ]; do sleep 5; i=$((i + 5)); echo \"t=$i uptime=$(cut -d' ' -f1 /proc/uptime) "
     "tcnt=$(devmem 0x10002008 32 2>/dev/null)\"; done; "
@@ -871,6 +876,7 @@ EXERCISE_PROFILES["watchdog-arm"] = (
     "[ -n \"${W:-}\" ] && kill -TERM $W 2>/dev/null",
     150)
 
+# HWDP-MEM-6: the same memory ramp at swappiness 100 (MEM-T11 ships 60).
 EXERCISE_PROFILES["memexercise-sw100"] = (
     "S0=$(cat /proc/sys/vm/swappiness); echo 100 > /proc/sys/vm/swappiness; "
     "echo \"swappiness=$(cat /proc/sys/vm/swappiness) (was $S0)\"; " + EXERCISE_PROFILES["memexercise"][0],
