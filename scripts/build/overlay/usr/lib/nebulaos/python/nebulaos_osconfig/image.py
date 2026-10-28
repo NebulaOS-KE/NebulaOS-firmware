@@ -79,6 +79,12 @@ MOONRAKER_INFO = os.environ.get("NEBULAOS_MOONRAKER_INFO", "http://127.0.0.1:712
 PROC_DIR = os.environ.get("NEBULAOS_PROC_DIR", "/proc")
 TRIAL_SECONDS = int(os.environ.get("NEBULAOS_IMAGE_TRIAL_SECONDS", "300"))
 TRIAL_POLL = float(os.environ.get("NEBULAOS_IMAGE_TRIAL_POLL", "5"))
+# G122 (Run 22): starts of an unconfirmed slot. A reset before the verdict
+# (the hardware watchdog after a freeze, a power cut) used to re-run the trial
+# with a fresh deadline forever; the start after this many unconfirmed ones
+# goes back at once. Counted once per boot (the kernel's boot_id).
+TRIAL_ATTEMPTS = int(os.environ.get("NEBULAOS_IMAGE_TRIAL_ATTEMPTS", "3"))
+BOOT_ID = os.environ.get("NEBULAOS_BOOT_ID", "/proc/sys/kernel/random/boot_id")
 CHUNK = 1048576
 # G46/G48: what each slot and file holds, beyond the kernel name.
 ROOT_DIR = os.environ.get("NEBULAOS_ROOT_DIR", "/")
@@ -944,12 +950,38 @@ def _confirm(t, running, note):
     return {"result": "CONFIRMED", "removed_upload": _remove_installed_upload(t)}
 
 
+def _boot_id():
+    try:
+        with open(BOOT_ID) as handle:
+            return handle.read().strip() or None
+    except OSError:
+        return None
+
+
+def _count_attempt(t):
+    """G122: this boot's start of the trial slot, counted once per boot and
+    persisted BEFORE the wait (a reset during the wait must count). Returns
+    the number of starts so far, this one included."""
+    boot = _boot_id()
+    try:
+        attempts = int(t.get("attempts", 0))
+    except (TypeError, ValueError):
+        attempts = 0
+    if boot is None or t.get("boot_id") != boot:
+        attempts += 1
+        t["attempts"] = attempts
+        t["boot_id"] = boot
+        write_trial(t)
+    return attempts
+
+
 def trial():
     """First boot after an install or a switch into an unconfirmed slot:
     confirm the slot, or go back ONCE. The verdict waits while a print runs
     (G91 v2.3): never a switch + reboot under it; TRIAL stays meanwhile (a
     power cut re-runs the trial), then Klipper and the screen are judged
-    again."""
+    again. G122: a slot that already started TRIAL_ATTEMPTS times without a
+    verdict (each start ended in a reset) goes back at once."""
     t, _ = common.read_json(TRIAL)
     if not t:
         return {"result": "NO_TRIAL"}
@@ -959,14 +991,20 @@ def trial():
         _record(t, "NOT_STARTED", "the printer is still on slot %s" % running)
         os.unlink(TRIAL)
         return {"result": "NOT_STARTED"}
-    deadline = time.monotonic() + TRIAL_SECONDS
-    while True:
-        up, note = _stack_up()
-        if up:
-            return _confirm(t, running, note)
-        if time.monotonic() >= deadline:
-            break
-        time.sleep(TRIAL_POLL)
+    attempts = _count_attempt(t)
+    if attempts > TRIAL_ATTEMPTS:
+        reason = ("the new system restarted %d times before it was confirmed"
+                  % (attempts - 1))
+    else:
+        reason = "Klipper or the screen did not come up within %d s" % TRIAL_SECONDS
+        deadline = time.monotonic() + TRIAL_SECONDS
+        while True:
+            up, note = _stack_up()
+            if up:
+                return _confirm(t, running, note)
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(TRIAL_POLL)
     postponed = False
     while common.busy_state("recovery")["busy"]:
         if not postponed:
@@ -974,15 +1012,14 @@ def trial():
             t["postponed"] = True       # the request refusal says "after the print"
             write_trial(t)
         time.sleep(TRIAL_POLL)
-    if postponed:
+    if postponed and attempts <= TRIAL_ATTEMPTS:
         up, note = _stack_up()
         if up:
             return _confirm(t, running, note)
     # Remove the trial BEFORE switching back: whatever happens next, this
     # fallback can never run a second time.
     os.unlink(TRIAL)
-    _record(t, "ROLLED_BACK", "Klipper or the screen did not come up within %d s"
-            % TRIAL_SECONDS)
+    _record(t, "ROLLED_BACK", reason)
     rc, _, _ = common.run([SLOT_SWAP, t.get("from", "")], 30)
     if rc != 0:
         _record(t, "ROLLBACK_FAILED", "the previous slot could not be selected")

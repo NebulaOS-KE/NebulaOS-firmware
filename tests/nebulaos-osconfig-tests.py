@@ -2821,6 +2821,56 @@ class ImageTests(unittest.TestCase):
         self.assertEqual(self.i.trial()["result"], "NO_TRIAL")
         self.assertEqual(json.load(open(self.i.LAST))["result"], "ROLLED_BACK")
 
+    def boot(self, boot_id):
+        self.i.BOOT_ID = os.path.join(self.e.tmp, "boot_id")
+        open(self.i.BOOT_ID, "w").write(boot_id + "\n")
+
+    def test_trial_counts_each_boot_once_and_persists_before_the_wait(self):
+        """G122: a reset during the wait must count - the attempt is written
+        before Klipper/the screen are judged, once per boot."""
+        self.cmdline("A")
+        self.trial_file()
+        self.boot("boot-1")
+        self.i._count_attempt(json.load(open(self.i.TRIAL)))
+        t = json.load(open(self.i.TRIAL))
+        self.assertEqual((t["attempts"], t["boot_id"]), (1, "boot-1"))
+        self.i._count_attempt(t)                                     # same boot: not again
+        self.assertEqual(json.load(open(self.i.TRIAL))["attempts"], 1)
+        self.boot("boot-2")
+        self.i._count_attempt(json.load(open(self.i.TRIAL)))
+        self.assertEqual(json.load(open(self.i.TRIAL))["attempts"], 2)
+
+    def test_trial_goes_back_after_three_unconfirmed_starts(self):
+        """G122: three starts that each ended in a reset (watchdog after a
+        freeze, power cut) - the fourth start goes back at once, even if
+        Klipper happens to come up this time; never a loop."""
+        self.cmdline("A")
+        self.trial_file()
+        t = json.load(open(self.i.TRIAL))
+        t.update(attempts=3, boot_id="boot-3")
+        json.dump(t, open(self.i.TRIAL, "w"))
+        self.boot("boot-4")
+        self.i.TRIAL_SECONDS, self.i.TRIAL_POLL = 300, 0
+        self.i._klipper_ready = lambda: True
+        self.i._gui_running = lambda: True
+        self.assertEqual(self.i.trial()["result"], "ROLLED_BACK")
+        self.assertEqual(open(self.calls).read().split(), ["swap", "B", "reboot"])
+        self.assertFalse(os.path.exists(self.i.TRIAL))
+        last = json.load(open(self.i.LAST))
+        self.assertEqual(last["result"], "ROLLED_BACK")
+        self.assertIn("restarted 3 times", last["note"])
+
+    def test_trial_third_start_still_gets_its_chance(self):
+        self.cmdline("A")
+        self.trial_file()
+        t = json.load(open(self.i.TRIAL))
+        t.update(attempts=2, boot_id="boot-2")
+        json.dump(t, open(self.i.TRIAL, "w"))
+        self.boot("boot-3")
+        self.i._klipper_ready = lambda: True
+        self.i._gui_running = lambda: True
+        self.assertEqual(self.i.trial()["result"], "CONFIRMED")
+
     def test_trial_not_started(self):
         self.cmdline("B")                                            # still the old slot
         self.trial_file()
