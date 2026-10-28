@@ -635,7 +635,7 @@ CAPTURE_PROFILES = {
 # Defined by the plan as reversible state changes: TOOL-02 `exercise`, never `capture`.
 EXERCISE_ONLY = ("camera-resume", "camera-states", "memexercise", "sof-filter-ab", "storage-autosuspend",
                  "cpu-load", "camera-viewer", "wifi-load", "usb-storage-io", "ktimers-ab", "ttyflip-ab",
-                 "memexercise-sw100", "watchdog-arm")
+                 "memexercise-sw100", "watchdog-arm", "watchdog-fire")
 
 
 class CaptureError(Exception):
@@ -904,6 +904,34 @@ _KLIPPY_RESTORE = (
     "| sed -n 's/.*\"state\": *\"\\([a-z]*\\)\".*/\\1/p'); [ \"$s\" = ready ] && break; sleep 2; i=$((i + 2)); done; "
     "echo \"klippy_state_after=${s:-unknown} waited_s=$i\"; " + _QM + " snap klippy-restarted; fi")
 _APP_IDENTIFY = "/usr/bin/python3 /etc/nebulaos/mcu_application_identify.py; " + _QM + " snap"
+
+# G117(b) step 2 (Run 21, Tim 2026-10-28): the watchdog really resets a
+# printer that stops feeding it. Idle printer only (no print, no heater
+# target). Arms BusyBox watchdog -F -T 60 -t 10 like S02nebulaos-watchdog,
+# then SIGKILLs it: no magic close, the counter keeps running - what a hung
+# userspace looks like to the hardware. Shows the counter climbing for 20 s,
+# then returns; the SoC resets itself ~60 s after the last feed. Check
+# afterwards with inspect (new boot_id) and capture boot-history. The undo
+# stops a feeder that was not killed yet (TERM = magic close).
+EXERCISE_PROFILES["watchdog-fire"] = (
+    _IDLE_GUARD +
+    "[ -c /dev/watchdog ] || { echo NO_WATCHDOG_DEVICE; exit 3; }; "
+    "[ \"$(cat /sys/module/ingenic_wdt/parameters/nebulaos_arm_fix 2>/dev/null)\" = Y ] "
+    "|| { echo KERNEL_WITHOUT_ARM_FIX; exit 3; }; "
+    "pidof watchdog >/dev/null && { echo WATCHDOG_ALREADY_FED; exit 3; }; "
+    "echo \"boot_id_before=$(cat /proc/sys/kernel/random/boot_id) uptime=$(cut -d' ' -f1 /proc/uptime)\"; "
+    "sync; "
+    "( echo -1000 > /proc/self/oom_score_adj; exec watchdog -F -T 60 -t 10 /dev/watchdog ) & W=$!; "
+    "trap '[ -n \"${W:-}\" ] && kill -TERM $W 2>/dev/null' HUP PIPE; "
+    "sleep 3; echo '== registers armed'; " + _WDT_REGS + "; "
+    "[ \"$(devmem 0x10002004 32 2>/dev/null)\" = 0x00000001 ] || { echo WATCHDOG_NOT_ARMED; exit 4; }; "
+    "kill -KILL $W; wait $W 2>/dev/null; W=; "
+    "echo \"feeder killed without magic close at uptime=$(cut -d' ' -f1 /proc/uptime)\"; "
+    "i=0; while [ $i -lt 20 ]; do sleep 5; i=$((i + 5)); echo \"t=$i tcer=$(devmem 0x10002004 32 2>/dev/null) "
+    "tcnt=$(devmem 0x10002008 32 2>/dev/null)\"; done; "
+    "echo WATCHDOG_FIRE_RESULT=COUNTING_RESET_EXPECTED_WITHIN_60S",
+    "[ -n \"${W:-}\" ] && kill -TERM $W 2>/dev/null",
+    90)
 
 EXERCISE_PROFILES.update({
     # uart1 framing errors at boot (open observation): which open produces
