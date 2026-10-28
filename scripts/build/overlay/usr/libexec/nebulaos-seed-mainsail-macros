@@ -136,13 +136,12 @@ DEFAULT_GROUPS = {
         _macro(0, "NEBULAOS_AUTO_CALIBRATE"),
         _macro(1, "NEBULAOS_Z_OFFSET_CALIBRATE"),
         _macro(2, "AXIS_TWIST_X"),
-        _macro(3, "AXIS_TWIST_Y"),
-        _macro(4, "PID_BED"),
-        _macro(5, "PID_HOTEND"),
-        _macro(6, "NEBULAOS_NOZZLE_CLEAN"),
-        _macro(7, "NEBULAOS_INPUT_SHAPER_CALIBRATE"),
-        _macro(8, "NEBULAOS_LOAD_CELL_CALIBRATE"),
-        _macro(9, "NEBULAOS_BED_TRAM"),
+        _macro(3, "PID_BED"),
+        _macro(4, "PID_HOTEND"),
+        _macro(5, "NEBULAOS_NOZZLE_CLEAN"),
+        _macro(6, "NEBULAOS_INPUT_SHAPER_CALIBRATE"),
+        _macro(7, "NEBULAOS_LOAD_CELL_CALIBRATE"),
+        _macro(8, "NEBULAOS_BED_TRAM"),
     ], show_in_printing=False, show_in_pause=False),
     "nebulaos-extruder": _group("Extruder", [
         _macro(0, "NEBULAOS_ESTEPS_CALIBRATE"),
@@ -210,6 +209,24 @@ PRE_G87_GROUPS = {
         _macro(6, "NEBULAOS_NOZZLE_CLEAN"),
         _macro(7, "NEBULAOS_INPUT_SHAPER_CALIBRATE"),
         _macro(8, "NEBULAOS_LOAD_CELL_CALIBRATE"),
+    ], show_in_printing=False, show_in_pause=False),
+}
+
+# Run 21 (Tim 2026-10-28): the Calibration group before AXIS_TWIST_Y was
+# removed (the KE's Y axis is the bed: no gantry twist to compensate) - the
+# G87 default. Same exact-match upgrade.
+PRE_RUN21_GROUPS = {
+    "nebulaos-calibration": _group("Calibration", [
+        _macro(0, "NEBULAOS_AUTO_CALIBRATE"),
+        _macro(1, "NEBULAOS_Z_OFFSET_CALIBRATE"),
+        _macro(2, "AXIS_TWIST_X"),
+        _macro(3, "AXIS_TWIST_Y"),
+        _macro(4, "PID_BED"),
+        _macro(5, "PID_HOTEND"),
+        _macro(6, "NEBULAOS_NOZZLE_CLEAN"),
+        _macro(7, "NEBULAOS_INPUT_SHAPER_CALIBRATE"),
+        _macro(8, "NEBULAOS_LOAD_CELL_CALIBRATE"),
+        _macro(9, "NEBULAOS_BED_TRAM"),
     ], show_in_printing=False, show_in_pause=False),
 }
 
@@ -852,9 +869,9 @@ def run(
 
     rc3_results = migrate_rc3_to_final(get_status, post, delete, log, rc3_groups, groups)
     if groups is DEFAULT_GROUPS:
-        # Later defaults (G83a, G87): same exact-match upgrade, newest
-        # fixture last.
-        for fixture in (PRE_G83A_GROUPS, PRE_G87_GROUPS):
+        # Later defaults (G83a, G87, Run 21): same exact-match upgrade,
+        # newest fixture last.
+        for fixture in (PRE_G83A_GROUPS, PRE_G87_GROUPS, PRE_RUN21_GROUPS):
             for group_id, result in migrate_rc3_to_final(
                     get_status, post, delete, log, fixture, groups).items():
                 if result in ("migrated", "failed", "already_final"):

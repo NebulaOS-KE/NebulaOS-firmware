@@ -30,7 +30,6 @@ NOT_SUPPORTED_BY_MAINSAIL_UI.
 | `NEBULAOS_LOAD_CELL_CALIBRATE` | NebulaOS | Public wrapper → private `_NEBULAOS_LOAD_CELL_CALIBRATE` (`nebulaos_load_cell_calibration.py`, G86) — guided known-weight (1.5 L bottle) load cell calibration with re-place/zero/previous-change checks; `GRAMS=`/`NEXT=1`/`MEASURE=1`/`ACCEPT=1` steps, cancel `_NEBULAOS_LOAD_CELL_CANCEL`; accepting it switches the load cell mode to Manual (G99); status object `nebulaos_load_cell_calibration` (incl. `change_warning` and the G99 fields, see §8a) drives the screen's Load Cell page (G90) | Mainsail macro button + action prompts; NebulaScreen page | `nebulaos-calibration`, pos 8 | standby only | OK |
 | `NEBULAOS_BED_TRAM` | NebulaOS | Public wrapper → private `_NEBULAOS_BED_TRAM` (`nebulaos_bed_tram.py`, G87) — guided bed tramming, one corner instruction at a time; cancel `_NEBULAOS_BED_TRAM_CANCEL`; status object `nebulaos_bed_tram` drives the screen's Bed Tramming page (G89) | Mainsail macro button + action prompts; NebulaScreen page | `nebulaos-calibration`, pos 9 | standby only | OK |
 | `AXIS_TWIST_X` | Upstream UI adapter (NebulaOS-authored one-line wrapper only) | `AXIS_TWIST_COMPENSATION_CALIBRATE AXIS=X` — pristine upstream `axis_twist_compensation.py`, not modified/forked/shadowed | Mainsail macro button | `nebulaos-calibration`, pos 2 | standby only | OK |
-| `AXIS_TWIST_Y` | Upstream UI adapter | `AXIS_TWIST_COMPENSATION_CALIBRATE AXIS=Y` | Mainsail macro button | `nebulaos-calibration`, pos 3 | standby only | OK |
 | `PID_BED` | Upstream UI adapter | `PID_CALIBRATE HEATER=heater_bed TARGET={65 default}`; on success `NEBULAOS_CALIBRATION_RECORD FLOW=pid` (G105) | Mainsail macro button | `nebulaos-calibration`, pos 4 | standby only | OK |
 | `PID_HOTEND` | Upstream UI adapter | `PID_CALIBRATE HEATER=extruder TARGET={230 default}`; on success `NEBULAOS_CALIBRATION_RECORD FLOW=pid` (G105) | Mainsail macro button | `nebulaos-calibration`, pos 5 | standby only | OK |
 | `NEBULAOS_NOZZLE_CLEAN` | NebulaOS | Public wrapper → private `_NEBULAOS_NOZZLE_CLEAN`, actually implemented in `z_compensate.py`'s `cmd_nozzle_clear` (not `nebulaos_calibration.py`) — nozzle wipe via `nebulaos_z_offset_probe.touch_probe()` and `nozzle_clear.clear_nozzle()` | Mainsail macro button | `nebulaos-calibration`, pos 6 | standby only | OK |
@@ -143,7 +142,7 @@ against a full grep of the composed config and extras tree:
   (documented at length in `nebulaos_calibration.py`'s own header, citing the
   real safety incident in
   `_evidence/overnight-hx711-investigation-20260831-233518/`). Manual
-  `AXIS_TWIST_X`/`AXIS_TWIST_Y` (upstream passthrough) remain the only
+  `AXIS_TWIST_X` (upstream passthrough; `AXIS_TWIST_Y` removed Run 21) remains the only
   supported path. Confirmed absent from every `.py`/`.cfg` file read.
 - `CRTENSE_NOZZLE_CLEAR` — removed in the Phase 2 RC per its own commit
   (`7f62767`); `NEBULAOS_NOZZLE_CLEAN` is now the sole canonical name.

@@ -672,8 +672,8 @@ def test_rc3_calibration_migrated_to_final():
         check("rc3 cal migrated: rc==0", rc == 0)
         check("rc3 cal migrated: group now matches final",
               moon.store[group_key("nebulaos-calibration")] == final_cal)
-        check("rc3 cal migrated: final has 10 macros (including INPUT_SHAPER, LOAD_CELL, BED_TRAM)",
-              len(final_cal["macros"]) == 10)
+        check("rc3 cal migrated: final has 9 macros (including INPUT_SHAPER, LOAD_CELL, BED_TRAM; no AXIS_TWIST_Y)",
+              len(final_cal["macros"]) == 9)
         with open(marker_path) as f:
             marker = json.load(f)
         check("rc3 cal migrated: marker records migrated",
@@ -859,7 +859,7 @@ def test_rc3_vs_final_calibration_macro_counts():
     rc3_cal = seed.RC3_GROUPS["nebulaos-calibration"]
     final_cal = seed.DEFAULT_GROUPS["nebulaos-calibration"]
     check("RC3 calibration has 7 macros", len(rc3_cal["macros"]) == 7)
-    check("final calibration has 10 macros", len(final_cal["macros"]) == 10)
+    check("final calibration has 9 macros", len(final_cal["macros"]) == 9)
     rc3_names = {m["name"] for m in rc3_cal["macros"]}
     final_names = {m["name"] for m in final_cal["macros"]}
     check("INPUT_SHAPER_CALIBRATE added in final",
@@ -1262,6 +1262,34 @@ def test_g87_user_modified_calibration_group_untouched():
               moon.store[group_key("nebulaos-calibration")] == custom)
     with_marker_dir(body)
 
+# --- Run 21: AXIS_TWIST_Y leaves installs with the G87 default -------------
+def test_run21_previous_calibration_group_loses_axis_twist_y():
+    def body(marker_path):
+        prev = seed.PRE_RUN21_GROUPS["nebulaos-calibration"]
+        final_cal = seed.DEFAULT_GROUPS["nebulaos-calibration"]
+        moon = FakeMoonrakerDb(existing={group_key("nebulaos-calibration"): prev})
+        rc, logs = run_seed(marker_path, moon, groups=seed.DEFAULT_GROUPS)
+        check("run21: rc==0", rc == 0)
+        check("run21: G87 default upgraded to the new default",
+              moon.store[group_key("nebulaos-calibration")] == final_cal)
+        names = [m["name"] for m in final_cal["macros"]]
+        check("run21: no AXIS_TWIST_Y, AXIS_TWIST_X kept",
+              "AXIS_TWIST_Y" not in names and "AXIS_TWIST_X" in names)
+        check("run21: positions 0..n-1",
+              [m["pos"] for m in final_cal["macros"]] == list(range(len(names))))
+    with_marker_dir(body)
+
+
+def test_run21_user_modified_calibration_group_untouched():
+    def body(marker_path):
+        custom = json.loads(json.dumps(seed.PRE_RUN21_GROUPS["nebulaos-calibration"]))
+        custom["name"] = "My calibration"
+        moon = FakeMoonrakerDb(existing={group_key("nebulaos-calibration"): custom})
+        rc, logs = run_seed(marker_path, moon, groups=seed.DEFAULT_GROUPS)
+        check("run21 user-modified: left untouched",
+              moon.store[group_key("nebulaos-calibration")] == custom)
+    with_marker_dir(body)
+
 def main():
     test_moonraker_unavailable()
     test_fresh_install_creates_both_groups()
@@ -1302,6 +1330,8 @@ def main():
     test_g87_previous_calibration_group_gets_bed_tram_button()
     test_g87_pre_g83a_group_goes_straight_to_the_newest_default()
     test_g87_user_modified_calibration_group_untouched()
+    test_run21_previous_calibration_group_loses_axis_twist_y()
+    test_run21_user_modified_calibration_group_untouched()
     test_rc3_vs_final_extruder_macro_counts()
 
     test_reset_six_group_custom_state_produces_exact_five()
