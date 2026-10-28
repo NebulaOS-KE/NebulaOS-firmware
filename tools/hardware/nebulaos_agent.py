@@ -383,6 +383,7 @@ def op_status(args):
 
 
 def op_verify(args):
+    import time
     profile, control_set, _ = prove_preconditions(
         args.device, args.source_head, None, None, args.control_commit, destructive=False)
     artifacts, _ = locate_artifacts(args.source_head, args.ximage_sha, args.rootfs_sha)
