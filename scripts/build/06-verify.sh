@@ -1419,6 +1419,11 @@ check /etc/nebulaos-wifi-power-save.sh
 check /usr/libexec/nebulaos-wifi-power-save
 check /etc/nebulaos-wifi-boot-wait.sh
 check /etc/init.d/S99confirm-good
+# G117(b): the one hardware-watchdog feeder (NebulaOS-owned, off until
+# enabled); Buildroot's own S15watchdog would be a second feeder.
+check /etc/init.d/S02nebulaos-watchdog
+check /sbin/watchdog
+check_absent /etc/init.d/S15watchdog
 check /etc/ota_marker.sh
 # RESTORED 2026-09-24 after architecture review. This was `check` until
 # 8889ef0e (2026-09-05) flipped it in place, in the same commit that wrongly

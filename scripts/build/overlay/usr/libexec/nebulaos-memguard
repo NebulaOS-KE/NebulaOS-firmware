@@ -246,7 +246,8 @@ mg_enforce_adj() {
 	for _e in klipper_mcu.pid:$NEBULAOS_ADJ_KLIPPER_MCU klippy.pid:$NEBULAOS_ADJ_KLIPPY \
 		nebulaos-memguard.pid:$NEBULAOS_ADJ_MEMGUARD wpa_supplicant-wlan0.pid:$NEBULAOS_ADJ_WPA_SUPPLICANT \
 		moonraker.pid:$NEBULAOS_ADJ_MOONRAKER nebulascreen.pid:$NEBULAOS_ADJ_NEBULASCREEN \
-		ustreamer.pid:$NEBULAOS_ADJ_USTREAMER nebulaos-update-supervisor.pid:$NEBULAOS_ADJ_UPDATE_SUPERVISOR; do
+		ustreamer.pid:$NEBULAOS_ADJ_USTREAMER nebulaos-update-supervisor.pid:$NEBULAOS_ADJ_UPDATE_SUPERVISOR \
+		nebulaos-watchdog.pid:$NEBULAOS_ADJ_WATCHDOG; do
 		mg_pid_of "${_e%%:*}"
 		[ -n "$_p" ] || continue
 		_protected="$_protected$_p "

@@ -137,7 +137,9 @@ fakeproc 202 dropbear 0
 fakeproc 203 udevd -1000        # udevd keeps its own value
 fakeproc 204 sh 0               # untouched
 fakeproc 205 ustreamer 300;     echo 999 > "$MG_PIDDIR/ustreamer.pid"   # stale pidfile
+fakeproc 206 watchdog -1000;    echo 206 > "$MG_PIDDIR/nebulaos-watchdog.pid"
 mg_enforce_adj
+expect "G117(b): the watchdog feeder keeps -1000 (listed, not reset to 500)" "$(cat "$MG_PROC/206/oom_score_adj")" -1000
 expect "klippy re-asserted to -900" "$(cat "$MG_PROC/100/oom_score_adj")" -900
 expect "klipper_mcu re-asserted to -1000" "$(cat "$MG_PROC/101/oom_score_adj")" -1000
 expect "moonraker keeps -400" "$(cat "$MG_PROC/102/oom_score_adj")" -400

@@ -13,6 +13,9 @@
 # enforced by nebulaos-memguard's adj scan instead.
 NEBULAOS_ADJ_KLIPPER_MCU=-1000
 NEBULAOS_ADJ_KLIPPY=-900
+# G117(b): the hardware watchdog feeder - an OOM kill (no magic close) would
+# reset the printer ~60 s later.
+NEBULAOS_ADJ_WATCHDOG=-1000
 NEBULAOS_ADJ_MEMGUARD=-900
 NEBULAOS_ADJ_WPA_SUPPLICANT=-600
 NEBULAOS_ADJ_MOONRAKER=-400

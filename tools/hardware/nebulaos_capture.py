@@ -635,7 +635,7 @@ CAPTURE_PROFILES = {
 # Defined by the plan as reversible state changes: TOOL-02 `exercise`, never `capture`.
 EXERCISE_ONLY = ("camera-resume", "camera-states", "memexercise", "sof-filter-ab", "storage-autosuspend",
                  "cpu-load", "camera-viewer", "wifi-load", "usb-storage-io", "ktimers-ab", "ttyflip-ab",
-                 "memexercise-sw100")
+                 "memexercise-sw100", "watchdog-arm")
 
 
 class CaptureError(Exception):
@@ -848,6 +848,29 @@ EXERCISE_PROFILES.update({
         600),
 })
 # HWDP-MEM-6: the same memory ramp at swappiness 100 (MEM-T11 ships 60).
+# G117(b) (Run 21): the first live arming of the hardware watchdog, as a
+# one-shot (never a first boot of an image that arms it). Reads the WDT
+# registers (TDR +0, TCER +4, TCNT +8, TCSR +0xC at 0x10002000), arms
+# BusyBox watchdog -F -T 60 -t 10 in the background, shows the printer keeps
+# running for 30 s (a leftover-TDR instant reset would end the session
+# here), then stops it with TERM (magic close) and reads TCER back (0 =
+# disarmed). Cleanup TERMs it too. Needs NebulaOS-kernel f28a670+.
+_WDT_REGS = ("for o in 0x10002000 0x10002004 0x10002008 0x1000200c; do "
+             "echo \"$o=$(devmem $o 32 2>/dev/null)\"; done")
+EXERCISE_PROFILES["watchdog-arm"] = (
+    "[ -c /dev/watchdog ] || { echo NO_WATCHDOG_DEVICE; exit 3; }; "
+    "pidof watchdog >/dev/null && { echo WATCHDOG_ALREADY_FED; exit 3; }; "
+    "echo \"== kernel $(uname -v)\"; echo '== registers before'; " + _WDT_REGS + "; "
+    "U0=$(cut -d' ' -f1 /proc/uptime); watchdog -F -T 60 -t 10 /dev/watchdog & W=$!; "
+    "echo \"armed pid=$W uptime=$U0\"; sleep 2; echo '== registers armed'; " + _WDT_REGS + "; "
+    "i=0; while [ $i -lt 30 ]; do sleep 5; i=$((i + 5)); echo \"t=$i uptime=$(cut -d' ' -f1 /proc/uptime) "
+    "tcnt=$(devmem 0x10002008 32 2>/dev/null)\"; done; "
+    "kill -TERM $W; wait $W 2>/dev/null; W=; sleep 1; echo '== registers after TERM'; " + _WDT_REGS + "; "
+    "[ \"$(devmem 0x10002004 32 2>/dev/null)\" = 0x00000000 ] && echo WATCHDOG_ARM_RESULT=PASS_DISARMED "
+    "|| echo WATCHDOG_ARM_RESULT=STILL_ENABLED",
+    "[ -n \"${W:-}\" ] && kill -TERM $W 2>/dev/null",
+    150)
+
 EXERCISE_PROFILES["memexercise-sw100"] = (
     "S0=$(cat /proc/sys/vm/swappiness); echo 100 > /proc/sys/vm/swappiness; "
     "echo \"swappiness=$(cat /proc/sys/vm/swappiness) (was $S0)\"; " + EXERCISE_PROFILES["memexercise"][0],

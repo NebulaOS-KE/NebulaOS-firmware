@@ -19,7 +19,7 @@ pass() { echo "PASS: $1"; PASS=$((PASS + 1)); }
 
 sh -n "$POLICY" && pass "policy file parses" || fail "policy file does not parse"
 
-for s in S54nebulaos-host-mcu S55klipper S56moonraker S58nebulascreen S50webcam S59nebulaos-update-supervisor; do
+for s in S54nebulaos-host-mcu S55klipper S56moonraker S58nebulascreen S50webcam S59nebulaos-update-supervisor S02nebulaos-watchdog; do
 	f="$OV/etc/init.d/$s"
 	grep -q 'nebulaos_start_with_adj "\$NEBULAOS_ADJ_' "$f" && pass "$s starts its daemon through nebulaos_start_with_adj" || fail "$s does not use nebulaos_start_with_adj"
 	grep -q 'NEBULAOS_OOM_POLICY' "$f" && pass "$s sources the policy" || fail "$s does not source the policy"

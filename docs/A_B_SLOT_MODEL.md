@@ -170,9 +170,26 @@ accidentally reintroduce automatic MCU-destroying fallback.
 far enough to even start userspace — or the rootfs fails to mount before `/sbin/init` runs — none
 of this repo's init scripts get a chance to run at all, and the marker just stays wherever it
 already was. There is no bootloader-level (pre-init) automatic fallback mechanism in this project;
-the marker is read by vendor bootloader code outside this repo, and no counter/watchdog-driven
-revert exists here. That gap is a known, currently-accepted limitation (see Phase 6/7 of the
-vNext roadmap), not something Phase 1.8B attempts to close.
+the marker is read by vendor bootloader code outside this repo, and no counter-driven revert
+exists here. That gap is a known, currently-accepted limitation (see Phase 6/7 of the vNext
+roadmap), not something Phase 1.8B attempts to close.
+
+**Hardware watchdog (G117(b), Run 21).** `S02nebulaos-watchdog` feeds the SoC watchdog
+(BusyBox `watchdog -F -T 60 -t 10`, SCHED_OTHER nice -20, oom_score_adj -1000) so a frozen
+system resets itself after ~60 s. It is **off until qualified**: it arms only when
+`/usr/data/nebulaos/system/watchdog.enable` exists (`watchdog.disable` always wins). A
+watchdog reset is the same hardware reset as a software `reboot` (the platform reboot is a WDT
+reset, `soc-x2000/reset.c`), so:
+
+- a confirmed image boots the same slot again;
+- during an unconfirmed image trial the reset does **not** count as a failed boot: the TRIAL
+  record survives and the next boot re-runs `image trial` with a fresh 300 s deadline. A new
+  image that reliably freezes within 300 s therefore loops on the new slot (reset, boot,
+  freeze) instead of hanging once; both need a human (USB recovery or the Hardware Agent). A
+  trial attempt counter in `nebulaos_osconfig/image.py` is the follow-up (gap list);
+- a clean `reboot`/`poweroff` runs rcK, which stops the feeder with SIGTERM (magic close), so
+  it never fires; `halt -f` skips rcK and leaves it armed - the printer resets after ~60 s;
+- Creality's stock rootfs never opens `/dev/watchdog`; a stock boot is unaffected.
 
 ## Related docs
 

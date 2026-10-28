@@ -1,0 +1,81 @@
+#!/bin/sh
+#
+# nebulaos-watchdog (G117(b), Run 21): feeds the SoC hardware watchdog
+# (ingenic_wdt, /dev/watchdog) so a frozen printer resets itself instead of
+# hanging until a power cycle (the 2026-10-26 11:16 freeze: ssh, network and
+# syslogd dead). BusyBox `watchdog -F -T 60 -t 10`: hardware timeout 60 s,
+# a feed every 10 s.
+#
+# Scheduling: SCHED_OTHER at nice -20, deliberately NOT a real-time priority.
+# The feeder must starve exactly when ordinary userspace starves (a runaway
+# RT task - klipper_mcu is FIFO 49, the IRQ threads 25-60 - or a kernel
+# stall): then the reset fires. A FIFO 99 feeder would keep feeding through
+# that freeze. It sleeps almost all the time, so load 4.4 on 2 cores is far
+# from missing a 10 s feed against 60 s.
+#
+# OOM: -1000 (MEM-T07 policy, memguard table). An OOM kill is SIGKILL - no
+# magic close - and would turn an ordinary OOM event into a reset ~60 s later.
+#
+# Stop sends SIGTERM: BusyBox watchdog writes the magic 'V' and closes, the
+# driver stops the counter, so a clean reboot/poweroff (rcK) never fires it.
+# `halt -f` (no rcK) leaves it armed: the printer resets after ~60 s.
+# A watchdog reset during an unconfirmed image trial does not count as a
+# failed boot (docs/A_B_SLOT_MODEL.md).
+#
+# Off until qualified on ke-dev: it arms only when
+# $NEBULAOS_SYSTEM_DIR/watchdog.enable exists (and watchdog.disable does not).
+# The kernel fix that makes arming safe (start() programs the timeout and
+# clears the counter before enabling) is NebulaOS-kernel f28a670; the first
+# live arming is a one-shot through the Hardware Agent, never a first boot.
+#
+# The daemon keeps no fd or cwd on /usr/data (the datafs repair kills the
+# holders of /usr/data): the switch files are read once, the daemon starts
+# from /.
+
+DAEMON=/sbin/watchdog
+DEVICE="${NEBULAOS_WATCHDOG_DEVICE:-/dev/watchdog}"
+PIDFILE="${NEBULAOS_WATCHDOG_PIDFILE:-/var/run/nebulaos-watchdog.pid}"
+NEBULAOS_SYSTEM_DIR="${NEBULAOS_SYSTEM_DIR:-/usr/data/nebulaos/system}"
+WDT_TIMEOUT=60
+WDT_FEED=10
+
+# OOM priority policy (MEM-T07); without it, services still start, unadjusted.
+NEBULAOS_OOM_POLICY="${NEBULAOS_OOM_POLICY:-/etc/nebulaos-oom-policy.sh}"
+if [ -r "$NEBULAOS_OOM_POLICY" ]; then . "$NEBULAOS_OOM_POLICY"; else nebulaos_start_with_adj() { shift; "$@"; }; fi
+
+start() {
+	if [ -e "$NEBULAOS_SYSTEM_DIR/watchdog.disable" ]; then
+		echo "nebulaos-watchdog: disabled ($NEBULAOS_SYSTEM_DIR/watchdog.disable)"
+		return 0
+	fi
+	if [ ! -e "$NEBULAOS_SYSTEM_DIR/watchdog.enable" ]; then
+		echo "nebulaos-watchdog: not enabled (no $NEBULAOS_SYSTEM_DIR/watchdog.enable)"
+		return 0
+	fi
+	if [ ! -c "$DEVICE" ]; then
+		echo "nebulaos-watchdog: $DEVICE missing, not armed"
+		return 0
+	fi
+	echo "Starting nebulaos-watchdog (${WDT_TIMEOUT} s, feed every ${WDT_FEED} s)"
+	(
+		cd / || exit 0
+		nebulaos_start_with_adj "$NEBULAOS_ADJ_WATCHDOG" \
+			start-stop-daemon -S -b -m -p "$PIDFILE" -N -20 \
+			-x "$DAEMON" -- -F -T "$WDT_TIMEOUT" -t "$WDT_FEED" "$DEVICE"
+	) || echo "nebulaos-watchdog: start failed, not armed"
+}
+
+stop() {
+	[ -f "$PIDFILE" ] || return 0
+	echo "Stopping nebulaos-watchdog"
+	# TERM only (magic close); never KILL - that leaves the counter running
+	start-stop-daemon -K -s TERM -p "$PIDFILE" && rm -f "$PIDFILE"
+}
+
+case "$1" in
+	start) start ;;
+	stop) stop ;;
+	restart) stop; sleep 1; start ;;
+	*) echo "Usage: $0 {start|stop|restart}"; exit 1 ;;
+esac
+exit 0
