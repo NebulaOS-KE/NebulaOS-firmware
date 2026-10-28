@@ -93,6 +93,8 @@ ndq_stage2_stack() {
 : "${HEALTH_RETRIES:=20}"
 : "${HEALTH_DELAY:=3}"
 
+: "${NBL_LIB:=/etc/nebulaos-backlight.sh}"
+
 log() {
 	echo "S97nebulaos-display-qualified-apply: $1"
 }
@@ -164,6 +166,26 @@ start() {
 		exit 0
 	fi
 
+	# G103 P4 (Run 21): the health wait (Klippy's startup) and the apply run
+	# in the background, so the boot does not wait for Klippy.
+	# NDQ_APPLY_FOREGROUND=1 keeps the old order (tests).
+	if [ "${NDQ_APPLY_FOREGROUND:-0}" = 1 ]; then
+		apply_when_healthy
+	else
+		apply_when_healthy &
+	fi
+	exit 0
+}
+
+# The user's brightness after the apply: ndq_apply_backlight sets safe-on and
+# leaves the persisted level to S98, which now runs before this finishes - so
+# restore it here too, the same way S98 does.
+restore_brightness() {
+	[ -f "$NBL_LIB" ] || return 0
+	( . "$NBL_LIB" && nbl_boot_restore ) || log "brightness restore did not apply"
+}
+
+apply_when_healthy() {
 	if ! wait_for_health; then
 		log "printer stack (Klipper/Moonraker), NebulaScreen, networking, or the display itself never confirmed healthy after $((HEALTH_RETRIES * HEALTH_DELAY))s - doing nothing, both drivers remain at their own safe boot defaults"
 		exit 0
@@ -172,11 +194,11 @@ start() {
 
 	if ndq_apply_all "$NDQ_CONFIG_FILE"; then
 		log "qualified display configuration applied"
-		exit 0
 	else
 		log "qualified display configuration NOT applied (see the reason logged above) - both drivers remain at their own safe boot defaults, this is the correct, safe outcome"
-		exit 0
 	fi
+	restore_brightness
+	exit 0
 }
 
 case "$1" in

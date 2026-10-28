@@ -48,19 +48,30 @@ check_moonraker() {
 	[ "$state" = "ready" ]
 }
 
+# G103 P4 (Run 21): diagnostic only (it writes nothing), so it waits in the
+# background and the boot finishes without waiting for Klippy.
+# NEBULAOS_CONFIRM_GOOD_FOREGROUND=1 keeps the old order (tests).
+confirm() {
+	i=0
+	while [ "$i" -lt "$RETRIES" ]; do
+		if check_moonraker; then
+			echo "S99confirm-good: Moonraker confirmed healthy (klippy_state=ready). OTA marker unchanged (stays on NebulaOS)."
+			return 0
+		fi
+		i=$((i + 1))
+		sleep "$DELAY"
+	done
+	echo "S99confirm-good: WARNING - Moonraker never confirmed healthy after $((RETRIES * DELAY))s. OTA marker unchanged (stays on NebulaOS). Manual recovery required if printer is non-functional. See docs/DEVELOPER_RECOVERY.md" 1>&2
+	return 1
+}
+
 case "$1" in
 	start)
-		i=0
-		while [ "$i" -lt "$RETRIES" ]; do
-			if check_moonraker; then
-				echo "S99confirm-good: Moonraker confirmed healthy (klippy_state=ready). OTA marker unchanged (stays on NebulaOS)."
-				exit 0
-			fi
-			i=$((i + 1))
-			sleep "$DELAY"
-		done
-		echo "S99confirm-good: WARNING - Moonraker never confirmed healthy after $((RETRIES * DELAY))s. OTA marker unchanged (stays on NebulaOS). Manual recovery required if printer is non-functional. See docs/DEVELOPER_RECOVERY.md" 1>&2
-		exit 1
+		if [ "${NEBULAOS_CONFIRM_GOOD_FOREGROUND:-0}" = 1 ]; then
+			confirm
+			exit $?
+		fi
+		confirm &
 		;;
 	*)
 		;;

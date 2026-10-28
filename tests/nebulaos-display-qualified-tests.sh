@@ -46,6 +46,11 @@ WORK=$(mktemp -d "${TMPDIR:-/tmp}/nebulaos-display-qualified-tests.XXXXXX")
 [ -n "${WORK:-}" ] && [ -e "$WORK" ] || { echo "FATAL: nebulaos-display-qualified-tests.sh: mktemp did not produce a usable path (fixture creation must fail closed - an empty path variable silently retargets later commands at the caller's own directory)" >&2; exit 1; }
 trap 'rm -rf "$WORK"' EXIT INT TERM
 
+# G103 P4: S97 backgrounds its health wait + apply on a real boot; the
+# scenarios below check its result right after it returns.
+export NDQ_APPLY_FOREGROUND=1
+export NBL_LIB="$WORK/no-backlight-lib"
+
 PASS=0
 FAIL=0
 fail() { echo "FAIL: $1"; FAIL=$((FAIL + 1)); }
@@ -801,6 +806,31 @@ rc=$?
 [ "$(cat "$NDQ_BACKLIGHT_SYSFS/brightness")" = "4" ] && [ "$(cat "$NDQ_TOUCH_SYSFS/mode")" = "irq-assist" ] && pass \
 	|| fail "S97 end-to-end healthy run did not actually apply the qualified display config"
 [ -f "$MARKER_HEALTHY" ] && pass || fail "S97 did not create its once-per-boot marker"
+
+# G103 P4: on a real boot S97 runs in the background and S98 has already
+# restored the user's brightness, so after its apply S97 restores it again
+# (ndq_apply_backlight leaves safe-on); by default start returns at once.
+printf 'nbl_boot_restore() { echo restored > "%s/restored"; echo 2 > "%s/brightness"; }\n' \
+	"$WORK" "$NDQ_BACKLIGHT_SYSFS" > "$WORK/fake-backlight-lib"
+reset_fake_kernel
+rm -f "$WORK/restored" "$WORK/marker-bg"
+s0=$(date +%s)
+(
+	PATH="$FAKE_ETC:$PATH"
+	export PATH
+	NDQ_APPLY_FOREGROUND=0 NBL_LIB="$WORK/fake-backlight-lib" \
+	NDQ_LIB="$LIB" NDQ_HEALTHCHECK_LIB="$HEALTHCHECK_LIB" \
+	MARKER="$WORK/marker-bg" NEBULASCREEN_PIDFILE="$GUPPY_PIDFILE" \
+	HEALTH_RETRIES=2 HEALTH_DELAY=0 \
+	NDQ_CONFIG_FILE="$NDQ_CONFIG_FILE" \
+	NDQ_TOUCH_SYSFS="$NDQ_TOUCH_SYSFS" NDQ_BACKLIGHT_SYSFS="$NDQ_BACKLIGHT_SYSFS" \
+	sh "$APPLY_SCRIPT" start >/dev/null 2>&1
+)
+rc=$?; s1=$(date +%s)
+[ "$rc" -eq 0 ] && [ $((s1 - s0)) -le 2 ] && pass || fail "S97 default start did not return at once (rc=$rc)"
+n=0; while [ ! -f "$WORK/restored" ] && [ $n -lt 50 ]; do sleep 0.1; n=$((n + 1)); done
+[ -f "$WORK/restored" ] && [ "$(cat "$NDQ_BACKLIGHT_SYSFS/brightness")" = "2" ] && pass \
+	|| fail "S97 background apply did not restore the user's brightness after safe-on"
 
 # Second invocation with the marker already present must be a pure no-op
 # (skips even the health poll) - overwrite brightness with a sentinel

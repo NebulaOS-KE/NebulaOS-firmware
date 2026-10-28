@@ -58,13 +58,24 @@ get_printer_info() {
 	wget -q -O - --timeout=3 "http://127.0.0.1:7125/printer/info" 2>/dev/null
 }
 
+# G103 P4 (Run 21): the watch runs in the background - it only waits for
+# Klippy's own startup (~16 s), and nothing after it in the boot needs its
+# answer (S97 and S99confirm-good poll Klippy themselves, in the background
+# too). NEBULAOS_MCU_RECOVERY_FOREGROUND=1 keeps the old order (tests).
 start() {
 	if [ -f "$MARKER" ]; then
 		echo "S95mcu-boot-recovery: already ran this boot, skipping"
 		exit 0
 	fi
 	touch "$MARKER"
+	if [ "${NEBULAOS_MCU_RECOVERY_FOREGROUND:-0}" = 1 ]; then
+		watch_klippy
+	else
+		watch_klippy &
+	fi
+}
 
+watch_klippy() {
 	i=0
 	while [ "$i" -lt "$POLL_RETRIES" ]; do
 		state=$(get_klippy_state)
