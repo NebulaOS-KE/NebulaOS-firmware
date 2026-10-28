@@ -86,6 +86,19 @@ rm -f "$WORK/busy"
 reset; sh "$WRAP" -C /x reset --hard origin/master; rc=$?
 [ "$rc" = 0 ] && [ "$(calls)" = 1 ] && pass "idle: reset passes through" || fail "idle reset blocked (rc=$rc)"
 
+# G102: the maintenance-lock holder is passed on; a crashing busy check refuses
+reset; rm -f "$WORK/busy.calls"
+NEBULAOS_MAINTENANCE_HOLDER=recover-42 sh "$WRAP" -C /x reset --hard v1; rc=$?
+[ "$rc" = 0 ] && [ "$(calls)" = 1 ] && grep -q -- "--profile git --holder recover-42 --refuse" "$WORK/busy.calls" \
+	&& pass "G102: a git under a held maintenance lock passes its holder token" || fail "G102 holder: rc=$rc $(cat "$WORK/busy.calls" 2>/dev/null)"
+printf '#!/bin/sh\necho Traceback >&2\nexit 1\n' > "$WORK/crashcli"
+chmod +x "$WORK/crashcli"
+reset; err=$(NEBULAOS_BUSY_CLI="$WORK/crashcli" sh "$WRAP" -C /x reset --hard v1 2>&1 >/dev/null); rc=$?
+[ "$rc" != 0 ] && [ "$(calls)" = 0 ] && case "$err" in *"busy check failed. (UNKNOWN)"*) true ;; *) false ;; esac \
+	&& pass "G102: a crashing busy check refuses (fails closed)" || fail "G102 crash: rc=$rc calls=$(calls) err=$err"
+reset; NEBULAOS_BUSY_CLI="$WORK/crashcli" sh "$WRAP" -C /x fetch origin; rc=$?
+[ "$rc" = 0 ] && [ "$(calls)" = 1 ] && pass "G102: fetch (download only) never asks the busy check" || fail "G102 fetch: rc=$rc"
+
 # G107: one visible refusal per update attempt. A fake wget records the
 # notify_refused posts; every command is still refused with its stderr line.
 mkdir -p "$WORK/bin"

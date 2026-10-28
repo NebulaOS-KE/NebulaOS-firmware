@@ -138,7 +138,9 @@ def request_clean_reset():
     with common.MaintenanceLock(token):
         common.reboot_grace()
         common.refuse_if_busy("request", holder=token)
-        return _arm_clean_reset()
+        result = _arm_clean_reset()
+        common.set_reboot_pending("clean-reset")
+        return result
 
 
 def _arm_clean_reset():
@@ -156,6 +158,7 @@ def ack_clean_reset():
 
 
 def cancel_clean_reset():
+    common.clear_reboot_pending()
     try:
         os.unlink(CLEAN_RESET_FLAG)
         common.fsync_dir(os.path.dirname(CLEAN_RESET_FLAG))
@@ -196,7 +199,9 @@ def swap_slot():
         # S34: the [nebulaos] component reboots right after this returns.
         common.reboot_grace()
         common.refuse_if_busy("request", holder=token)
-        return _arm_swap(current, target)
+        result = _arm_swap(current, target)
+        common.set_reboot_pending("slot-swap")
+        return result
 
 
 def _arm_swap(current, target):
@@ -226,6 +231,7 @@ def keep_slot():
     if current not in ("A", "B"):
         raise common.OsConfigError("SLOT_UNKNOWN", "cannot tell which slot is running")
     _slot_swap(current)
+    common.clear_reboot_pending()
     from . import image
     trial, _ = common.read_json(image.TRIAL)
     if trial and trial.get("from") == current and trial.get("to") != current:

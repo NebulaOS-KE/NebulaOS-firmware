@@ -22,6 +22,7 @@ import struct
 import sys
 import tempfile
 import textwrap
+import time
 import types
 import unittest
 import warnings
@@ -1339,6 +1340,28 @@ class SystemResetSlotTests(unittest.TestCase):
         self.assertFalse(os.path.exists(self.s.CLEAN_RESET_FLAG))
         self.s.cancel_clean_reset()     # idempotent
 
+    def test_reboot_pending_until_the_reboot(self):
+        # G102: armed -> busy (UPDATING) until the reboot, though the lock is gone
+        c = self.e.common
+        self.s.request_clean_reset()
+        self.assertTrue(c.reboot_pending())
+        state = c.busy_state("request", facts={"klippy": "ready", "status": {}})
+        self.assertEqual((state["reason"], state["message"]), ("UPDATING", c.REBOOT_PENDING_MESSAGE))
+        with self.assertRaises(c.Refused):
+            self.s.request_clean_reset()
+        self.s.cancel_clean_reset()          # the reboot could not be started
+        self.assertFalse(c.reboot_pending())
+        self.s.request_clean_reset()
+        old = time.time() - c.REBOOT_PENDING_SECONDS - 1
+        os.utime(c.REBOOT_PENDING, (old, old))
+        self.assertFalse(c.reboot_pending())  # a reboot that never came stops counting
+        self.s.cancel_clean_reset()
+        self.cmdline("/dev/mmcblk0p8")
+        self.s.swap_slot()
+        self.assertTrue(c.reboot_pending())
+        self.s.keep_slot()
+        self.assertFalse(c.reboot_pending())
+
     def test_swap_either_slot(self):
         # 2026-10-14: NebulaOS may run from either slot; swap goes to the other.
         self.cmdline("/dev/mmcblk0p8")
@@ -1347,6 +1370,7 @@ class SystemResetSlotTests(unittest.TestCase):
         self.cmdline("/dev/mmcblk0p7")
         self.assertEqual(self.s.swap_slot()["next_boot"], "B")
         self.assertEqual(open(self.log).read().split(), ["A", "B", "B"])
+        self.e.common.clear_reboot_pending()     # (the reboot would follow)
         # (the switch into the unconfirmed slot B left a trial; booted into
         # B it would run - here it is simply cleared)
         os.unlink(self.e.image.TRIAL)

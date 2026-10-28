@@ -96,9 +96,21 @@ fetch | pull | clone | checkout | reset | merge | rebase | clean)
 		refuse "$sub" "Not possible right now: the printer is low on memory. (LOW_MEMORY)"
 	fi
 	[ "$sub" = fetch ] && exec "$NEBULAOS_GIT_REAL" "$@"
+	# G102 (Run 21): a git run under a held maintenance lock (nebulaos-busy
+	# --lock ... --exec) passes its token so that lock is not its own
+	# UPDATING; a busy check that crashes (any exit but 0 or 3) refuses
+	# instead of letting the command through.
 	if [ -x "$NEBULAOS_BUSY_CLI" ]; then
-		_why=$("$NEBULAOS_BUSY_CLI" --profile git --refuse 2>&1 >/dev/null)
-		[ $? = 3 ] && refuse "$sub" "${_why#NebulaOS refused: }"
+		if [ -n "${NEBULAOS_MAINTENANCE_HOLDER:-}" ]; then
+			_why=$("$NEBULAOS_BUSY_CLI" --profile git --holder "$NEBULAOS_MAINTENANCE_HOLDER" --refuse 2>&1 >/dev/null)
+		else
+			_why=$("$NEBULAOS_BUSY_CLI" --profile git --refuse 2>&1 >/dev/null)
+		fi
+		case $? in
+		0) ;;
+		3) refuse "$sub" "${_why#NebulaOS refused: }" ;;
+		*) refuse "$sub" "Not possible right now: the busy check failed. (UNKNOWN)" ;;
+		esac
 	fi
 	;;
 esac

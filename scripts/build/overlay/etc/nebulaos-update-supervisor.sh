@@ -136,6 +136,11 @@ PAIR_SETTLE_SECONDS="${PAIR_SETTLE_SECONDS:-15}"
 BUSY_LIB="${BUSY_LIB:-/etc/nebulaos-busy.sh}"
 # shellcheck disable=SC1090
 [ -f "$BUSY_LIB" ] && . "$BUSY_LIB"
+# G102 (Run 21): the supervisor's own git calls (rev-parse, the rollback
+# reset --hard) use the real git by path, never the MEM-T08 wrapper
+# (/usr/libexec/nebulaos/bin/git) whatever PATH this runs with: the wrapper's
+# busy refusals are for Moonraker's updates, a rollback must not be refused.
+GIT="${NEBULAOS_GIT_REAL:-/usr/bin/git}"
 
 log() {
 	echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) nebulaos-update-supervisor: $1"
@@ -1198,7 +1203,7 @@ moonraker_restore_env() {
 
 stack_head() {
 	# $1=app name -> current HEAD, or empty if the checkout is unusable
-	git -C "$NEBULAOS_ROOT/apps/$1" rev-parse HEAD 2>/dev/null
+	"$GIT" -C "$NEBULAOS_ROOT/apps/$1" rev-parse HEAD 2>/dev/null
 }
 
 stack_state_file() {
@@ -1291,8 +1296,8 @@ restore_known_good_pair() {
 		return 1
 	fi
 	log "$STACK_NAME: restoring the last validated pair (klipper $kg_k, extensions $kg_e)"
-	git -C "$NEBULAOS_ROOT/apps/$KLIPPER_APP" reset --hard "$kg_k" >/dev/null 2>&1
-	git -C "$NEBULAOS_ROOT/apps/$EXTENSIONS_APP" reset --hard "$kg_e" >/dev/null 2>&1
+	"$GIT" -C "$NEBULAOS_ROOT/apps/$KLIPPER_APP" reset --hard "$kg_k" >/dev/null 2>&1
+	"$GIT" -C "$NEBULAOS_ROOT/apps/$EXTENSIONS_APP" reset --hard "$kg_e" >/dev/null 2>&1
 	# git reset --hard leaves the composed symlinks intact (they are
 	# excluded, so `clean` ignores them and `reset` has no tracked entry to
 	# overwrite), but the SOURCE they point into has just changed content and
@@ -1650,7 +1655,7 @@ validate_component() {
 	name="$1"
 	info=$(component_info "$name")
 	path=$(echo "$info" | cut -d'|' -f1)
-	new_commit=$(git -C "$path" rev-parse HEAD 2>/dev/null)
+	new_commit=$("$GIT" -C "$path" rev-parse HEAD 2>/dev/null)
 	known_good=$(read_state_field "$name" known_good_commit)
 
 	mkdir -p "$LOCKDIR"
@@ -1711,7 +1716,7 @@ component_roll_back() { # NAME REASON (<why>:<failed commit>)
 		write_state "$name" "$known_good" "$known_good" "factory-fallback" "$reason;no_env_backup_available"
 		return
 	fi
-	git -C "$path" reset --hard "$known_good" >/dev/null 2>&1
+	"$GIT" -C "$path" reset --hard "$known_good" >/dev/null 2>&1
 	if ! restart_component "$name"; then
 		sup_defer_log "$name-rollback" "$name: rollback restart deferred - retried on a later poll"
 		write_state "$name" "$known_good" "$known_good" "rollback-pending" "$reason"
@@ -1791,7 +1796,7 @@ poll_once() {
 		path=$(echo "$info" | cut -d'|' -f1)
 		[ -d "$path/.git" ] || continue
 
-		current=$(git -C "$path" rev-parse HEAD 2>/dev/null)
+		current=$("$GIT" -C "$path" rev-parse HEAD 2>/dev/null)
 		[ -z "$current" ] && continue
 
 		last_seen=$(read_state_field "$name" last_seen_commit)

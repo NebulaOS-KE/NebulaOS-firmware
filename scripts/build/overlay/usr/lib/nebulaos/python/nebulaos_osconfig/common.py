@@ -237,6 +237,16 @@ BUSY_MESSAGES = {
 }
 TRIAL_MESSAGE = "The new system is still being checked - try again after the check."
 TRIAL_POSTPONED_MESSAGE = "The new system is checked after the print - try again then."
+# G102 (Run 21): a clean reset / slot swap is armed under the maintenance lock,
+# which ends when the osconfig verb returns - a few seconds before the
+# [nebulaos] component's reboot. This tmpfs mark keeps the busy check at
+# UPDATING over that gap; the undo verbs (cancel-clean-reset, keep-slot)
+# clear it when the reboot cannot be started. tmpfs: never survives a boot;
+# older than REBOOT_PENDING_SECONDS it no longer counts (a reboot that never
+# came must not block everything until the next power cycle).
+REBOOT_PENDING = os.path.join(RUN_DIR, "reboot-pending")
+REBOOT_PENDING_SECONDS = 120
+REBOOT_PENDING_MESSAGE = "The printer is about to restart."
 PROFILES = {
     "request": {"PRINTING", "PAUSED", "ACTIVE", "CALIBRATING", "UPDATING", "LOW_MEMORY",
                 "UNKNOWN", "update_manager", "trial"},
@@ -514,6 +524,9 @@ def busy_state(profile, holder=None, facts=None):
     if "update_manager" in counts and facts.get("update_manager_busy"):
         reasons.append("UPDATING")
     updating_message = None
+    if "UPDATING" not in reasons and reboot_pending():
+        reasons.append("UPDATING")
+        updating_message = REBOOT_PENDING_MESSAGE
     if "trial" in counts and "UPDATING" not in reasons:
         trial = trial_pending()
         if trial:
@@ -529,6 +542,26 @@ def busy_state(profile, holder=None, facts=None):
             message = updating_message if reason == "UPDATING" else None
             return busy_result(profile, reason, message, klippy)
     return busy_result(profile, None, klippy=klippy)
+
+
+def reboot_pending():
+    try:
+        age = time.time() - os.stat(REBOOT_PENDING).st_mtime
+    except OSError:
+        return False
+    return -5 <= age < REBOOT_PENDING_SECONDS
+
+
+def set_reboot_pending(what):
+    os.makedirs(RUN_DIR, exist_ok=True)
+    atomic_write(REBOOT_PENDING, "%s\n" % what)
+
+
+def clear_reboot_pending():
+    try:
+        os.unlink(REBOOT_PENDING)
+    except FileNotFoundError:
+        pass
 
 
 def refuse_if_busy(profile="request", holder=None):
