@@ -141,7 +141,9 @@ DEFAULT_GROUPS = {
         _macro(5, "NEBULAOS_NOZZLE_CLEAN"),
         _macro(6, "NEBULAOS_INPUT_SHAPER_CALIBRATE"),
         _macro(7, "NEBULAOS_LOAD_CELL_CALIBRATE"),
-        _macro(8, "NEBULAOS_BED_TRAM"),
+        _macro(8, "LOAD_CELL_AUTOMATIC"),
+        _macro(9, "LOAD_CELL_MANUAL"),
+        _macro(10, "NEBULAOS_BED_TRAM"),
     ], show_in_printing=False, show_in_pause=False),
     "nebulaos-extruder": _group("Extruder", [
         _macro(0, "NEBULAOS_ESTEPS_CALIBRATE"),
@@ -227,6 +229,22 @@ PRE_RUN21_GROUPS = {
         _macro(7, "NEBULAOS_INPUT_SHAPER_CALIBRATE"),
         _macro(8, "NEBULAOS_LOAD_CELL_CALIBRATE"),
         _macro(9, "NEBULAOS_BED_TRAM"),
+    ], show_in_printing=False, show_in_pause=False),
+}
+
+# G101 (Run 22): the Calibration group before the load cell mode buttons -
+# the Run 21 default. Same exact-match upgrade.
+PRE_G101_GROUPS = {
+    "nebulaos-calibration": _group("Calibration", [
+        _macro(0, "NEBULAOS_AUTO_CALIBRATE"),
+        _macro(1, "NEBULAOS_Z_OFFSET_CALIBRATE"),
+        _macro(2, "AXIS_TWIST_X"),
+        _macro(3, "PID_BED"),
+        _macro(4, "PID_HOTEND"),
+        _macro(5, "NEBULAOS_NOZZLE_CLEAN"),
+        _macro(6, "NEBULAOS_INPUT_SHAPER_CALIBRATE"),
+        _macro(7, "NEBULAOS_LOAD_CELL_CALIBRATE"),
+        _macro(8, "NEBULAOS_BED_TRAM"),
     ], show_in_printing=False, show_in_pause=False),
 }
 
@@ -869,9 +887,9 @@ def run(
 
     rc3_results = migrate_rc3_to_final(get_status, post, delete, log, rc3_groups, groups)
     if groups is DEFAULT_GROUPS:
-        # Later defaults (G83a, G87, Run 21): same exact-match upgrade,
+        # Later defaults (G83a, G87, Run 21, G101): same exact-match upgrade,
         # newest fixture last.
-        for fixture in (PRE_G83A_GROUPS, PRE_G87_GROUPS, PRE_RUN21_GROUPS):
+        for fixture in (PRE_G83A_GROUPS, PRE_G87_GROUPS, PRE_RUN21_GROUPS, PRE_G101_GROUPS):
             for group_id, result in migrate_rc3_to_final(
                     get_status, post, delete, log, fixture, groups).items():
                 if result in ("migrated", "failed", "already_final"):

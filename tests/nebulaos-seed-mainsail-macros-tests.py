@@ -672,8 +672,8 @@ def test_rc3_calibration_migrated_to_final():
         check("rc3 cal migrated: rc==0", rc == 0)
         check("rc3 cal migrated: group now matches final",
               moon.store[group_key("nebulaos-calibration")] == final_cal)
-        check("rc3 cal migrated: final has 9 macros (including INPUT_SHAPER, LOAD_CELL, BED_TRAM; no AXIS_TWIST_Y)",
-              len(final_cal["macros"]) == 9)
+        check("rc3 cal migrated: final has 11 macros (including INPUT_SHAPER, LOAD_CELL + mode buttons, BED_TRAM; no AXIS_TWIST_Y)",
+              len(final_cal["macros"]) == 11)
         with open(marker_path) as f:
             marker = json.load(f)
         check("rc3 cal migrated: marker records migrated",
@@ -859,7 +859,7 @@ def test_rc3_vs_final_calibration_macro_counts():
     rc3_cal = seed.RC3_GROUPS["nebulaos-calibration"]
     final_cal = seed.DEFAULT_GROUPS["nebulaos-calibration"]
     check("RC3 calibration has 7 macros", len(rc3_cal["macros"]) == 7)
-    check("final calibration has 9 macros", len(final_cal["macros"]) == 9)
+    check("final calibration has 9 macros", len(final_cal["macros"]) == 11)
     rc3_names = {m["name"] for m in rc3_cal["macros"]}
     final_names = {m["name"] for m in final_cal["macros"]}
     check("INPUT_SHAPER_CALIBRATE added in final",
@@ -1290,6 +1290,54 @@ def test_run21_user_modified_calibration_group_untouched():
               moon.store[group_key("nebulaos-calibration")] == custom)
     with_marker_dir(body)
 
+# --- G101: the load cell mode buttons reach installs with the Run 21 default --
+def test_g101_previous_calibration_group_gets_load_cell_mode_buttons():
+    def body(marker_path):
+        prev = seed.PRE_G101_GROUPS["nebulaos-calibration"]
+        final_cal = seed.DEFAULT_GROUPS["nebulaos-calibration"]
+        moon = FakeMoonrakerDb(existing={group_key("nebulaos-calibration"): prev})
+        rc, logs = run_seed(marker_path, moon, groups=seed.DEFAULT_GROUPS)
+        check("g101: rc==0", rc == 0)
+        check("g101: Run 21 default upgraded to the new default",
+              moon.store[group_key("nebulaos-calibration")] == final_cal)
+        names = [m["name"] for m in final_cal["macros"]]
+        check("g101: both mode buttons, after the load cell calibration",
+              names.index("LOAD_CELL_AUTOMATIC") == names.index("NEBULAOS_LOAD_CELL_CALIBRATE") + 1
+              and names.index("LOAD_CELL_MANUAL") == names.index("LOAD_CELL_AUTOMATIC") + 1)
+    with_marker_dir(body)
+
+
+def test_g101_older_defaults_go_straight_to_the_newest():
+    def body(marker_path):
+        for fixture in (seed.PRE_RUN21_GROUPS, seed.PRE_G87_GROUPS):
+            moon = FakeMoonrakerDb(existing={group_key("nebulaos-calibration"):
+                                             fixture["nebulaos-calibration"]})
+            rc, logs = run_seed(marker_path, moon, groups=seed.DEFAULT_GROUPS)
+            check("g101 from an older default: newest",
+                  moon.store[group_key("nebulaos-calibration")]
+                  == seed.DEFAULT_GROUPS["nebulaos-calibration"])
+    with_marker_dir(body)
+
+
+def test_g101_user_modified_calibration_group_untouched():
+    def body(marker_path):
+        custom = json.loads(json.dumps(seed.PRE_G101_GROUPS["nebulaos-calibration"]))
+        custom["name"] = "My calibration"
+        moon = FakeMoonrakerDb(existing={group_key("nebulaos-calibration"): custom})
+        rc, logs = run_seed(marker_path, moon, groups=seed.DEFAULT_GROUPS)
+        check("g101 user-modified: left untouched",
+              moon.store[group_key("nebulaos-calibration")] == custom)
+    with_marker_dir(body)
+
+
+def test_g101_wrappers_call_the_mode_command():
+    cfg = open(os.path.join(os.path.dirname(MODULE_PATH), "..", "..", "etc", "nebulaos",
+                            "klipper", "calibration.cfg")).read()
+    check("g101: LOAD_CELL_AUTOMATIC -> MODE=auto",
+          "[gcode_macro LOAD_CELL_AUTOMATIC]" in cfg and "NEBULAOS_LOAD_CELL_MODE MODE=auto" in cfg)
+    check("g101: LOAD_CELL_MANUAL -> MODE=manual",
+          "[gcode_macro LOAD_CELL_MANUAL]" in cfg and "NEBULAOS_LOAD_CELL_MODE MODE=manual" in cfg)
+
 def main():
     test_moonraker_unavailable()
     test_fresh_install_creates_both_groups()
@@ -1332,6 +1380,10 @@ def main():
     test_g87_user_modified_calibration_group_untouched()
     test_run21_previous_calibration_group_loses_axis_twist_y()
     test_run21_user_modified_calibration_group_untouched()
+    test_g101_previous_calibration_group_gets_load_cell_mode_buttons()
+    test_g101_older_defaults_go_straight_to_the_newest()
+    test_g101_user_modified_calibration_group_untouched()
+    test_g101_wrappers_call_the_mode_command()
     test_rc3_vs_final_extruder_macro_counts()
 
     test_reset_six_group_custom_state_produces_exact_five()

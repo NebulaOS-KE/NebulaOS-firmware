@@ -145,6 +145,8 @@ Legend:
 | NEBULAOS_RESUME_POWER_LOSS | calibration.cfg | IMMUTABLE_NEBULAOS | NebulaOS (genuine; backs `[nebulaos_power_loss_recovery]`) | PUBLIC | YES |
 | NEBULAOS_CLEAR_POWER_LOSS_RECOVERY | calibration.cfg | IMMUTABLE_NEBULAOS | NebulaOS (genuine) | PUBLIC | YES |
 | AXIS_TWIST_X | calibration.cfg | IMMUTABLE_NEBULAOS | NebulaOS-owned file; macro itself is a trivial one-line "UPSTREAM_UI_ADAPTER" wrapping upstream `AXIS_TWIST_COMPENSATION_CALIBRATE AXIS=X` (per the file's own comment: "These are NOT NebulaOS functionality... They contain no algorithm, state, or orchestration") | PUBLIC | YES |
+| LOAD_CELL_AUTOMATIC | calibration.cfg | IMMUTABLE_NEBULAOS | G101 (Run 22): one-line button for `NEBULAOS_LOAD_CELL_MODE MODE=auto` | PUBLIC | YES |
+| LOAD_CELL_MANUAL | calibration.cfg | IMMUTABLE_NEBULAOS | G101 (Run 22): one-line button for `NEBULAOS_LOAD_CELL_MODE MODE=manual` | PUBLIC | YES |
 | PID_BED | calibration.cfg | IMMUTABLE_NEBULAOS | UPSTREAM_UI_ADAPTER: one-click default-target wrapper around upstream `PID_CALIBRATE HEATER=heater_bed` | PUBLIC | YES |
 | PID_HOTEND | calibration.cfg | IMMUTABLE_NEBULAOS | UPSTREAM_UI_ADAPTER: one-click default-target wrapper around upstream `PID_CALIBRATE HEATER=extruder` | PUBLIC | YES |
 
