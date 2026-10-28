@@ -407,6 +407,19 @@ CAPTURE_PROFILES = {
         "if($i ~ /^DUR=/)d=substr($i,5)} if(d+0>0.5) printf \"%s=%s@%s \", s, d, t[2]} /EV=done/{split($1,t,\"=\"); printf \"DONE@%s\", t[2]}' "
         "$L | tail -n 12; echo",
         False, None, 60),
+    # G103 P3 (Run 21): why S04nebulaos-factory-seed runs its full venv
+    # import checks on some normal boots - the venv validation stamps (their
+    # text is the key they were written with, their time the last full
+    # check), every app checkout's HEAD reflog (update times, epoch) and the
+    # Klippy starts (boot times). Read-only.
+    "seed-reasons": ("D=/usr/data/nebulaos; echo \"== now $(date '+%F %T') epoch $(date +%s)\"; "
+        "for f in $D/system/venv-validation/*.key; do echo \"== stamp $f written $(date -r $f '+%F %T')\"; "
+        "cat $f | cut -c1-200; done; "
+        "for a in $D/apps/*; do [ -f $a/.git/logs/HEAD ] || continue; echo \"== reflog $a (old new epoch msg)\"; "
+        "tail -n 8 $a/.git/logs/HEAD | awk -F'\\t' '{n=split($1,f,\" \"); print substr(f[1],1,8), substr(f[2],1,8), f[n-1], substr($2,1,80)}'; done; "
+        "for e in $D/envs/*; do for sp in $e/lib/python*/site-packages; do [ -d $sp ] && echo \"== $sp changed $(date -r $sp '+%F %T')\"; done; done; "
+        "echo '== klippy starts'; grep -h 'Start printer at' $(ls -tr /opt/printer_data/logs/klippy.log* 2>/dev/null) 2>/dev/null | tail -n 25 | cut -c1-120",
+        False, None, 60),
     # G114 (Run 21 investigation): MCU load per MCU from Klippy's own Stats
     # lines (mcu_awake, mcu_task_avg/stddev, retransmits) split into idle,
     # printing (sd_pos present) and SHAPER_CALIBRATE (between its "Testing
