@@ -30,20 +30,16 @@ calls() { cat "$WORK/ssd.calls" 2>/dev/null; }
 sh -n "$INIT" && pass "init script parses" || fail "init script does not parse"
 
 run start
-[ "$rc" = 0 ] && [ -z "$(calls)" ] && case "$out" in *"not enabled"*) true ;; *) false ;; esac \
-	&& pass "off by default: no watchdog.enable -> not armed, boot goes on" || fail "default: rc=$rc calls=$(calls) out=$out"
-
-: > "$WORK/system/watchdog.enable"
-run start
 c=$(calls)
 [ "$rc" = 0 ] && case "$c" in *"-S -b -m -p $WORK/wd.pid -N -20 -x /sbin/watchdog -- -F -T 60 -t 10 /dev/null"*) true ;; *) false ;; esac \
-	&& pass "enabled: watchdog -F -T 60 -t 10 under start-stop-daemon -b -m, nice -20" || fail "enabled: rc=$rc calls=$c"
+	&& pass "on by default (Run 22): watchdog -F -T 60 -t 10 under start-stop-daemon -b -m, nice -20" || fail "default: rc=$rc calls=$c"
+grep -q 'watchdog.enable' "$INIT" && fail "watchdog.enable is still required" || pass "no watchdog.enable switch any more"
 case "$c" in "cwd=/ "*) pass "the daemon starts from / (no cwd on /usr/data)" ;; *) fail "cwd: $c" ;; esac
 grep -q 'chrt\|SCHED_FIFO -f\|-f 99' "$INIT" && fail "a real-time priority is used" || pass "no real-time priority (starves with userspace)"
 
 : > "$WORK/system/watchdog.disable"
 run start
-[ "$rc" = 0 ] && [ -z "$(calls)" ] && pass "watchdog.disable wins over watchdog.enable" || fail "disable: rc=$rc calls=$(calls)"
+[ "$rc" = 0 ] && [ -z "$(calls)" ] && pass "watchdog.disable switches it off" || fail "disable: rc=$rc calls=$(calls)"
 rm -f "$WORK/system/watchdog.disable"
 
 NEBULAOS_WATCHDOG_DEVICE="$WORK/none" run start

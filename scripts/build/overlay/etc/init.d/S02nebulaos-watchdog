@@ -22,14 +22,16 @@
 # A watchdog reset during an unconfirmed image trial does not count as a
 # failed boot (docs/A_B_SLOT_MODEL.md).
 #
-# Off until qualified on ke-dev: it arms only when
-# $NEBULAOS_SYSTEM_DIR/watchdog.enable exists (and watchdog.disable does not).
-# The kernel fix that makes arming safe (start() programs the timeout and
-# clears the counter before enabling) is NebulaOS-kernel f28a670 (+ 38c467b marker); the first
-# live arming is a one-shot through the Hardware Agent, never a first boot.
+# ON by default (Run 22, Tim 2026-10-28) after watchdog-arm and watchdog-fire
+# passed on ke-dev (2026-10-28): it arms unless
+# $NEBULAOS_SYSTEM_DIR/watchdog.disable exists (the opt-out). The kernel fix
+# that makes arming safe (start() programs the timeout and clears the counter
+# before enabling) is NebulaOS-kernel f28a670 (+ 38c467b marker). A new image
+# that freezes early cannot loop: the image trial counts its starts and goes
+# back after 3 unconfirmed ones (G122, nebulaos_osconfig/image.py).
 #
 # The daemon keeps no fd or cwd on /usr/data (the datafs repair kills the
-# holders of /usr/data): the switch files are read once, the daemon starts
+# holders of /usr/data): the switch file is read once, the daemon starts
 # from /.
 
 DAEMON=/sbin/watchdog
@@ -46,10 +48,6 @@ if [ -r "$NEBULAOS_OOM_POLICY" ]; then . "$NEBULAOS_OOM_POLICY"; else nebulaos_s
 start() {
 	if [ -e "$NEBULAOS_SYSTEM_DIR/watchdog.disable" ]; then
 		echo "nebulaos-watchdog: disabled ($NEBULAOS_SYSTEM_DIR/watchdog.disable)"
-		return 0
-	fi
-	if [ ! -e "$NEBULAOS_SYSTEM_DIR/watchdog.enable" ]; then
-		echo "nebulaos-watchdog: not enabled (no $NEBULAOS_SYSTEM_DIR/watchdog.enable)"
 		return 0
 	fi
 	if [ ! -c "$DEVICE" ]; then

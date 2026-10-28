@@ -907,7 +907,8 @@ _APP_IDENTIFY = "/usr/bin/python3 /etc/nebulaos/mcu_application_identify.py; " +
 
 # G117(b) step 2 (Run 21, Tim 2026-10-28): the watchdog really resets a
 # printer that stops feeding it. Idle printer only (no print, no heater
-# target). Arms BusyBox watchdog -F -T 60 -t 10 like S02nebulaos-watchdog,
+# target). Uses S02nebulaos-watchdog's feeder when it runs (on by default
+# since Run 22), else arms BusyBox watchdog -F -T 60 -t 10 like S02;
 # then SIGKILLs it: no magic close, the counter keeps running - what a hung
 # userspace looks like to the hardware. Shows the counter climbing for 20 s,
 # then returns; the SoC resets itself ~60 s after the last feed. Check
@@ -918,10 +919,13 @@ EXERCISE_PROFILES["watchdog-fire"] = (
     "[ -c /dev/watchdog ] || { echo NO_WATCHDOG_DEVICE; exit 3; }; "
     "[ \"$(cat /sys/module/ingenic_wdt/parameters/nebulaos_arm_fix 2>/dev/null)\" = Y ] "
     "|| { echo KERNEL_WITHOUT_ARM_FIX; exit 3; }; "
-    "pidof watchdog >/dev/null && { echo WATCHDOG_ALREADY_FED; exit 3; }; "
     "echo \"boot_id_before=$(cat /proc/sys/kernel/random/boot_id) uptime=$(cut -d' ' -f1 /proc/uptime)\"; "
     "sync; "
+    # Run 22: the watchdog is on by default - kill S02nebulaos-watchdog's own
+    # feeder when it runs (the real configuration), else arm one like S02.
+    "W=$(pidof watchdog); if [ -n \"$W\" ]; then echo \"feeder from S02 pid=$W\"; else "
     "( echo -1000 > /proc/self/oom_score_adj; exec watchdog -F -T 60 -t 10 /dev/watchdog ) & W=$!; "
+    "echo \"feeder started here pid=$W\"; fi; "
     "trap '[ -n \"${W:-}\" ] && kill -TERM $W 2>/dev/null' HUP PIPE; "
     "sleep 3; echo '== registers armed'; " + _WDT_REGS + "; "
     "[ \"$(devmem 0x10002004 32 2>/dev/null)\" = 0x00000001 ] || { echo WATCHDOG_NOT_ARMED; exit 4; }; "
