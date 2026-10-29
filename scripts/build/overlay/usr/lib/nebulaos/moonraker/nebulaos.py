@@ -124,6 +124,12 @@ class NebulaOS:
             ("/machine/nebulaos/spoolman/status", RequestType.GET, self._sm_status),
             ("/machine/nebulaos/spoolman/server", RequestType.POST, self._sm_server),
             ("/machine/nebulaos/spoolman/remove", RequestType.POST, self._sm_remove),
+            # G121 (Run 22): Nebula Camera controls (nebulaos_osconfig/camera.py).
+            ("/machine/nebulaos/camera/status", RequestType.GET, self._cam_status),
+            ("/machine/nebulaos/camera/settings", RequestType.POST, self._cam_settings),
+            ("/machine/nebulaos/camera/defaults", RequestType.POST, self._cam_defaults),
+            ("/machine/nebulaos/camera/reset", RequestType.POST, self._cam_reset),
+            ("/machine/nebulaos/camera/version", RequestType.POST, self._cam_version),
             ("/machine/nebulaos/wifi/status", RequestType.GET, self._wifi_status),
             ("/machine/nebulaos/wifi/scan", RequestType.POST, self._wifi_scan),
             ("/machine/nebulaos/wifi/connect", RequestType.POST, self._wifi_connect),
@@ -318,6 +324,28 @@ class NebulaOS:
 
     async def _sm_remove(self, web_request: WebRequest) -> Dict[str, Any]:
         return await self._write("spoolman", "remove")
+
+    # -- G121: Nebula Camera ----------------------------------------------------
+
+    async def _cam_status(self, web_request: WebRequest) -> Dict[str, Any]:
+        return await self._read("camera", "status")
+
+    async def _cam_settings(self, web_request: WebRequest) -> Dict[str, Any]:
+        # {"settings": {"brightness": 140, "ir_mode": "bw", ...}} - checked by
+        # the helper; only JSON crosses, never a shell
+        settings = web_request.get("settings", {})
+        if not isinstance(settings, dict):
+            raise self.server.error("settings must be an object", 400)
+        return await self._write("camera", "set", "--json", json.dumps(settings))
+
+    async def _cam_defaults(self, web_request: WebRequest) -> Dict[str, Any]:
+        return await self._write("camera", "defaults")
+
+    async def _cam_reset(self, web_request: WebRequest) -> Dict[str, Any]:
+        return await self._write("camera", "reset", timeout=40.)
+
+    async def _cam_version(self, web_request: WebRequest) -> Dict[str, Any]:
+        return await self._write("camera", "version")
 
     # -- Wi-Fi (Q3, 2026-10-11) -------------------------------------------------
 

@@ -11,6 +11,7 @@
 #
 # Usage: python3 tests/nebulaos-osconfig-tests.py
 import asyncio
+import array
 import importlib
 import importlib.util
 import io
@@ -100,6 +101,9 @@ class Env(object):
             "NEBULAOS_PROC_DIR": os.path.join(self.tmp, "proc"),
             # G125: never the host's moonraker.conf
             "NEBULAOS_MOONRAKER_CONF": os.path.join(self.tmp, "moonraker.conf"),
+            # G121: never the host's cameras
+            "NEBULAOS_SYS_V4L": os.path.join(self.tmp, "sys-v4l"),
+            "NEBULAOS_CAMERA_RESET_WAIT": "3",
         })
         if PYLIB not in sys.path:
             sys.path.insert(0, PYLIB)
@@ -108,7 +112,7 @@ class Env(object):
                 del sys.modules[name]
         self.pkg = importlib.import_module("nebulaos_osconfig")
         for mod in ("common", "network", "display", "bootdisplay", "system", "wifi", "mcu", "image",
-                    "spoolman", "cli"):
+                    "spoolman", "camera", "cli"):
             setattr(self, mod, importlib.import_module("nebulaos_osconfig." + mod))
 
     def netapply_script(self, apply_rcs):
@@ -1186,6 +1190,194 @@ class SpoolmanTests(unittest.TestCase):
         with self.assertRaises(self.e.common.Refused):
             self.s.remove()
         self.assertEqual(self.conf(), self.CONF)
+
+
+class FakeCameraIoctl(object):
+    """Records every ioctl; answers extension-unit GETs through the data
+    pointer like the kernel does."""
+
+    def __init__(self, cam_mod, fail_name=None):
+        self.c = cam_mod
+        self.calls = []              # ("ctrl", name, value) / ("xu", selector, query, data0)
+        self.fail_name = fail_name
+        self.names = {v: k for k, v in cam_mod.CID.items()}
+
+    def __call__(self, fd, request, buf):
+        import ctypes
+        if request == self.c.ioc_readwrite("V", 28, self.c.V4L2_CTRL.size):
+            cid, value = self.c.V4L2_CTRL.unpack(bytes(buf))
+            name = self.names[cid]
+            if name == self.fail_name:
+                raise OSError(22, "Invalid argument")
+            self.calls.append(("ctrl", name, value))
+            return 0
+        st = self.c._xu_struct()
+        assert request == self.c.ioc_readwrite("u", 0x21, st.size), hex(request)
+        unit, sel, query, size, addr = st.unpack(bytes(buf))
+        assert unit == 6
+        if query == self.c.UVC_GET_LEN:
+            ctypes.memmove(addr, bytes([60, 0]), 2)
+        elif query == self.c.UVC_GET_CUR:
+            payload = b"UVC-UnionImage-CCX2F3298-240103V020\0" if sel == 15 else b"\2"
+            ctypes.memmove(addr, payload, len(payload))
+        self.calls.append(("xu", sel, query, ctypes.string_at(addr, 1)[0]))
+        return 0
+
+
+class CameraTests(unittest.TestCase):
+    """G121 (Run 22): Nebula Camera controls - settings, apply order, the
+    extension-unit allow-list."""
+
+    def setUp(self):
+        self.e = Env()
+        self.c = self.e.camera
+        fake_busy(self.e.common, [None])
+        self.c.DEV_DIR = os.path.join(self.e.tmp, "dev")
+        os.makedirs(self.c.DEV_DIR)
+
+    def tearDown(self):
+        self.e.cleanup()
+
+    def plug(self, devnum="7", vid="a108", node="video3"):
+        usb = os.path.join(self.e.tmp, "usb", "1-1")
+        intf = os.path.join(usb, "1-1:1.0")
+        os.makedirs(intf, exist_ok=True)
+        for name, value in (("idVendor", vid), ("idProduct", "2231"), ("busnum", "1"),
+                            ("devnum", devnum)):
+            open(os.path.join(usb, name), "w").write(value + "\n")
+        raw = bytes.fromhex(self.c.XU_GUID.replace("-", ""))
+        guid = raw[3::-1] + raw[5:3:-1] + raw[7:5:-1] + raw[8:]
+        xu = bytes([26, 0x24, 0x06, 6]) + guid + bytes([18, 1, 1, 3, 0xff, 0xff, 0xff])[:6]
+        open(os.path.join(usb, "descriptors"), "wb").write(bytes([9, 2, 0, 0]) + bytes(5) + xu)
+        v = os.path.join(self.c.SYS_V4L, node)
+        os.makedirs(v, exist_ok=True)
+        open(os.path.join(v, "index"), "w").write("0\n")
+        if not os.path.islink(os.path.join(v, "device")):
+            os.symlink(intf, os.path.join(v, "device"))
+        open(os.path.join(self.c.DEV_DIR, node), "w").close()
+
+    def test_mips_ioctl_numbers(self):
+        self.assertEqual(self.c.ioc_readwrite("V", 28, 8, mips=True), 0xC008561C)
+        self.assertEqual(self.c.ioc_readwrite("u", 0x21, 12, mips=True), 0xC00C7521)
+        self.assertEqual(self.c.ioc_readwrite("V", 28, 8, mips=False), 0xC008561C)
+
+    def test_find_camera_by_usb_id_and_xu_by_guid(self):
+        self.assertIsNone(self.c.find_camera())
+        self.plug()
+        cam = self.c.find_camera()
+        self.assertEqual((cam["node"], cam["identity"]), ("video3", "1:7"))
+        self.assertEqual(self.c.xu_unit(cam["usb"]), 6)
+
+    def test_other_cameras_are_ignored(self):
+        self.plug(vid="046d")
+        self.assertIsNone(self.c.find_camera())
+
+    def test_selector_13_and_everything_outside_the_allow_list_is_refused(self):
+        self.plug()
+        fake = FakeCameraIoctl(self.c)
+        dev = self.c.Device(self.c.find_camera(), fake)
+        try:
+            for sel in range(256):
+                for query in (self.c.UVC_SET_CUR, self.c.UVC_GET_CUR, self.c.UVC_GET_LEN):
+                    if (sel, query) in self.c.XU_ALLOWED:
+                        continue
+                    with self.assertRaises(self.e.common.OsConfigError):
+                        dev.xu(sel, query, 60)
+                    with self.assertRaises(self.e.common.OsConfigError):
+                        dev.xu_payload(sel, query, array.array("B", [0] * 60))
+        finally:
+            dev.close()
+        self.assertEqual(fake.calls, [])
+        self.assertNotIn(13, [sel for sel, _ in self.c.XU_ALLOWED])
+        src = open(self.c.__file__).read()
+        self.assertEqual(src.count('ioc_readwrite("u", 0x21'), 2)   # only Device.xu*
+
+    def test_apply_order_auto_manual_rest_ir(self):
+        self.plug()
+        self.c._persist(dict(self.c.default_config(), wb_auto=False, wb_temperature=500,
+                             exposure_manual=True, exposure_time=300, ir_mode="color",
+                             power_line="50"))
+        fake = FakeCameraIoctl(self.c)
+        self.assertEqual(self.c.apply(ioctl=fake)["result"], "APPLIED")
+        self.assertEqual([c[1] for c in fake.calls[:4]],
+                         ["wb_auto", "exposure_auto", "wb_temperature", "exposure_time"])
+        self.assertEqual(fake.calls[1], ("ctrl", "exposure_auto", 1))
+        self.assertEqual(fake.calls[9], ("ctrl", "power_line", 1))
+        self.assertEqual(fake.calls[-1][:3], ("xu", 16, self.c.UVC_SET_CUR))
+        self.assertEqual(fake.calls[-1][3], 0)                      # color
+
+    def test_auto_exposure_and_auto_wb_are_never_forced(self):
+        self.plug()
+        fake = FakeCameraIoctl(self.c)
+        self.c.apply(ioctl=fake)
+        names = [c[1] for c in fake.calls if c[0] == "ctrl"]
+        self.assertNotIn("exposure_auto", names)
+        self.assertNotIn("exposure_time", names)
+        self.assertNotIn("wb_temperature", names)
+
+    def test_set_validates_saves_and_is_one_way_for_exposure(self):
+        self.plug()
+        fake = FakeCameraIoctl(self.c)
+        out = self.c.set_settings({"brightness": 140, "ir_mode": "bw"}, fake)
+        self.assertEqual(out["result"], "APPLIED")
+        self.assertEqual(self.c.load_config()[0]["brightness"], 140)
+        for bad in ({"brightness": 49}, {"brightness": 161}, {"brightness": "140"},
+                    {"zoom": 99}, {"ir_mode": "night"}, {"power_line": "55"},
+                    {"gamma": 400}, {"schema": 2}, {"exposure_time": 100}, {}):
+            with self.assertRaises(self.e.common.OsConfigError, msg=bad):
+                self.c.set_settings(bad, fake)
+        self.c.set_settings({"exposure_manual": True, "exposure_time": 200}, fake)
+        with self.assertRaises(self.e.common.OsConfigError) as cm:
+            self.c.set_settings({"exposure_manual": False}, fake)
+        self.assertEqual(cm.exception.code, "EXPOSURE_ONE_WAY")
+
+    def test_absent_or_shed_camera_saves_for_later(self):
+        out = self.c.set_settings({"power_line": "60"})
+        self.assertEqual(out["result"], "SAVED_APPLIES_LATER")
+        self.assertEqual(self.c.load_config()[0]["power_line"], "60")
+        self.plug()
+        os.makedirs(os.path.dirname(self.c.SHED), exist_ok=True)
+        open(self.c.SHED, "w").close()
+        self.assertEqual(self.c.apply()["result"], "SAVED_APPLIES_LATER")
+
+    def test_defaults_resets_image_settings_only(self):
+        self.plug()
+        fake = FakeCameraIoctl(self.c)
+        self.c.set_settings({"brightness": 150, "zoom": 150, "ir_mode": "color",
+                             "power_line": "50"}, fake)
+        cfg = self.c.defaults(fake)["config"]
+        self.assertEqual((cfg["brightness"], cfg["zoom"]), (128, 100))
+        self.assertEqual((cfg["ir_mode"], cfg["power_line"]), ("color", "50"))
+
+    def test_version_and_status_cache(self):
+        self.plug()
+        self.assertIsNone(self.c.status()["firmware"])               # status never asks
+        out = self.c.version(FakeCameraIoctl(self.c))
+        self.assertEqual(out["firmware"], "UVC-UnionImage-CCX2F3298-240103V020")
+        self.assertEqual(self.c.status()["firmware"], out["firmware"])
+
+    def test_reset_clears_manual_exposure_before_the_reboot_and_reapplies(self):
+        self.plug()
+        fake = FakeCameraIoctl(self.c)
+        self.c.set_settings({"exposure_manual": True, "exposure_time": 200}, fake)
+        del fake.calls[:]
+        out = self.c.reset(ioctl=fake, sleep=lambda s: None)
+        self.assertEqual(out["result"], "RESET")
+        self.assertFalse(self.c.load_config()[0]["exposure_manual"])
+        self.assertEqual(fake.calls[0][:3], ("xu", 17, self.c.UVC_SET_CUR))
+        self.assertNotIn("exposure_auto", [c[1] for c in fake.calls if c[0] == "ctrl"])
+
+    def test_reset_refused_while_printing(self):
+        self.plug()
+        fake_busy(self.e.common, ["PRINTING"])
+        with self.assertRaises(self.e.common.Refused):
+            self.c.reset(ioctl=FakeCameraIoctl(self.c), sleep=lambda s: None)
+
+    def test_apply_failure_names_the_control(self):
+        self.plug()
+        with self.assertRaises(self.e.common.OsConfigError) as cm:
+            self.c.apply(ioctl=FakeCameraIoctl(self.c, fail_name="zoom"))
+        self.assertIn("zoom", cm.exception.message)
 
 
 class MaintenanceGateTests(unittest.TestCase):
@@ -3217,6 +3409,9 @@ class ComponentTests(unittest.TestCase):
         def get_str(self, key, default=None):
             return str(self.args[key])
 
+        def get(self, key, default=None):
+            return self.args.get(key, default)
+
         def get_int(self, key, default=None):
             return int(self.args[key])
 
@@ -3297,6 +3492,16 @@ class ComponentTests(unittest.TestCase):
         self.assertEqual(self.argv()[:2], ["spoolman", "remove"])
         self.call("/machine/nebulaos/spoolman/status")
         self.assertEqual(self.argv()[:2], ["spoolman", "status"])
+
+    def test_camera_endpoints(self):
+        """G121: the settings travel as JSON, no shell."""
+        self.call("/machine/nebulaos/camera/settings", {"settings": {"ir_mode": "bw; reboot"}})
+        self.assertEqual(self.argv()[:3], ["camera", "set", "--json"])
+        self.assertEqual(json.loads(self.argv()[3]), {"ir_mode": "bw; reboot"})
+        for path, verb in (("status", "status"), ("defaults", "defaults"),
+                           ("reset", "reset"), ("version", "version")):
+            self.call("/machine/nebulaos/camera/" + path)
+            self.assertEqual(self.argv()[:2], ["camera", verb])
 
     def test_static_ipv4_json(self):
         with self.assertRaises(Exception) as cm:

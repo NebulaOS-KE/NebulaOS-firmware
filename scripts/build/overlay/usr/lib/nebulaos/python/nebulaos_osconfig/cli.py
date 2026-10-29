@@ -34,6 +34,8 @@
 #   nebulaos-osconfig display status|sleep|wake
 #   nebulaos-osconfig display set-brightness --level 25|50|75|100
 #   nebulaos-osconfig spoolman status|remove | set --host HOST --port PORT   (G125)
+#   nebulaos-osconfig camera status|defaults|reset|version | set --json '{...}' |
+#                     apply [--device /dev/videoN]                       (G121)
 #   nebulaos-osconfig mcu status|list
 #   nebulaos-osconfig mcu flash --file ID --sha256 HEX   (ID and HEX from `list`)
 #   nebulaos-osconfig updates readiness                  (the last check, read-only)
@@ -46,8 +48,8 @@
 import json
 import sys
 
-from . import (bootdisplay, cleanup, common, display, image, logs, mcu, network, snapshot,
-               spoolman, system, updates, wifi)
+from . import (bootdisplay, camera, cleanup, common, display, image, logs, mcu, network,
+               snapshot, spoolman, system, updates, wifi)
 
 
 def _opts(args, allowed):
@@ -73,7 +75,8 @@ READ_ONLY = {("system", "info"), ("network", "status"),
              ("wifi", "status"), ("mcu", "status"), ("mcu", "list"),
              ("image", "list"), ("image", "status"), ("logs", "status"),
              ("settings", "status"), ("system", "storage"), ("system", "cleanup-plan"),
-             ("updates", "readiness"), ("system", "busy"), ("spoolman", "status")}
+             ("updates", "readiness"), ("system", "busy"), ("spoolman", "status"),
+             ("camera", "status")}
 
 # G27 (2026-10-12): every change is one line in the system log (persistent
 # system.log), success or failure. Read-only verbs are not logged (the screen
@@ -81,7 +84,7 @@ READ_ONLY = {("system", "info"), ("network", "status"),
 # Display sleep/wake run at every screen timeout, so only failures of those.
 _QUIET_OK = {("display", "sleep"), ("display", "wake"), ("boot-display", "render"),
              ("logs", "write-state"), ("logs", "expire-debug"),
-             ("updates", "check-readiness")}
+             ("updates", "check-readiness"), ("camera", "apply")}
 # Read-only verbs that ARE the domain's status/info function.
 _STATUS_ALIASES = {("system", "info"), ("mcu", "list"), ("image", "list")}
 # A snapshot is logged when one is taken, not when nothing changed.
@@ -171,12 +174,27 @@ def _dispatch(argv):
         return {"system": system.info, "network": network.status,
                 "boot-display": bootdisplay.status, "display": display.status,
                 "wifi": wifi.status, "logs": logs.status,
-                "settings": snapshot.status, "spoolman": spoolman.status}[domain]()
+                "settings": snapshot.status, "spoolman": spoolman.status,
+                "camera": camera.status}[domain]()
     if (domain, verb) == ("mcu", "flash"):
         # Its own non-blocking lock: a second flash is refused, never queued.
         opts = _opts(rest, {"file": True, "sha256": True})
         return mcu.flash(opts.get("file"), opts.get("sha256"))
     with common.Lock(domain):
+        if domain == "camera":
+            if verb == "set":
+                raw = _opts(rest, {"json": True}).get("json")
+                try:
+                    changes = json.loads(raw) if raw is not None else None
+                except ValueError:
+                    raise common.invalid("INVALID_CAMERA_SETTING", "--json is not valid JSON")
+                return camera.set_settings(changes)
+            if verb in ("defaults", "reset", "version"):
+                _opts(rest, {})
+                return {"defaults": camera.defaults, "reset": camera.reset,
+                        "version": camera.version}[verb]()
+            if verb == "apply":
+                return camera.apply(_opts(rest, {"device": True}).get("device"))
         if domain == "spoolman":
             if verb == "set":
                 o = _opts(rest, {"host": True, "port": True})

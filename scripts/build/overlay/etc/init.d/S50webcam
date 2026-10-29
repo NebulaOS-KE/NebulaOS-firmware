@@ -170,6 +170,30 @@ uvc_node_still_present() {
 	readlink "$SYSFS_ROOT/class/video4linux/$n/device/driver" 2>/dev/null | grep -q '/uvcvideo$'
 }
 
+# G121 (Run 22): the Nebula Camera keeps no setting over a reboot, power cycle
+# or USB re-enumeration, so the saved ones (nebulaos-osconfig camera, camera/
+# camera.json) are applied again whenever the served node's USB device
+# changes (busnum:devnum - boot, replug, a camera reset; also when the same
+# /dev name comes back, which the CAM-01 shortcut otherwise never notices).
+# sysfs only (does not wake a suspended camera); the apply runs in the
+# background and refuses itself for any other camera (USB id check).
+OSCONFIG="${NEBULAOS_OSCONFIG:-/usr/libexec/nebulaos/nebulaos-osconfig}"
+camera_identity() {
+	n=${1#/dev/}
+	b=$(cat "$SYSFS_ROOT/class/video4linux/$n/device/../busnum" 2>/dev/null)
+	d=$(cat "$SYSFS_ROOT/class/video4linux/$n/device/../devnum" 2>/dev/null)
+	[ -n "$b" ] && [ -n "$d" ] && echo "$b:$d"
+}
+apply_camera_settings_once() {
+	id=$(camera_identity "$1")
+	[ -n "$id" ] || return 0
+	[ "$id" = "${applied_id:-}" ] && return 0
+	applied_id=$id
+	[ -x "$OSCONFIG" ] || return 0
+	echo "S50webcam: camera $1 ($id) - applying the saved camera settings"
+	( "$OSCONFIG" camera apply --device "$1" >/dev/null 2>&1 & )
+}
+
 ustreamer_running_on() {
 	dev="$1"
 	[ -f "$USTREAMER_PIDFILE" ] || return 1
@@ -267,6 +291,7 @@ supervise_tick() {
 	# CAM-01: while ustreamer serves a node that is still present, do not
 	# re-open it for discovery.
 	if [ -n "$last_dev" ] && ustreamer_running_on "$last_dev" && uvc_node_still_present "$last_dev"; then
+		apply_camera_settings_once "$last_dev"
 		return 0
 	fi
 	dev=$(discover_uvc_device)
@@ -283,6 +308,7 @@ supervise_tick() {
 			fi
 			start_ustreamer "$dev"
 			started_at=$now
+			apply_camera_settings_once "$dev"
 		fi
 	else
 		# No webcam right now - if something is still running (e.g.

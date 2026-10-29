@@ -49,6 +49,12 @@ start_ustreamer() { STARTS=$((STARTS + 1)); RUNNING=$1; echo 4242 > "$USTREAMER_
 stop_ustreamer() { RUNNING=""; rm -f "$USTREAMER_PIDFILE"; rm -rf "$PROC_ROOT/4242"; }
 crash() { RUNNING=""; rm -rf "$PROC_ROOT/4242"; }   # process gone, pidfile left behind
 
+# G121: the camera-settings apply is recorded, never run
+OSCONFIG="$WORK/osconfig"
+printf '#!/bin/sh\necho "$*" >> %s/apply.calls\n' "$WORK" > "$OSCONFIG"; chmod +x "$OSCONFIG"
+applies() { n=$(cat "$WORK/apply.calls" 2>/dev/null | wc -l); echo $((n + 0)); }
+usbid() { echo "$2" > "$SYSFS_ROOT/class/video4linux/$1/busnum"; echo "$3" > "$SYSFS_ROOT/class/video4linux/$1/devnum"; }
+
 uvc_node video0 0 uvcvideo
 uvc_node video1 1 uvcvideo
 uvc_node video9 0 other
@@ -111,6 +117,24 @@ t=$((t + 300)); settime $t; supervise_tick
 expect "300 s of continuous running resets the backoff" "$backoff" 0
 t=$((t + 120)); settime $t; crash; supervise_tick
 expect "a crash after the window does not back off" "$backoff" 0
+
+# --- G121: saved camera settings applied once per USB device ---
+applied_id=; RUNNING=""; rm -f "$USTREAMER_PIDFILE" "$WORK/apply.calls"; hold_until=0; started_at=
+uvc_node video5 0 uvcvideo
+usbid video5 1 7
+DEV_PRESENT=/dev/video5; last_dev=
+supervise_tick
+sleep 0.2
+expect "start applies the saved camera settings once" "$(applies)" 1
+supervise_tick; supervise_tick
+sleep 0.2
+expect "same USB device: no second apply" "$(applies)" 1
+usbid video5 1 8                                   # camera reset / re-enumerated, same /dev name
+supervise_tick
+sleep 0.2
+expect "same node, new USB device: applied again" "$(applies)" 2
+grep -q -- "camera apply --device /dev/video5" "$WORK/apply.calls" \
+	&& pass "apply names the device" || fail "apply args: $(cat "$WORK/apply.calls")"
 
 echo "webcam-supervisor-discovery-tests: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
