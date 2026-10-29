@@ -183,11 +183,15 @@ reset itself, normal boot). A watchdog reset is the same hardware reset as a sof
 platform reboot is a WDT reset, `soc-x2000/reset.c`), so:
 
 - a confirmed image boots the same slot again;
-- during an unconfirmed image trial every start is counted (once per boot, in the TRIAL record,
-  before the wait - G122). A reset before the verdict therefore uses up one attempt; the start
-  after 3 unconfirmed ones goes back to the previous slot at once (LAST note "the new system
-  restarted 3 times before it was confirmed"). A new image that reliably freezes early ends in a
-  rollback after a few minutes, not in a loop;
+- during an unconfirmed image trial every start is counted (once per boot, in the TRIAL record)
+  by S02nebulaos-watchdog BEFORE it arms (`image trial-count`) - so a freeze anywhere in the boot,
+  not only during S99's wait, uses up one start (G122). After 3 unconfirmed starts the 4th boot
+  is not armed and S99 goes back to the previous slot at once (LAST note "the new system
+  restarted 3 times before it was confirmed"). Bounded: at most 3 watchdog resets, then the
+  rollback; if that 4th boot itself freezes before S99, it hangs (no watchdog) and needs a human;
+- installs that write no TRIAL record (the Hardware Agent install, Creality's own updater) have
+  no automatic rollback: a new image that freezes there resets every ~60 s until a human
+  recovers it (USB, or the Hardware Agent) - the watchdog opt-out is system/watchdog.disable;
 - a clean `reboot`/`poweroff` runs rcK, which stops the feeder with SIGTERM (magic close), so
   it never fires; `halt -f` skips rcK and leaves it armed - the printer resets after ~60 s;
 - Creality's stock rootfs never opens `/dev/watchdog`; a stock boot is unaffected.

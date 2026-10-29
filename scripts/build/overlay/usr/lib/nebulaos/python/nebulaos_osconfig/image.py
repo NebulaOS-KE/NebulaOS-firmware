@@ -975,6 +975,19 @@ def _count_attempt(t):
     return attempts
 
 
+def count_start():
+    """G122 + watchdog (Run 22 review): S02nebulaos-watchdog calls this BEFORE
+    it arms, so a freeze anywhere between S02 and S99's trial still uses up a
+    start (the count is once per boot - trial() at S99 sees it done). After
+    TRIAL_ATTEMPTS unconfirmed starts the watchdog stays off for this boot
+    ("arm": false) and trial() goes back at once."""
+    t, _ = common.read_json(TRIAL)
+    if not t or system.boot_slot() != t.get("to"):
+        return {"result": "NO_TRIAL", "arm": True}
+    attempts = _count_attempt(t)
+    return {"result": "COUNTED", "attempts": attempts, "arm": attempts <= TRIAL_ATTEMPTS}
+
+
 def trial():
     """First boot after an install or a switch into an unconfirmed slot:
     confirm the slot, or go back ONCE. The verdict waits while a print runs

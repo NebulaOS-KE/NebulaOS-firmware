@@ -697,6 +697,8 @@ def op_stage_stock_update(args):
                 raise AgentRefusal("not enough space on /usr/data (%d bytes free, %d needed)"
                                    % (free, size + (64 << 20)))
             name = os.path.basename(local)
+            if not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", name):
+                raise AgentRefusal("the .img file name %r is not a plain name" % name)
             remote = "%s/%s" % (STOCK_UPDATE_DIR, name)
             session._run("mkdir -p %s" % STOCK_UPDATE_DIR)
             session._scp(local, remote)
@@ -739,6 +741,11 @@ def op_stage_stock_update(args):
             say("HUMAN_COMMAND_ON_STOCK=%s %s" % (STOCK_UPDATER, remote))
             say("# Run that one command over ssh on stock (root@%s). It writes slot 2 and "
                 "boots it; then run `verify`." % address)
+            say("WARNING=do NOT power-cycle the printer while it runs Creality stock: a stock "
+                "power-on can flash old Creality firmware into the mainboard. Run the command "
+                "now; a soft reboot is safe.")
+            say("# The copy stays in %s; remove it after the install (rm -rf %s)."
+                % (STOCK_UPDATE_DIR, STOCK_UPDATE_DIR))
             say("RUN_NEBULAOS_HARDWARE=STOCK_UPDATE_STAGED")
             return 0
     raise AgentRefusal("the printer did not come back as Creality stock within %d s (last: %s); "

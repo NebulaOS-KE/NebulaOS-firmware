@@ -52,6 +52,23 @@ run stop
 case "$(calls)" in *"-K -s TERM -p $WORK/wd.pid"*) pass "stop sends TERM (magic close), never KILL" ;; *) fail "stop: $(calls)" ;; esac
 [ ! -e "$WORK/wd.pid" ] && pass "stop removes the pidfile" || fail "pidfile left"
 
+# Run 22 review: a pending trial is counted before arming; after 3 starts no arming
+printf '#!/bin/sh\necho "$*" >> %s/osc.calls\ncat %s/osc.out 2>/dev/null\n' "$WORK" "$WORK" > "$WORK/osconfig"
+chmod +x "$WORK/osconfig"
+export NEBULAOS_OSCONFIG="$WORK/osconfig" NEBULAOS_IMAGE_TRIAL="$WORK/trial.json"
+run start
+[ ! -e "$WORK/osc.calls" ] && pass "no trial: no trial-count call" || fail "trial-count without a trial"
+: > "$WORK/trial.json"
+echo '{"ok": true, "result": "COUNTED", "attempts": 2, "arm": true}' > "$WORK/osc.out"
+run start
+grep -q "image trial-count" "$WORK/osc.calls" && [ -n "$(calls)" ] \
+	&& pass "trial pending: counted, then armed" || fail "trial arm: $(cat "$WORK/osc.calls" 2>/dev/null) / $(calls)"
+echo '{"ok": true, "result": "COUNTED", "attempts": 4, "arm": false}' > "$WORK/osc.out"
+run start
+[ -z "$(calls)" ] && case "$out" in *"not armed"*) true ;; *) false ;; esac \
+	&& pass "4th unconfirmed start: not armed" || fail "not-armed: calls=$(calls) out=$out"
+rm -f "$WORK/trial.json"
+
 V="$REPO_ROOT/scripts/build/06-verify.sh"
 grep -q 'check_required /etc/init.d/S02nebulaos-watchdog' "$V" && grep -q 'check_required /sbin/watchdog' "$V" \
 	&& pass "06-verify requires the feeder and /sbin/watchdog (build fails without)" || fail "06-verify does not require the feeder"

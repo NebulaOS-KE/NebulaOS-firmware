@@ -19,16 +19,18 @@
 # Stop sends SIGTERM: BusyBox watchdog writes the magic 'V' and closes, the
 # driver stops the counter, so a clean reboot/poweroff (rcK) never fires it.
 # `halt -f` (no rcK) leaves it armed: the printer resets after ~60 s.
-# A watchdog reset during an unconfirmed image trial does not count as a
-# failed boot (docs/A_B_SLOT_MODEL.md).
+# During an unconfirmed image trial every start is counted HERE, before
+# arming (image trial-count, once per boot): a freeze anywhere in the boot
+# uses up a start; after 3 unconfirmed starts this boot is not armed and S99
+# goes back to the previous slot (G122, docs/A_B_SLOT_MODEL.md).
 #
 # ON by default (Run 22, Tim 2026-10-28) after watchdog-arm and watchdog-fire
 # passed on ke-dev (2026-10-28): it arms unless
 # $NEBULAOS_SYSTEM_DIR/watchdog.disable exists (the opt-out). The kernel fix
 # that makes arming safe (start() programs the timeout and clears the counter
 # before enabling) is NebulaOS-kernel f28a670 (+ 38c467b marker). A new image
-# that freezes early cannot loop: the image trial counts its starts and goes
-# back after 3 unconfirmed ones (G122, nebulaos_osconfig/image.py).
+# that freezes early is bounded: each start is counted below before arming,
+# and the 4th unconfirmed start is not armed (S99 then goes back).
 #
 # The daemon keeps no fd or cwd on /usr/data (the datafs repair kills the
 # holders of /usr/data): the switch file is read once, the daemon starts
@@ -38,6 +40,8 @@ DAEMON=/sbin/watchdog
 DEVICE="${NEBULAOS_WATCHDOG_DEVICE:-/dev/watchdog}"
 PIDFILE="${NEBULAOS_WATCHDOG_PIDFILE:-/var/run/nebulaos-watchdog.pid}"
 NEBULAOS_SYSTEM_DIR="${NEBULAOS_SYSTEM_DIR:-/usr/data/nebulaos/system}"
+TRIAL="${NEBULAOS_IMAGE_TRIAL:-/usr/data/nebulaos/system/image-update-trial.json}"
+OSCONFIG="${NEBULAOS_OSCONFIG:-/usr/libexec/nebulaos/nebulaos-osconfig}"
 WDT_TIMEOUT=60
 WDT_FEED=10
 
@@ -49,6 +53,13 @@ start() {
 	if [ -e "$NEBULAOS_SYSTEM_DIR/watchdog.disable" ]; then
 		echo "nebulaos-watchdog: disabled ($NEBULAOS_SYSTEM_DIR/watchdog.disable)"
 		return 0
+	fi
+	if [ -f "$TRIAL" ] && [ -x "$OSCONFIG" ]; then
+		case "$("$OSCONFIG" image trial-count 2>/dev/null)" in
+			*'"arm": false'*)
+				echo "nebulaos-watchdog: the new system did not start properly 3 times - not armed, S99 goes back"
+				return 0 ;;
+		esac
 	fi
 	if [ ! -c "$DEVICE" ]; then
 		echo "nebulaos-watchdog: $DEVICE missing, not armed"

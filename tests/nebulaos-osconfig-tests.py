@@ -3224,6 +3224,25 @@ class ImageTests(unittest.TestCase):
         self.assertEqual(last["result"], "ROLLED_BACK")
         self.assertIn("restarted 3 times", last["note"])
 
+    def test_trial_count_before_the_watchdog_arms(self):
+        """Run 22 review: S02 counts the start before arming; S99's trial()
+        then does not count the same boot again; the 4th start is not armed."""
+        self.cmdline("A")
+        self.assertEqual(self.i.count_start(), {"result": "NO_TRIAL", "arm": True})
+        self.trial_file()
+        for n in (1, 2, 3):
+            self.boot("boot-%d" % n)
+            out = self.i.count_start()
+            self.assertEqual((out["attempts"], out["arm"]), (n, True))
+            self.assertEqual(self.i.count_start()["attempts"], n)          # once per boot
+        self.boot("boot-4")
+        out = self.i.count_start()
+        self.assertEqual((out["attempts"], out["arm"]), (4, False))
+        self.i._klipper_ready = lambda: True
+        self.i._gui_running = lambda: True
+        self.i.TRIAL_POLL = 0
+        self.assertEqual(self.i.trial()["result"], "ROLLED_BACK")         # not counted twice
+
     def test_trial_third_start_still_gets_its_chance(self):
         self.cmdline("A")
         self.trial_file()

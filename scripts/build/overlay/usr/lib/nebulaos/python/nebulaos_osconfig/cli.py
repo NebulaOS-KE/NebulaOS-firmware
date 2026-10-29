@@ -85,7 +85,8 @@ READ_ONLY = {("system", "info"), ("network", "status"),
 # Display sleep/wake run at every screen timeout, so only failures of those.
 _QUIET_OK = {("display", "sleep"), ("display", "wake"), ("boot-display", "render"),
              ("logs", "write-state"), ("logs", "expire-debug"),
-             ("updates", "check-readiness"), ("camera", "apply")}
+             ("updates", "check-readiness"), ("camera", "apply"),
+             ("image", "trial-count")}
 # Read-only verbs that ARE the domain's status/info function.
 _STATUS_ALIASES = {("system", "info"), ("mcu", "list"), ("image", "list")}
 # A snapshot is logged when one is taken, not when nothing changed.
@@ -145,6 +146,9 @@ def _dispatch(argv):
     if (domain, verb) == ("image", "trial"):
         _opts(rest, {})
         return image.trial()
+    if (domain, verb) == ("image", "trial-count"):
+        _opts(rest, {})
+        return image.count_start()
     if (domain, verb) == ("image", "worker"):
         o = _opts(rest, {"file": True, "sha256": True, "holder": True})
         image.run_job(o.get("file"), o.get("sha256"), o.get("holder"))
