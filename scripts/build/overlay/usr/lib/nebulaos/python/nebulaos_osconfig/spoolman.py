@@ -11,8 +11,9 @@
 # section's `server` line is touched - every other line, comment and option
 # (sync_rate, ...) stays as it is; the file is written atomically. Not an
 # [include]: Moonraker refuses to start on an include that matches no file.
-# The Moonraker restart that makes it take effect is done by the Moonraker
-# component (usr/lib/nebulaos/moonraker/nebulaos.py), after this returns.
+# Moonraker reads it only at start: a change returns restart: "moonraker" and
+# the caller restarts it (machine.services.restart moonraker, like the
+# hostname).
 # Refused while the printer is busy (G91 maintenance lock + request profile).
 import os
 import re

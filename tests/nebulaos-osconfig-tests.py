@@ -3290,29 +3290,13 @@ class ComponentTests(unittest.TestCase):
         self.assertEqual(self.server.events[-1][0], "nebulaos:settings_changed")
 
     def test_spoolman_endpoints(self):
-        """G125: argv without a shell; a change schedules ONE Moonraker restart
-        (after the reply), nothing else does."""
+        """G125: argv without a shell (the caller restarts Moonraker)."""
         self.call("/machine/nebulaos/spoolman/server", {"host": "10.0.0.5", "port": 7912})
         self.assertEqual(self.argv()[:6], ["spoolman", "set", "--host", "10.0.0.5", "--port", "7912"])
         self.call("/machine/nebulaos/spoolman/remove")
         self.assertEqual(self.argv()[:2], ["spoolman", "remove"])
         self.call("/machine/nebulaos/spoolman/status")
         self.assertEqual(self.argv()[:2], ["spoolman", "status"])
-        later = []
-
-        class Loop(object):
-            def call_later(self, delay, cb):
-                later.append(delay)
-        real = self.mod.asyncio
-        self.mod.asyncio = types.SimpleNamespace(get_running_loop=lambda: Loop())
-        try:
-            self.assertEqual(self.comp._restart_after({"result": "UNCHANGED"}), {"result": "UNCHANGED"})
-            self.assertEqual(later, [])
-            self.comp._restart_after({"result": "APPLIED", "restart": "moonraker"})
-            self.assertEqual(later, [1.0])
-        finally:
-            self.mod.asyncio = real
-        self.assertEqual(self.mod.MOONRAKER_INIT, "/etc/init.d/S56moonraker")
 
     def test_static_ipv4_json(self):
         with self.assertRaises(Exception) as cm:
