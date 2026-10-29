@@ -97,9 +97,12 @@ switches back once. A kernel that doesn't start at all needs USB recovery
 Details: [`docs/RELEASE_ARTIFACTS.md`](docs/RELEASE_ARTIFACTS.md),
 [`docs/DEVELOPER_RECOVERY.md`](docs/DEVELOPER_RECOVERY.md).
 
-**Not there yet:** over-the-internet OTA, where the printer downloads a new NebulaOS image itself
-(gap G79), is planned. Today a system image always comes from USB or a Mainsail upload. Images are
-integrity-checked but not signed.
+**Over the internet** (G79): System image > Online asks the latest release of
+[`NebulaOS-KE/NebulaOS`](https://github.com/NebulaOS-KE/NebulaOS/releases) for a newer version
+(`nebulaos-osconfig ota check`), downloads the `.img` over HTTPS from github.com only and keeps it
+when its size and sha256 match the release record (`ota download`); it is then installed like any
+other image (source `ota/`). There is no signing key: trust is GitHub's HTTPS plus the checksum.
+Releases are built by that repository's release workflow from `scripts/release/` here.
 
 ## Building
 
