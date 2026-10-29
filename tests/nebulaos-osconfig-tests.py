@@ -12,6 +12,7 @@
 # Usage: python3 tests/nebulaos-osconfig-tests.py
 import asyncio
 import array
+import subprocess
 import importlib
 import importlib.util
 import io
@@ -104,6 +105,11 @@ class Env(object):
             # G121: never the host's cameras
             "NEBULAOS_SYS_V4L": os.path.join(self.tmp, "sys-v4l"),
             "NEBULAOS_CAMERA_RESET_WAIT": "3",
+            # G79: never the host's keyring, version file or the internet
+            "NEBULAOS_OTA_KEYRING": os.path.join(self.tmp, "ota-keys"),
+            "NEBULAOS_VERSION_FILE": os.path.join(self.tmp, "nebulaos-version.json"),
+            "NEBULAOS_OTA_CHANNEL": "https://example.invalid/releases/latest",
+            "NEBULAOS_OPENSSL": shutil.which("openssl") or "/usr/bin/openssl",
         })
         if PYLIB not in sys.path:
             sys.path.insert(0, PYLIB)
@@ -112,7 +118,7 @@ class Env(object):
                 del sys.modules[name]
         self.pkg = importlib.import_module("nebulaos_osconfig")
         for mod in ("common", "network", "display", "bootdisplay", "system", "wifi", "mcu", "image",
-                    "spoolman", "camera", "cli"):
+                    "spoolman", "camera", "ota", "cli"):
             setattr(self, mod, importlib.import_module("nebulaos_osconfig." + mod))
 
     def netapply_script(self, apply_rcs):
@@ -1378,6 +1384,104 @@ class CameraTests(unittest.TestCase):
         with self.assertRaises(self.e.common.OsConfigError) as cm:
             self.c.apply(ioctl=FakeCameraIoctl(self.c, fail_name="zoom"))
         self.assertIn("zoom", cm.exception.message)
+
+
+class OtaTests(unittest.TestCase):
+    """G79 S1/S2: the owner's signing tool and the printer's check - a real
+    Ed25519 key made here, never shipped."""
+    SIGN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tools", "release",
+                        "sign-release.py")
+
+    def setUp(self):
+        self.e = Env()
+        self.o = self.e.ota
+        fake_busy(self.e.common, [None])
+        self.keys = os.path.join(self.e.tmp, "owner")
+        os.makedirs(self.keys)
+        self.priv = os.path.join(self.keys, "owner.pem")
+        subprocess.check_call(["openssl", "genpkey", "-algorithm", "ed25519", "-out", self.priv])
+        os.makedirs(self.o.KEYRING)
+        subprocess.check_call(["openssl", "pkey", "-in", self.priv, "-pubout",
+                               "-out", os.path.join(self.o.KEYRING, "test-2026.pem")])
+        json.dump({"version": "0.9.0"}, open(self.o.VERSION_FILE, "w"))
+        self.img = os.path.join(self.e.tmp, "NebulaOS-Ender3V3KE-0.9.1.img")
+        open(self.img, "wb").write(b"IMG" * 1000)
+
+    def tearDown(self):
+        self.e.cleanup()
+
+    def signed(self, version="0.9.1", extra=()):
+        out = os.path.join(self.e.tmp, "rel-" + version)
+        subprocess.check_call([sys.executable, self.SIGN, "--img", self.img, "--version", version,
+                               "--source-head", "a" * 40, "--key", self.priv, "--out", out]
+                              + list(extra), stdout=subprocess.DEVNULL)
+        return (open(os.path.join(out, "nebulaos-release.json"), "rb").read(),
+                open(os.path.join(out, "nebulaos-release.json.sig"), "rb").read())
+
+    def fetcher(self, data, sig):
+        listing = json.dumps({"assets": [
+            {"name": "nebulaos-release.json", "browser_download_url": "https://x/r.json"},
+            {"name": "nebulaos-release.json.sig", "browser_download_url": "https://x/r.sig"}]}).encode()
+        answers = {self.o.CHANNEL_URL: listing, "https://x/r.json": data, "https://x/r.sig": sig}
+        return lambda url, limit: answers[url]
+
+    def test_signature_over_the_raw_bytes(self):
+        data, sig = self.signed()
+        self.assertEqual(self.o.verify_signature(data, sig), "test-2026.pem")
+        self.assertIsNone(self.o.verify_signature(data.replace(b"0.9.1", b"0.9.2"), sig))
+        self.assertIsNone(self.o.verify_signature(data + b" ", sig))
+        other = os.path.join(self.keys, "other.pem")
+        subprocess.check_call(["openssl", "genpkey", "-algorithm", "ed25519", "-out", other])
+        pub = os.path.join(self.keys, "other-pub.pem")
+        subprocess.check_call(["openssl", "pkey", "-in", other, "-pubout", "-out", pub])
+        self.assertIsNone(self.o.verify_signature(data, sig, [pub]))     # wrong key
+        self.assertIsNone(self.o.verify_signature(data, sig, []))        # no keyring
+
+    def test_record_fields(self):
+        data, _ = self.signed(extra=["--min-version", "0.9.0"])
+        rec = self.o.parse_record(data)
+        self.assertEqual((rec["version"], rec["img"]["size"]), ("0.9.1", 3000))
+        for bad in (b"[]", b"{", json.dumps({"ota_schema": 2}).encode(),
+                    data.replace(b'"stable"', b'"beta"'),
+                    data.replace(b'"NebulaOS-Ender3V3KE"', b'"Other"')):
+            with self.assertRaises(self.e.common.OsConfigError):
+                self.o.parse_record(bad)
+
+    def test_offer(self):
+        data, _ = self.signed(extra=["--min-version", "0.8.5", "--max-version", "0.9.0"])
+        rec = self.o.parse_record(data)
+        self.assertEqual(self.o.offer(rec, "0.9.0"), (True, "AVAILABLE"))
+        self.assertEqual(self.o.offer(rec, "0.9.1"), (False, "UP_TO_DATE"))
+        self.assertEqual(self.o.offer(rec, "1.0.0"), (False, "UP_TO_DATE"))
+        self.assertEqual(self.o.offer(rec, "0.8.0"), (False, "NOT_FROM_THIS_VERSION"))
+        self.assertEqual(self.o.offer(rec, None), (False, "RUNNING_VERSION_UNKNOWN"))
+
+    def test_check_available_then_cached(self):
+        data, sig = self.signed()
+        out = self.o.check(fetch=self.fetcher(data, sig), now=1800000000)
+        self.assertEqual((out["result"], out["available"], out["version"]), ("AVAILABLE", True, "0.9.1"))
+        self.assertEqual(self.o.status()["last"]["version"], "0.9.1")
+        self.assertEqual(self.o.check(fetch=None, now=1800000100)["result"], "CACHED")
+
+    def test_check_refuses_a_forged_record(self):
+        data, sig = self.signed()
+        out = self.o.check(force=True, fetch=self.fetcher(data.replace(b"0.9.1", b"9.9.9"), sig),
+                           now=1800000000)
+        self.assertEqual((out["result"], out["available"]), ("SIGNATURE_REFUSED", False))
+
+    def test_check_without_keys_offline_clock_busy(self):
+        shutil.rmtree(self.o.KEYRING)
+        self.assertEqual(self.o.check(force=True, now=1800000000)["result"], "NO_KEYS")
+        os.makedirs(self.o.KEYRING)
+        subprocess.check_call(["openssl", "pkey", "-in", self.priv, "-pubout",
+                               "-out", os.path.join(self.o.KEYRING, "k.pem")])
+        def offline(url, limit):
+            raise OSError("network unreachable")
+        self.assertEqual(self.o.check(force=True, fetch=offline, now=1800000000)["result"], "OFFLINE")
+        self.assertEqual(self.o.check(force=True, fetch=offline, now=1000)["result"], "CLOCK_NOT_SET")
+        fake_busy(self.e.common, ["PRINTING"])
+        with self.assertRaises(self.e.common.Refused):
+            self.o.check(force=True, fetch=offline, now=1800000000)
 
 
 class MaintenanceGateTests(unittest.TestCase):

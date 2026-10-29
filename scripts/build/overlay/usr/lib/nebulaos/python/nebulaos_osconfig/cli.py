@@ -36,6 +36,7 @@
 #   nebulaos-osconfig spoolman status|remove | set --host HOST --port PORT   (G125)
 #   nebulaos-osconfig camera status|defaults|reset|version | set --json '{...}' |
 #                     apply [--device /dev/videoN]                       (G121)
+#   nebulaos-osconfig ota status | check [--force]     (G79 S2: signed release check)
 #   nebulaos-osconfig mcu status|list
 #   nebulaos-osconfig mcu flash --file ID --sha256 HEX   (ID and HEX from `list`)
 #   nebulaos-osconfig updates readiness                  (the last check, read-only)
@@ -49,7 +50,7 @@ import json
 import sys
 
 from . import (bootdisplay, camera, cleanup, common, display, image, logs, mcu, network,
-               snapshot, spoolman, system, updates, wifi)
+               ota, snapshot, spoolman, system, updates, wifi)
 
 
 def _opts(args, allowed):
@@ -76,7 +77,7 @@ READ_ONLY = {("system", "info"), ("network", "status"),
              ("image", "list"), ("image", "status"), ("logs", "status"),
              ("settings", "status"), ("system", "storage"), ("system", "cleanup-plan"),
              ("updates", "readiness"), ("system", "busy"), ("spoolman", "status"),
-             ("camera", "status")}
+             ("camera", "status"), ("ota", "status")}
 
 # G27 (2026-10-12): every change is one line in the system log (persistent
 # system.log), success or failure. Read-only verbs are not logged (the screen
@@ -175,12 +176,15 @@ def _dispatch(argv):
                 "boot-display": bootdisplay.status, "display": display.status,
                 "wifi": wifi.status, "logs": logs.status,
                 "settings": snapshot.status, "spoolman": spoolman.status,
-                "camera": camera.status}[domain]()
+                "camera": camera.status, "ota": ota.status}[domain]()
     if (domain, verb) == ("mcu", "flash"):
         # Its own non-blocking lock: a second flash is refused, never queued.
         opts = _opts(rest, {"file": True, "sha256": True})
         return mcu.flash(opts.get("file"), opts.get("sha256"))
     with common.Lock(domain):
+        if domain == "ota":
+            if verb == "check":
+                return ota.check(force=bool(_opts(rest, {"force": False}).get("force")))
         if domain == "camera":
             if verb == "set":
                 raw = _opts(rest, {"json": True}).get("json")
