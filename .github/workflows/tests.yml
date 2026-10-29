@@ -18,10 +18,26 @@ jobs:
         with:
           fetch-depth: 0
       - name: Host tools the tests use
-        run: sudo apt-get update -q && sudo apt-get install -y -q p7zip-full whois squashfs-tools u-boot-tools jq
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q p7zip-full whois squashfs-tools u-boot-tools jq python3-pil
+          # The scripts run under the printer's busybox ash; Ubuntu's /bin/sh
+          # is dash, which lacks what ash and bash share ([[ ]]).
+          sudo ln -sf bash /usr/bin/sh
+      - name: Pinned host Klipper (vendor/klipper, for the real-reactor tests)
+        run: |
+          set -euo pipefail
+          . manifests/dependencies.conf
+          git init -q vendor/klipper
+          git -C vendor/klipper fetch -q --depth 1 "$KLIPPER_REPO" "$KLIPPER_PIN"
+          git -C vendor/klipper checkout -q FETCH_HEAD
+          pip install -q --break-system-packages -r vendor/klipper/scripts/klippy-requirements.txt
       - name: Tests
         env:
           NEBULAOS_TEST_LOGS: ${{ runner.temp }}/test-logs
+          # These check the installed workspace control around the repository
+          # (hooks, tools/), which only exists in a NebulaOS workspace.
+          NEBULAOS_TEST_SKIP: workspace-control-privilege-guard-tests.sh
         run: |
           set -o pipefail
           tests/run-all.sh | tee -a "$GITHUB_STEP_SUMMARY"
