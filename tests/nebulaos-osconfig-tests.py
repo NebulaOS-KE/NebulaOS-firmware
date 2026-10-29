@@ -98,6 +98,8 @@ class Env(object):
             # S34 reboot grace: never the host's printer.cfg or /proc
             "NEBULAOS_PRINTER_CFG": os.path.join(self.tmp, "printer.cfg"),
             "NEBULAOS_PROC_DIR": os.path.join(self.tmp, "proc"),
+            # G125: never the host's moonraker.conf
+            "NEBULAOS_MOONRAKER_CONF": os.path.join(self.tmp, "moonraker.conf"),
         })
         if PYLIB not in sys.path:
             sys.path.insert(0, PYLIB)
@@ -106,7 +108,7 @@ class Env(object):
                 del sys.modules[name]
         self.pkg = importlib.import_module("nebulaos_osconfig")
         for mod in ("common", "network", "display", "bootdisplay", "system", "wifi", "mcu", "image",
-                    "cli"):
+                    "spoolman", "cli"):
             setattr(self, mod, importlib.import_module("nebulaos_osconfig." + mod))
 
     def netapply_script(self, apply_rcs):
@@ -1118,6 +1120,72 @@ class WifiTests(unittest.TestCase):
         finally:
             sys.stdin = old
         self.assertEqual((rc, out["result"]), (0, "CONNECTED"))
+
+
+class SpoolmanTests(unittest.TestCase):
+    """G125 (Run 22): the Spoolman server in moonraker.conf [spoolman] - only
+    its server line changes, everything else in the file stays."""
+    CONF = ("[server]\nhost: 0.0.0.0\n\n# my notes\n[spoolman]\nserver: http://10.0.0.5:7912\n"
+            "sync_rate: 5\n\n[update_manager]\nchannel: stable\n")
+
+    def setUp(self):
+        self.e = Env()
+        self.s = self.e.spoolman
+        fake_busy(self.e.common, [None])
+
+    def tearDown(self):
+        self.e.cleanup()
+
+    def conf(self, text=None):
+        if text is not None:
+            open(self.s.MOONRAKER_CONF, "w").write(text)
+        return open(self.s.MOONRAKER_CONF).read()
+
+    def test_status(self):
+        self.conf("[server]\nhost: 0.0.0.0\n")
+        self.assertEqual(self.s.status(), {"configured": False, "server": None,
+                                           "host": None, "port": None})
+        self.conf(self.CONF)
+        st = self.s.status()
+        self.assertEqual((st["configured"], st["host"], st["port"]), (True, "10.0.0.5", 7912))
+
+    def test_set_changes_only_the_server_line(self):
+        self.conf(self.CONF)
+        out = self.s.set_server("192.168.0.20", "7913")
+        self.assertEqual((out["result"], out["restart"], out["port"]), ("APPLIED", "moonraker", 7913))
+        self.assertEqual(self.conf(), self.CONF.replace("http://10.0.0.5:7912", "http://192.168.0.20:7913"))
+        self.assertEqual(self.s.set_server("192.168.0.20", 7913)["result"], "UNCHANGED")
+
+    def test_set_adds_the_section_when_missing(self):
+        self.conf("[server]\nhost: 0.0.0.0\n\n\n")
+        self.s.set_server("spoolman.local", 7912)
+        self.assertEqual(self.conf(), "[server]\nhost: 0.0.0.0\n\n[spoolman]\nserver: http://spoolman.local:7912\n")
+        self.conf("[spoolman]\nsync_rate: 5\n")                       # section without server
+        self.s.set_server("10.0.0.9", 80)
+        self.assertEqual(self.conf(), "[spoolman]\nserver: http://10.0.0.9:80\nsync_rate: 5\n")
+
+    def test_remove(self):
+        self.conf(self.CONF)
+        self.assertEqual(self.s.remove()["result"], "APPLIED")
+        self.assertEqual(self.conf(), "[server]\nhost: 0.0.0.0\n\n# my notes\n[update_manager]\nchannel: stable\n")
+        self.assertEqual(self.s.remove()["result"], "UNCHANGED")
+
+    def test_invalid_input_writes_nothing(self):
+        self.conf(self.CONF)
+        for host, port in (("", 7912), ("a b", 7912), ("x;reboot", 7912), ("-x", 1),
+                           ("10.0.0.5", 0), ("10.0.0.5", 70000), ("10.0.0.5", "abc")):
+            with self.assertRaises(self.e.common.OsConfigError, msg=(host, port)):
+                self.s.set_server(host, port)
+        self.assertEqual(self.conf(), self.CONF)
+
+    def test_refused_while_printing(self):
+        self.conf(self.CONF)
+        fake_busy(self.e.common, ["PRINTING"])
+        with self.assertRaises(self.e.common.Refused):
+            self.s.set_server("10.0.0.6", 7912)
+        with self.assertRaises(self.e.common.Refused):
+            self.s.remove()
+        self.assertEqual(self.conf(), self.CONF)
 
 
 class MaintenanceGateTests(unittest.TestCase):
@@ -3220,6 +3288,31 @@ class ComponentTests(unittest.TestCase):
         self.call("/machine/nebulaos/display/wake")
         self.assertEqual(self.argv()[:2], ["display", "wake"])
         self.assertEqual(self.server.events[-1][0], "nebulaos:settings_changed")
+
+    def test_spoolman_endpoints(self):
+        """G125: argv without a shell; a change schedules ONE Moonraker restart
+        (after the reply), nothing else does."""
+        self.call("/machine/nebulaos/spoolman/server", {"host": "10.0.0.5", "port": 7912})
+        self.assertEqual(self.argv()[:6], ["spoolman", "set", "--host", "10.0.0.5", "--port", "7912"])
+        self.call("/machine/nebulaos/spoolman/remove")
+        self.assertEqual(self.argv()[:2], ["spoolman", "remove"])
+        self.call("/machine/nebulaos/spoolman/status")
+        self.assertEqual(self.argv()[:2], ["spoolman", "status"])
+        later = []
+
+        class Loop(object):
+            def call_later(self, delay, cb):
+                later.append(delay)
+        real = self.mod.asyncio
+        self.mod.asyncio = types.SimpleNamespace(get_running_loop=lambda: Loop())
+        try:
+            self.assertEqual(self.comp._restart_after({"result": "UNCHANGED"}), {"result": "UNCHANGED"})
+            self.assertEqual(later, [])
+            self.comp._restart_after({"result": "APPLIED", "restart": "moonraker"})
+            self.assertEqual(later, [1.0])
+        finally:
+            self.mod.asyncio = real
+        self.assertEqual(self.mod.MOONRAKER_INIT, "/etc/init.d/S56moonraker")
 
     def test_static_ipv4_json(self):
         with self.assertRaises(Exception) as cm:

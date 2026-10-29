@@ -33,6 +33,7 @@
 #   nebulaos-osconfig boot-display fresh-default   (S04nebulaos-factory-seed, first seed only)
 #   nebulaos-osconfig display status|sleep|wake
 #   nebulaos-osconfig display set-brightness --level 25|50|75|100
+#   nebulaos-osconfig spoolman status|remove | set --host HOST --port PORT   (G125)
 #   nebulaos-osconfig mcu status|list
 #   nebulaos-osconfig mcu flash --file ID --sha256 HEX   (ID and HEX from `list`)
 #   nebulaos-osconfig updates readiness                  (the last check, read-only)
@@ -46,7 +47,7 @@ import json
 import sys
 
 from . import (bootdisplay, cleanup, common, display, image, logs, mcu, network, snapshot,
-               system, updates, wifi)
+               spoolman, system, updates, wifi)
 
 
 def _opts(args, allowed):
@@ -72,7 +73,7 @@ READ_ONLY = {("system", "info"), ("network", "status"),
              ("wifi", "status"), ("mcu", "status"), ("mcu", "list"),
              ("image", "list"), ("image", "status"), ("logs", "status"),
              ("settings", "status"), ("system", "storage"), ("system", "cleanup-plan"),
-             ("updates", "readiness"), ("system", "busy")}
+             ("updates", "readiness"), ("system", "busy"), ("spoolman", "status")}
 
 # G27 (2026-10-12): every change is one line in the system log (persistent
 # system.log), success or failure. Read-only verbs are not logged (the screen
@@ -85,7 +86,8 @@ _QUIET_OK = {("display", "sleep"), ("display", "wake"), ("boot-display", "render
 _STATUS_ALIASES = {("system", "info"), ("mcu", "list"), ("image", "list")}
 # A snapshot is logged when one is taken, not when nothing changed.
 _QUIET_RESULTS = ("UNCHANGED",)
-_LOGGED_ARGS = ("--hostname", "--ssid", "--mode", "--file", "--level", "--sha256", "--reason")
+_LOGGED_ARGS = ("--hostname", "--ssid", "--mode", "--file", "--level", "--sha256", "--reason",
+                "--host", "--port")
 _LOGGED_RESULT = ("result", "ssid", "address", "address_mode", "address_note",
                   "next_boot", "applies", "name", "database")
 
@@ -169,12 +171,19 @@ def _dispatch(argv):
         return {"system": system.info, "network": network.status,
                 "boot-display": bootdisplay.status, "display": display.status,
                 "wifi": wifi.status, "logs": logs.status,
-                "settings": snapshot.status}[domain]()
+                "settings": snapshot.status, "spoolman": spoolman.status}[domain]()
     if (domain, verb) == ("mcu", "flash"):
         # Its own non-blocking lock: a second flash is refused, never queued.
         opts = _opts(rest, {"file": True, "sha256": True})
         return mcu.flash(opts.get("file"), opts.get("sha256"))
     with common.Lock(domain):
+        if domain == "spoolman":
+            if verb == "set":
+                o = _opts(rest, {"host": True, "port": True})
+                return spoolman.set_server(o.get("host"), o.get("port"))
+            if verb == "remove":
+                _opts(rest, {})
+                return spoolman.remove()
         if domain == "network":
             if verb == "set-hostname":
                 return network.set_hostname(_opts(rest, {"hostname": True}).get("hostname"))

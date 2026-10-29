@@ -38,6 +38,7 @@ DEFAULT_HELPER = "/usr/libexec/nebulaos/nebulaos-osconfig"
 # overlap). S01persistent-datastore creates the folders before Moonraker.
 DEFAULT_UPLOADS_DIR = "/opt/printer_data/config/uploads"
 READ_TIMEOUT = 20.
+MOONRAKER_INIT = "/etc/init.d/S56moonraker"
 # A network change waits for DHCP/ARP verification and a possible revert.
 WRITE_TIMEOUT = 150.
 # An MCU flash stops Klipper, enters the bootloader, transfers and restarts
@@ -120,6 +121,10 @@ class NebulaOS:
              self._disp_brightness),
             ("/machine/nebulaos/display/sleep", RequestType.POST, self._disp_sleep),
             ("/machine/nebulaos/display/wake", RequestType.POST, self._disp_wake),
+            # G125 (Run 22): the Spoolman server (moonraker.conf [spoolman]).
+            ("/machine/nebulaos/spoolman/status", RequestType.GET, self._sm_status),
+            ("/machine/nebulaos/spoolman/server", RequestType.POST, self._sm_server),
+            ("/machine/nebulaos/spoolman/remove", RequestType.POST, self._sm_remove),
             ("/machine/nebulaos/wifi/status", RequestType.GET, self._wifi_status),
             ("/machine/nebulaos/wifi/scan", RequestType.POST, self._wifi_scan),
             ("/machine/nebulaos/wifi/connect", RequestType.POST, self._wifi_connect),
@@ -298,6 +303,36 @@ class NebulaOS:
 
     async def _disp_wake(self, web_request: WebRequest) -> Dict[str, Any]:
         return await self._write("display", "wake")
+
+    # -- G125: Spoolman server ------------------------------------------------
+
+    async def _sm_status(self, web_request: WebRequest) -> Dict[str, Any]:
+        return await self._read("spoolman", "status")
+
+    async def _sm_server(self, web_request: WebRequest) -> Dict[str, Any]:
+        host = web_request.get_str("host")
+        port = web_request.get_int("port")
+        result = await self._write("spoolman", "set", "--host", host, "--port", str(port))
+        return self._restart_after(result)
+
+    async def _sm_remove(self, web_request: WebRequest) -> Dict[str, Any]:
+        return self._restart_after(await self._write("spoolman", "remove"))
+
+    def _restart_after(self, result: Dict[str, Any]) -> Dict[str, Any]:
+        """moonraker.conf changed: Moonraker reads it only at start. The
+        reply goes out first; the init script runs in its own session one
+        second later, so stopping this process does not stop the restart."""
+        if result.get("restart") == "moonraker":
+            asyncio.get_running_loop().call_later(
+                1., lambda: asyncio.ensure_future(self._restart_moonraker()))
+        return result
+
+    async def _restart_moonraker(self) -> None:
+        logging.info("nebulaos: moonraker.conf [spoolman] changed - restarting Moonraker")
+        await asyncio.create_subprocess_exec(
+            MOONRAKER_INIT, "restart", stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+            start_new_session=True)
 
     # -- Wi-Fi (Q3, 2026-10-11) -------------------------------------------------
 
