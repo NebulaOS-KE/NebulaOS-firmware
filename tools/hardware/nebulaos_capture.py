@@ -292,6 +292,18 @@ CAPTURE_PROFILES = {
         "echo; echo '== old boot uploads'; ls -la /usr/data/nebulaos/boot/uploads 2>/dev/null",
         False, None, 180),
     "versions": (_VERSIONS, False, None, 90),
+    # G125 follow-up (Tim 2026-10-29: the Spoolman page opens empty although the
+    # server works), read-only: the file, the helper, Moonraker's endpoint and
+    # what the screen logged about it.
+    "spoolman": ("C=/opt/printer_data/config/moonraker.conf; echo \"== $C\"; ls -la $C; "
+        "echo '== [spoolman] section'; sed -n '/^\\[spoolman\\]/,/^\\[/p' $C; "
+        "echo '== osconfig spoolman status'; /usr/libexec/nebulaos/nebulaos-osconfig spoolman status; "
+        "echo; echo '== moonraker /machine/nebulaos/spoolman/status'; "
+        "wget -q -O - http://127.0.0.1:7125/machine/nebulaos/spoolman/status 2>&1 | head -c 2000; "
+        "echo; echo '== moonraker server.config spoolman'; "
+        "wget -q -O - http://127.0.0.1:7125/server/config 2>&1 | grep -o '\"spoolman\": *{[^}]*}' | head -3; "
+        "echo '== screen log'; grep -i spoolman /opt/printer_data/logs/nebulascreen.log 2>/dev/null | tail -20",
+        False, None, 60),
     "update-log": (_UPDATE_LOG, False, None, 60),
     # G82 (Run 15 test): the GuppyScreen -> NebulaScreen settings migration,
     # read-only - the old file must be unchanged, the new one a copy of it.
