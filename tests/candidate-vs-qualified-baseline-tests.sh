@@ -50,7 +50,10 @@ else
     fail "the unknown-mode error message does not mention the new mode"
 fi
 
-if [ -f "$ARTIFACT_DIR/kernel.config" ] && [ -f "$ARTIFACT_DIR/halley5_v30.dts" ]; then
+# The checks also read the resolved kernel source (vendor/, a build's own
+# checkout): without it (a fresh clone, CI) they cannot run.
+if [ -f "$ARTIFACT_DIR/kernel.config" ] && [ -f "$ARTIFACT_DIR/halley5_v30.dts" ] \
+   && [ -d "$REPO_ROOT/vendor/x2000_kernel_6.6/kernel/kernel-6.6" ]; then
     # Compared before/after, not against git: an unrelated uncommitted edit
     # of the manifest (normal in DEV) is not a side effect of this tool.
     DEPS_BEFORE=$(sha256sum "$REPO_ROOT/manifests/dependencies.conf" | cut -d' ' -f1)
@@ -102,7 +105,7 @@ if [ -f "$ARTIFACT_DIR/kernel.config" ] && [ -f "$ARTIFACT_DIR/halley5_v30.dts" 
         pass "post-build (strict) still correctly reports FAIL for a candidate that legitimately differs from the last hardware-qualified baseline - unchanged, by design"
     fi
 else
-    echo "SKIP: no built artifacts under $ARTIFACT_DIR yet - run the build pipeline first to exercise the artifact-dependent checks"
+    echo "SKIP: no built artifacts under $ARTIFACT_DIR or no vendor/x2000_kernel_6.6 yet - run the build pipeline first to exercise the artifact-dependent checks"
 fi
 
 echo ""

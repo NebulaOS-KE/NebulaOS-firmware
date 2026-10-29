@@ -13,6 +13,10 @@ set -uo pipefail
 cd "$(dirname "$0")/.." || exit 2
 LOGS=${NEBULAOS_TEST_LOGS:-$(mktemp -d)}
 mkdir -p "$LOGS"
+# The boot maintenance gate refuses without zram or the disk swap file: the
+# tests model a printer that has it, never the host's own /proc/swaps.
+export NEBULAOS_PROC_SWAPS="$LOGS/proc-swaps"
+printf 'Filename\tType\tSize\tUsed\tPriority\n/dev/zram0 partition\t262140\t0\t100\n' > "$NEBULAOS_PROC_SWAPS"
 pass=0; fail=0; skip=0
 for t in tests/${1:-*}.py tests/${1:-*}.sh; do
   [ -f "$t" ] || continue

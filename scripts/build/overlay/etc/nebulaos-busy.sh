@@ -70,6 +70,8 @@ import json, socket, sys
 path, timeout = sys.argv[1], float(sys.argv[2])
 objects = {"print_stats": ["state"], "idle_timeout": ["state"], "extruder": ["target"],
            "heater_bed": ["target"], "nebulaos_power_loss_recovery": ["resume_in_progress"]}
+class NothingListens(Exception):
+    pass  # not LookupError: an error reply (no "result", a KeyError) is UNKNOWN
 def req(method, params):
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     s.settimeout(timeout)
@@ -77,7 +79,7 @@ def req(method, params):
         try:
             s.connect(path)
         except OSError:
-            raise LookupError("nothing listens")
+            raise NothingListens()
         s.sendall(json.dumps({"id": 1, "method": method, "params": params}).encode() + b"\x03")
         data = b""
         while b"\x03" not in data:
@@ -90,7 +92,7 @@ def req(method, params):
     return json.loads(data.split(b"\x03", 1)[0].decode("utf-8", "replace"))["result"]
 try:
     info = req("info", {})
-except LookupError:
+except NothingListens:
     print("NOT_READY"); sys.exit(0)
 except Exception:
     print("UNKNOWN"); sys.exit(0)
