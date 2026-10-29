@@ -1,0 +1,32 @@
+name: tests
+
+# Every host-side test (tests/run-all.sh): no printer, no Buildroot build.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Host tools the tests use
+        run: sudo apt-get update -q && sudo apt-get install -y -q p7zip-full whois squashfs-tools u-boot-tools jq
+      - name: Tests
+        env:
+          NEBULAOS_TEST_LOGS: ${{ runner.temp }}/test-logs
+        run: |
+          set -o pipefail
+          tests/run-all.sh | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: test-logs
+          path: ${{ runner.temp }}/test-logs
