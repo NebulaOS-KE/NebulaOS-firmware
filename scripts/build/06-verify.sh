@@ -778,6 +778,7 @@ check /etc/init.d/S50nginx
 check /opt/printer_data/config/printer.cfg
 check /opt/printer_data/config/moonraker.conf
 check /usr/libexec/nebulaos-set-camera-quality
+check /usr/libexec/nebulaos-nebula-camera
 
 echo "=== Phase 2: image-owned config under /etc/nebulaos/klipper/ ==="
 check /etc/nebulaos/klipper/platform.cfg

@@ -1,0 +1,42 @@
+#!/bin/sh
+# Nebula Camera controls from a Klipper macro (camera.cfg, Run 23, Tim
+# 2026-10-29: the same settings as the screen's Display > Camera page, in
+# Mainsail's Camera macro group). One fixed verb + value, checked here, then
+# nebulaos-osconfig camera (which stores the setting, applies it to a plugged
+# Nebula Camera, and refuses a reset while the printer is busy).
+#
+#   nebulaos-nebula-camera night auto|color|bw
+#   nebulaos-nebula-camera flicker off|50|60
+#   nebulaos-nebula-camera reset | defaults
+OSCONFIG=${NEBULAOS_OSCONFIG:-/usr/libexec/nebulaos/nebulaos-osconfig}
+
+verb=$(printf '%s' "${1:-}" | tr 'A-Z' 'a-z')
+value=$(printf '%s' "${2:-}" | tr 'A-Z' 'a-z')
+case "$verb:$value" in
+	night:auto|night:color|night:bw)  set -- camera set --json "{\"ir_mode\": \"$value\"}" ;;
+	night:colour)                      set -- camera set --json '{"ir_mode": "color"}' ;;
+	flicker:off|flicker:50|flicker:60) set -- camera set --json "{\"power_line\": \"$value\"}" ;;
+	reset:)                            set -- camera reset ;;
+	defaults:)                         set -- camera defaults ;;
+	*) echo "Nebula Camera: unknown setting '$*' (night auto|color|bw, flicker off|50|60, reset, defaults)"
+	   exit 1 ;;
+esac
+out=$("$OSCONFIG" "$@" 2>/dev/null)
+rc=$?
+printf '%s' "$out" | python3 -c '
+import json, sys
+try:
+    r = json.loads(sys.stdin.read() or "{}")
+except ValueError:
+    r = {}
+if r.get("ok"):
+    res = r.get("result")
+    if isinstance(res, dict):
+        res = res.get("result")
+    print("Nebula Camera: %s" % {"SAVED_APPLIES_LATER": "saved; applies when the camera is plugged in",
+                                 "NO_CAMERA": "saved; no Nebula Camera plugged in",
+                                 "RESET": "camera reset, settings applied again"}.get(res, "done"))
+else:
+    print("Nebula Camera: not changed - %s" % (r.get("message") or r.get("error") or "no answer"))
+'
+exit "$rc"

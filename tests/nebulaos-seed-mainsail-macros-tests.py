@@ -784,8 +784,11 @@ def test_rc3_unchanged_groups_skipped():
         with open(marker_path) as f:
             marker = json.load(f)
         rc3_mig = marker.get("rc3_migration", {})
-        check("rc3 unchanged: camera skipped",
-              rc3_mig.get("nebulaos-camera") == "unchanged")
+        # Run 23: the Camera group changed (Nebula Camera macros), so it is
+        # no longer "unchanged since RC3"; on an empty database it is simply
+        # not there yet (and is seeded new).
+        check("rc3 unchanged: camera now differs from RC3, absent here",
+              rc3_mig.get("nebulaos-camera") == "not_present")
         check("rc3 unchanged: maintenance skipped",
               rc3_mig.get("nebulaos-maintenance") == "unchanged")
 
@@ -1330,6 +1333,41 @@ def test_g101_user_modified_calibration_group_untouched():
     with_marker_dir(body)
 
 
+# --- Run 23: the Nebula Camera macros reach installs with the old Camera group --
+def test_nebula_camera_macros_reach_the_default_camera_group():
+    def body(marker_path):
+        prev = seed.PRE_NEBULA_CAMERA_GROUPS["nebulaos-camera"]
+        final = seed.DEFAULT_GROUPS["nebulaos-camera"]
+        moon = FakeMoonrakerDb(existing={group_key("nebulaos-camera"): prev})
+        rc, logs = run_seed(marker_path, moon, groups=seed.DEFAULT_GROUPS)
+        check("nebula camera: rc==0", rc == 0)
+        check("nebula camera: old default upgraded",
+              moon.store[group_key("nebulaos-camera")] == final)
+        names = [m["name"] for m in final["macros"]]
+        check("nebula camera: quality presets first, then the four Nebula Camera macros",
+              names[:3] == ["SET_CAMERA_QUALITY_LOW", "SET_CAMERA_QUALITY_MED",
+                            "SET_CAMERA_QUALITY_HIGH"]
+              and names[3:] == ["NEBULA_CAMERA_NIGHT_MODE", "NEBULA_CAMERA_ANTI_FLICKER",
+                                "NEBULA_CAMERA_RESET", "NEBULA_CAMERA_DEFAULTS"])
+        custom = json.loads(json.dumps(prev))
+        custom["name"] = "My camera"
+        moon = FakeMoonrakerDb(existing={group_key("nebulaos-camera"): custom})
+        run_seed(marker_path, moon, groups=seed.DEFAULT_GROUPS)
+        check("nebula camera: a user-changed group is left untouched",
+              moon.store[group_key("nebulaos-camera")] == custom)
+    with_marker_dir(body)
+
+
+def test_nebula_camera_macros_exist_in_camera_cfg():
+    cfg = open(os.path.join(os.path.dirname(MODULE_PATH), "..", "..", "etc", "nebulaos",
+                            "klipper", "camera.cfg")).read()
+    for name in ("NEBULA_CAMERA_NIGHT_MODE", "NEBULA_CAMERA_ANTI_FLICKER",
+                 "NEBULA_CAMERA_RESET", "NEBULA_CAMERA_DEFAULTS"):
+        check("camera.cfg defines %s" % name, "[gcode_macro %s]" % name in cfg)
+    check("camera.cfg: nebula_camera runs the helper",
+          "command: /usr/libexec/nebulaos-nebula-camera" in cfg)
+
+
 def test_g101_wrappers_call_the_mode_command():
     cfg = open(os.path.join(os.path.dirname(MODULE_PATH), "..", "..", "etc", "nebulaos",
                             "klipper", "calibration.cfg")).read()
@@ -1384,6 +1422,8 @@ def main():
     test_g101_older_defaults_go_straight_to_the_newest()
     test_g101_user_modified_calibration_group_untouched()
     test_g101_wrappers_call_the_mode_command()
+    test_nebula_camera_macros_reach_the_default_camera_group()
+    test_nebula_camera_macros_exist_in_camera_cfg()
     test_rc3_vs_final_extruder_macro_counts()
 
     test_reset_six_group_custom_state_produces_exact_five()

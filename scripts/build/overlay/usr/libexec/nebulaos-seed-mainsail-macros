@@ -163,6 +163,10 @@ DEFAULT_GROUPS = {
         _macro(0, "SET_CAMERA_QUALITY_LOW"),
         _macro(1, "SET_CAMERA_QUALITY_MED"),
         _macro(2, "SET_CAMERA_QUALITY_HIGH"),
+        _macro(3, "NEBULA_CAMERA_NIGHT_MODE", show_in_printing=True, show_in_pause=True),
+        _macro(4, "NEBULA_CAMERA_ANTI_FLICKER", show_in_printing=True, show_in_pause=True),
+        _macro(5, "NEBULA_CAMERA_RESET"),
+        _macro(6, "NEBULA_CAMERA_DEFAULTS"),
     ]),
 }
 
@@ -246,6 +250,16 @@ PRE_G101_GROUPS = {
         _macro(7, "NEBULAOS_LOAD_CELL_CALIBRATE"),
         _macro(8, "NEBULAOS_BED_TRAM"),
     ], show_in_printing=False, show_in_pause=False),
+}
+
+# Run 23 (Tim 2026-10-29): the Camera group before the Nebula Camera macros -
+# the default since RC3. Same exact-match upgrade.
+PRE_NEBULA_CAMERA_GROUPS = {
+    "nebulaos-camera": _group("Camera", [
+        _macro(0, "SET_CAMERA_QUALITY_LOW"),
+        _macro(1, "SET_CAMERA_QUALITY_MED"),
+        _macro(2, "SET_CAMERA_QUALITY_HIGH"),
+    ]),
 }
 
 # Frozen RC3 historical fixtures (commit e4e349a, 2026-09-07). These are
@@ -887,9 +901,10 @@ def run(
 
     rc3_results = migrate_rc3_to_final(get_status, post, delete, log, rc3_groups, groups)
     if groups is DEFAULT_GROUPS:
-        # Later defaults (G83a, G87, Run 21, G101): same exact-match upgrade,
-        # newest fixture last.
-        for fixture in (PRE_G83A_GROUPS, PRE_G87_GROUPS, PRE_RUN21_GROUPS, PRE_G101_GROUPS):
+        # Later defaults (G83a, G87, Run 21, G101, Run 23 camera): same
+        # exact-match upgrade, newest fixture last.
+        for fixture in (PRE_G83A_GROUPS, PRE_G87_GROUPS, PRE_RUN21_GROUPS, PRE_G101_GROUPS,
+                        PRE_NEBULA_CAMERA_GROUPS):
             for group_id, result in migrate_rc3_to_final(
                     get_status, post, delete, log, fixture, groups).items():
                 if result in ("migrated", "failed", "already_final"):
