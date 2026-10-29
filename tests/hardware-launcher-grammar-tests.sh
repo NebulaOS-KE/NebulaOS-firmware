@@ -112,6 +112,11 @@ accept "rtos-logo (confirmed)"                 --device p1 --control "$SHA" rtos
 refuse "rtos-logo without confirmation"        --device p1 --control "$SHA" rtos-logo
 refuse "rtos-logo confirming rtos (p3)"        --device p1 --control "$SHA" rtos-logo RTOS_LOGO_CONFIRM=RTOS
 refuse "rtos-logo with a path argument"        --device p1 --control "$SHA" rtos-logo /tmp/zero.bin RTOS_LOGO_CONFIRM=RTOS2
+accept "stage-stock-update (confirmed)"        --device p1 --control "$SHA" stage-stock-update "$S256" STOCK_UPDATE_CONFIRM=SLOT1
+refuse "stage-stock-update without a word"     --device p1 --control "$SHA" stage-stock-update "$S256"
+refuse "stage-stock-update with a path"        --device p1 --control "$SHA" stage-stock-update /tmp/x.img STOCK_UPDATE_CONFIRM=SLOT1
+refuse "stage-stock-update with another word"  --device p1 --control "$SHA" stage-stock-update "$S256" REBOOT_CONFIRM=NEBULAOS
+refuse "stage-stock-update with an extra arg"  --device p1 --control "$SHA" stage-stock-update "$S256" STOCK_UPDATE_CONFIRM=SLOT1 now
 accept "rtos-logo-restore (confirmed)"         --device p1 --control "$SHA" rtos-logo-restore "$S256" RTOS_RESTORE_CONFIRM=RTOS2
 refuse "rtos-logo-restore with a short sha"    --device p1 --control "$SHA" rtos-logo-restore bbbb RTOS_RESTORE_CONFIRM=RTOS2
 refuse "rtos-logo-restore with a path"         --device p1 --control "$SHA" rtos-logo-restore /tmp/x.bin RTOS_RESTORE_CONFIRM=RTOS2

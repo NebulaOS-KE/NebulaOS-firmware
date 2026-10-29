@@ -90,6 +90,18 @@ snapshotted as the supervisor's last-known-good env, so a later image missing
 the same package would verify PASS. Product defects are fixed in the product and
 reinstalled.
 
+### Install through Creality's own updater (`stage-stock-update`, G115)
+
+`stage-stock-update <img-sha256> STOCK_UPDATE_CONFIRM=SLOT1` prepares the install a normal
+user does: the packaged Creality-format `.img` (found by its sha256 under the workspace's
+`_scratch/run*/img/`) is copied to `/usr/data/nebulaos-stock-update/` (shared data partition,
+sha256 checked on the printer), the OTA marker is set to slot 1 (Creality) and read back, and
+the printer reboots into stock. Preconditions: NebulaOS runs from slot 2, slot 1 holds
+Creality, the printer is idle, no install transaction is open. No partition is written by this
+operation. It ends by printing the one command the human runs over ssh on stock:
+`/etc/ota_bin/local_ota_update.sh /usr/data/nebulaos-stock-update/<file>.img` - Creality's
+updater writes slot 2 and boots it; `verify` then checks the result.
+
 ### The RTOS boot logo (`rtos-logo`, `rtos-logo-restore`)
 
 `capture rtos-hashes` (read-only) reports sha256 of rtos (p3) and rtos2 (p4), both whole and over the

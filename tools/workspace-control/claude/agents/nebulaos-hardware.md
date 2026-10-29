@@ -27,6 +27,7 @@ tools/run-nebulaos-hardware.sh --device <enrolled-id> --control <40-hex C> <oper
 | `reboot REBOOT_CONFIRM=NEBULAOS` | software reboot of an idle NebulaOS back into NebulaOS; no write |
 | `rtos-logo RTOS_LOGO_CONFIRM=RTOS2` | NebulaOS boot logo into rtos2 (p4) only; host backup first, read-back after |
 | `rtos-logo-restore <backup-sha256> RTOS_RESTORE_CONFIRM=RTOS2` | write that backup back to rtos2 |
+| `stage-stock-update <img-sha256> STOCK_UPDATE_CONFIRM=SLOT1` | G115: the packaged .img (by sha256, `_scratch/run*/img/`) onto `/usr/data/nebulaos-stock-update/`, marker to slot 1 (read back), reboot into stock; prints the ONE command the human runs there (`/etc/ota_bin/local_ota_update.sh <file>`); then `verify` |
 | `purge-dev-leftovers PURGE_CONFIRM=DEV-LEFTOVERS` | remove the fixed list of development leftovers (human-approved 2026-10-15) |
 | `install <X> <ximage-sha256> <rootfs-sha256>` | flash |
 

@@ -34,6 +34,7 @@
 #                                          (without the confirmation word, confirm on stdin)
 #   run-nebulaos-hardware.sh --device <id> --control <C> restart <service>
 #   run-nebulaos-hardware.sh --device <id> --control <C> reboot REBOOT_CONFIRM=NEBULAOS
+#   run-nebulaos-hardware.sh --device <id> --control <C> stage-stock-update <img-sha256> STOCK_UPDATE_CONFIRM=SLOT1
 #   run-nebulaos-hardware.sh --device <id> --control <C> rtos-logo RTOS_LOGO_CONFIRM=RTOS2
 #   run-nebulaos-hardware.sh --device <id> --control <C> rtos-logo-restore <backup-sha256> RTOS_RESTORE_CONFIRM=RTOS2
 #   run-nebulaos-hardware.sh --device <id> --control <C> purge-dev-leftovers PURGE_CONFIRM=DEV-LEFTOVERS
@@ -161,6 +162,14 @@ case "$OP" in
     # The agent refuses unless the OTA marker already selects NebulaOS.
     [ "$#" -eq 2 ] && [ "$2" = "REBOOT_CONFIRM=NEBULAOS" ] \
       || die "'reboot' requires exactly the confirmation word REBOOT_CONFIRM=NEBULAOS" ;;
+  stage-stock-update)
+    # G115 (Run 22): the packaged .img (found by its sha256 in _scratch/run*/img)
+    # onto the shared data partition, the marker to slot 1 (Creality, read
+    # back), reboot into stock. The update is the human's one command there.
+    [ "$#" -eq 3 ] || die "'stage-stock-update' requires <img-sha256> STOCK_UPDATE_CONFIRM=SLOT1"
+    is_hex "$2" 64 || die "the .img sha256 must be 64 lowercase hex characters"
+    [ "$3" = "STOCK_UPDATE_CONFIRM=SLOT1" ] \
+      || die "'stage-stock-update' requires the confirmation word STOCK_UPDATE_CONFIRM=SLOT1" ;;
   rtos-logo)
     # The NebulaOS boot logo into rtos2 (p4) only; backup first, read-back after.
     [ "$#" -eq 2 ] && [ "$2" = "RTOS_LOGO_CONFIRM=RTOS2" ] \
@@ -186,9 +195,10 @@ case "$OP" in
     is_hex "$2" 40 || die "source-head must be a full 40-character lowercase hex SHA"
     is_hex "$3" 64 || die "ximage-sha256 must be 64 lowercase hex characters"
     is_hex "$4" 64 || die "rootfs-sha256 must be 64 lowercase hex characters" ;;
-  *) die "unknown operation '${OP:-}'. The Hardware Agent has exactly thirteen:
+  *) die "unknown operation '${OP:-}'. The Hardware Agent has exactly fourteen:
        inspect  status  diagnose  capture  exercise  restart  reboot  rtos-logo
-       rtos-logo-restore  purge-dev-leftovers  datafs-repair  verify  install
+       rtos-logo-restore  purge-dev-leftovers  datafs-repair  stage-stock-update
+       verify  install
        Motion, heating, extrusion, calibration and MCU flashing are Part 2 and have no
        operation here." ;;
 esac

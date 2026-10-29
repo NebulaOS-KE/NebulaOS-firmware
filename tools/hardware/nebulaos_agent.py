@@ -50,6 +50,8 @@ and flashing is the least reversible boundary in the project.
 import argparse
 import hashlib
 import os
+import re
+import shlex
 import sys
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -627,6 +629,123 @@ def op_reboot(args):
                        "was written; check it with `diagnose`." % (REBOOT_BACK_TIMEOUT, last))
 
 
+# G115 (Run 22, Tim 2026-10-28): install a packaged Creality-format .img the
+# way a user does - with Creality's OWN updater on the stock slot. This op
+# only prepares it: the .img goes onto the shared data partition, the marker
+# selects slot 1 (Creality), the printer reboots into stock. The update itself
+# is the human's one command on stock (printed at the end):
+#   /etc/ota_bin/local_ota_update.sh <file>
+# which writes the slot stock is NOT running (slot 2) and boots it. Afterwards
+# `verify` checks the result. No partition is written by this op.
+STOCK_UPDATE_CONFIRM_WORD = "STOCK_UPDATE_CONFIRM=SLOT1"
+STOCK_UPDATE_DIR = "/usr/data/nebulaos-stock-update"
+STOCK_UPDATER = "/etc/ota_bin/local_ota_update.sh"
+STOCK_BACK_TIMEOUT = 240
+
+
+def _find_packaged_img(img_sha):
+    """The .img in the workspace's run folders (_scratch/run*/img/) whose
+    sha256 is the stated one - never picked by name or date."""
+    import glob
+    root = os.path.join(os.path.dirname(FW_ROOT), "_scratch")
+    for path in sorted(glob.glob(os.path.join(root, "run*", "img", "*.img"))):
+        digest = hashlib.sha256()
+        with open(path, "rb") as handle:
+            for chunk in iter(lambda: handle.read(1 << 20), b""):
+                digest.update(chunk)
+        if digest.hexdigest() == img_sha:
+            return path
+    raise AgentRefusal("no packaged .img with sha256 %s under %s/run*/img/ (package it with "
+                       "scripts/package/package-release.sh first)" % (img_sha, root))
+
+
+def op_stage_stock_update(args):
+    import time
+    if args.confirm != STOCK_UPDATE_CONFIRM_WORD:
+        raise AgentRefusal("stage-stock-update not confirmed (expected %s)"
+                           % STOCK_UPDATE_CONFIRM_WORD)
+    if not re.fullmatch(r"[0-9a-f]{64}", args.img_sha or ""):
+        raise AgentRefusal("the .img sha256 must be 64 hex characters")
+    local = _find_packaged_img(args.img_sha)
+    size = os.path.getsize(local)
+    say("STOCK_UPDATE_IMAGE=%s size=%d" % (local, size))
+    profile, _, _ = prove_preconditions(
+        args.device, None, None, None, args.control_commit, destructive=False)
+    with journal.HostLock(args.device):
+        txn = journal.Transaction.open(args.device)
+        if txn is not None and txn.state not in journal.TERMINAL_STATES:
+            raise AgentRefusal("an install transaction is open (state %s); resolve it first"
+                               % txn.state)
+        session, which, address = _connect_matching(profile, (device.OS_NEBULAOS,))
+        try:
+            if session.which_os() != device.OS_NEBULAOS:
+                raise AgentRefusal("the printer is not running NebulaOS")
+            slot_state = slots.read_slot_state(session)
+            say(slot_state.describe())
+            if slot_state.running_slot != 2 or slot_state.holds.get(1) != slots.HOLDS_CREALITY:
+                raise AgentRefusal(
+                    "stage-stock-update needs NebulaOS running from slot 2 and Creality's "
+                    "stock system in slot 1 (stock's updater then writes slot 2); found "
+                    "running slot %s, slot 1 holds %s"
+                    % (slot_state.running_slot, slot_state.holds.get(1)))
+            idle = session.idle_state()
+            say(idle.describe())
+            if not idle.is_idle():
+                raise AgentRefusal("needs a proven idle printer: %s" % idle.why_not_idle())
+            free = session.free_space("/usr/data")
+            if free < size + (64 << 20):
+                raise AgentRefusal("not enough space on /usr/data (%d bytes free, %d needed)"
+                                   % (free, size + (64 << 20)))
+            name = os.path.basename(local)
+            remote = "%s/%s" % (STOCK_UPDATE_DIR, name)
+            session._run("mkdir -p %s" % STOCK_UPDATE_DIR)
+            session._scp(local, remote)
+            got = session._kv("printf 'sha=%%s\\n' \"$(sha256sum %s | cut -d' ' -f1)\""
+                              % shlex.quote(remote)).get("sha", "")
+            if got != args.img_sha:
+                raise AgentRefusal("the copy on the printer has sha256 %s, not %s; nothing else "
+                                   "was changed" % (got or "unknown", args.img_sha))
+            say("STOCK_UPDATE_FILE=%s sha256 verified" % remote)
+            session.write_marker(marker.KERNEL)
+            ok, why = marker.verify_readback(marker.KERNEL, session.read_marker_block())
+            say("OTA_MARKER_WRITE=%s readback_ok=%s (%s)" % (marker.KERNEL, "YES" if ok else "NO", why))
+            if not ok:
+                session.write_marker(marker.KERNEL2)
+                raise AgentRefusal("the marker did not read back as slot 1 (%s); it was set back "
+                                   "to slot 2 - check with inspect before a power cycle" % why)
+            boot_before = session.boot_id()
+            session.reboot()
+            issued = time.time()
+        finally:
+            session.close()
+        last = ""
+        time.sleep(20)
+        while time.time() < issued + STOCK_BACK_TIMEOUT:
+            try:
+                session, which, address = _connect_matching(profile, (device.OS_STOCK,))
+            except AgentRefusal as exc:
+                last = str(exc)[:160]
+                time.sleep(5)
+                continue
+            try:
+                facts = session._kv("printf 'have=%%s\\nupd=%%s\\n' \"$(sha256sum %s | cut -d' ' -f1)\" "
+                                    "\"$([ -x %s ] && echo yes || echo no)\""
+                                    % (shlex.quote(remote), STOCK_UPDATER))
+            finally:
+                session.close()
+            say("STOCK_RUNNING=YES address=%s boot_id_before=%s" % (address, (boot_before or "")[:8]))
+            say("STOCK_SEES_FILE=%s" % ("YES" if facts.get("have") == args.img_sha else "NO"))
+            say("STOCK_UPDATER_PRESENT=%s" % ("YES" if facts.get("upd") == "yes" else "NO"))
+            say("HUMAN_COMMAND_ON_STOCK=%s %s" % (STOCK_UPDATER, remote))
+            say("# Run that one command over ssh on stock (root@%s). It writes slot 2 and "
+                "boots it; then run `verify`." % address)
+            say("RUN_NEBULAOS_HARDWARE=STOCK_UPDATE_STAGED")
+            return 0
+    raise AgentRefusal("the printer did not come back as Creality stock within %d s (last: %s); "
+                       "the marker selects slot 1. Check it with `inspect`."
+                       % (STOCK_BACK_TIMEOUT, last))
+
+
 PURGE_CONFIRM_WORD = "PURGE_CONFIRM=DEV-LEFTOVERS"
 
 
@@ -947,6 +1066,9 @@ def main(argv):
     p.add_argument("confirm", nargs="?", default=None)
     sub.add_parser("restart").add_argument("service")
     sub.add_parser("reboot").add_argument("confirm", nargs="?", default=None)
+    p = sub.add_parser("stage-stock-update")
+    p.add_argument("img_sha")
+    p.add_argument("confirm", nargs="?", default=None)
     sub.add_parser("rtos-logo").add_argument("confirm", nargs="?", default=None)
     sub.add_parser("purge-dev-leftovers").add_argument("confirm", nargs="?", default=None)
     sub.add_parser("datafs-repair").add_argument("confirm", nargs="?", default=None)
@@ -963,6 +1085,7 @@ def main(argv):
     handler = {"inspect": op_inspect, "status": op_status, "diagnose": op_diagnose,
                "capture": op_capture, "exercise": op_exercise,
                "restart": op_restart, "reboot": op_reboot,
+               "stage-stock-update": op_stage_stock_update,
                "rtos-logo": op_rtos_logo, "rtos-logo-restore": op_rtos_logo_restore,
                "purge-dev-leftovers": op_purge_dev_leftovers,
                "datafs-repair": op_datafs_repair,

@@ -398,6 +398,7 @@ if sandbox_off:
         #   --device <id> --control <40-hex C> exercise <profile> EXERCISE_CONFIRM=<profile>
         #   --device <id> --control <40-hex C> restart <service>
         #   --device <id> --control <40-hex C> reboot REBOOT_CONFIRM=NEBULAOS
+        #   --device <id> --control <40-hex C> stage-stock-update <64-hex> STOCK_UPDATE_CONFIRM=SLOT1
         #   --device <id> --control <40-hex C> rtos-logo RTOS_LOGO_CONFIRM=RTOS2
         #   --device <id> --control <40-hex C> rtos-logo-restore <64-hex> RTOS_RESTORE_CONFIRM=RTOS2
         #   --device <id> --control <40-hex C> purge-dev-leftovers PURGE_CONFIRM=DEV-LEFTOVERS
@@ -449,6 +450,8 @@ if sandbox_off:
                   (len(a)==3 and a[0]=="exercise" and is_profile(a[1])
                    and a[2]=="EXERCISE_CONFIRM="+a[1]) or \
                   (len(a)==2 and a[0]=="reboot" and a[1]=="REBOOT_CONFIRM=NEBULAOS") or \
+                  (len(a)==3 and a[0]=="stage-stock-update" and is_sha256(a[1])
+                   and a[2]=="STOCK_UPDATE_CONFIRM=SLOT1") or \
                   (len(a)==2 and a[0]=="rtos-logo" and a[1]=="RTOS_LOGO_CONFIRM=RTOS2") or \
                   (len(a)==2 and a[0]=="purge-dev-leftovers"
                    and a[1]=="PURGE_CONFIRM=DEV-LEFTOVERS") or \
@@ -467,6 +470,7 @@ if sandbox_off:
                 "  --device <id> --control <40-hex C> exercise <profile> EXERCISE_CONFIRM=<profile>\n"
                 "  --device <id> --control <40-hex C> restart klipper|moonraker|nebulascreen|guppyscreen|webcam|nginx\n"
                 "  --device <id> --control <40-hex C> reboot REBOOT_CONFIRM=NEBULAOS\n"
+                "  --device <id> --control <40-hex C> stage-stock-update <64-hex> STOCK_UPDATE_CONFIRM=SLOT1\n"
                 "  --device <id> --control <40-hex C> rtos-logo RTOS_LOGO_CONFIRM=RTOS2\n"
                 "  --device <id> --control <40-hex C> rtos-logo-restore <64-hex> RTOS_RESTORE_CONFIRM=RTOS2\n"
                 "  --device <id> --control <40-hex C> purge-dev-leftovers PURGE_CONFIRM=DEV-LEFTOVERS\n"
