@@ -165,7 +165,7 @@ DEFAULT_GROUPS = {
         _macro(2, "SET_CAMERA_QUALITY_HIGH"),
         _macro(3, "NEBULA_CAMERA_NIGHT_MODE", show_in_printing=True, show_in_pause=True),
         _macro(4, "NEBULA_CAMERA_ANTI_FLICKER", show_in_printing=True, show_in_pause=True),
-        _macro(5, "NEBULA_CAMERA_RESET"),
+        _macro(5, "NEBULA_CAMERA_RESTART"),
         _macro(6, "NEBULA_CAMERA_DEFAULTS"),
     ]),
 }

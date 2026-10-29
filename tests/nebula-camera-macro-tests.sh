@@ -38,7 +38,8 @@ expect 'camera set --json {"ir_mode": "auto"}' 'done' 0 night auto
 expect 'camera set --json {"power_line": "50"}' 'done' 0 flicker 50
 expect 'camera set --json {"power_line": "off"}' 'done' 0 flicker OFF
 expect 'camera defaults' 'done' 0 defaults
-expect 'camera reset' 'not changed - a print is running' 3 reset
+expect 'camera reset' 'not changed - a print is running' 3 restart
+expect '' 'unknown setting' 1 reset
 expect '' 'unknown setting' 1 night purple
 expect '' 'unknown setting' 1 flicker '50; reboot'
 expect '' 'unknown setting' 1 reboot

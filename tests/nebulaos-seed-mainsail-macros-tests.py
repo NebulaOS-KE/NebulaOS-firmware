@@ -1348,7 +1348,7 @@ def test_nebula_camera_macros_reach_the_default_camera_group():
               names[:3] == ["SET_CAMERA_QUALITY_LOW", "SET_CAMERA_QUALITY_MED",
                             "SET_CAMERA_QUALITY_HIGH"]
               and names[3:] == ["NEBULA_CAMERA_NIGHT_MODE", "NEBULA_CAMERA_ANTI_FLICKER",
-                                "NEBULA_CAMERA_RESET", "NEBULA_CAMERA_DEFAULTS"])
+                                "NEBULA_CAMERA_RESTART", "NEBULA_CAMERA_DEFAULTS"])
         custom = json.loads(json.dumps(prev))
         custom["name"] = "My camera"
         moon = FakeMoonrakerDb(existing={group_key("nebulaos-camera"): custom})
@@ -1362,7 +1362,7 @@ def test_nebula_camera_macros_exist_in_camera_cfg():
     cfg = open(os.path.join(os.path.dirname(MODULE_PATH), "..", "..", "etc", "nebulaos",
                             "klipper", "camera.cfg")).read()
     for name in ("NEBULA_CAMERA_NIGHT_MODE", "NEBULA_CAMERA_ANTI_FLICKER",
-                 "NEBULA_CAMERA_RESET", "NEBULA_CAMERA_DEFAULTS"):
+                 "NEBULA_CAMERA_RESTART", "NEBULA_CAMERA_DEFAULTS"):
         check("camera.cfg defines %s" % name, "[gcode_macro %s]" % name in cfg)
     check("camera.cfg: nebula_camera runs the helper",
           "command: /usr/libexec/nebulaos-nebula-camera" in cfg)
