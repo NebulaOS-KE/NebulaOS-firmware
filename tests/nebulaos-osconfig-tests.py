@@ -11,6 +11,7 @@
 #
 # Usage: python3 tests/nebulaos-osconfig-tests.py
 import asyncio
+import hashlib
 import array
 import subprocess
 import importlib
@@ -105,11 +106,10 @@ class Env(object):
             # G121: never the host's cameras
             "NEBULAOS_SYS_V4L": os.path.join(self.tmp, "sys-v4l"),
             "NEBULAOS_CAMERA_RESET_WAIT": "3",
-            # G79: never the host's keyring, version file or the internet
-            "NEBULAOS_OTA_KEYRING": os.path.join(self.tmp, "ota-keys"),
+            # G79: never the host's version file, downloads or the internet
             "NEBULAOS_VERSION_FILE": os.path.join(self.tmp, "nebulaos-version.json"),
             "NEBULAOS_OTA_CHANNEL": "https://example.invalid/releases/latest",
-            "NEBULAOS_OPENSSL": shutil.which("openssl") or "/usr/bin/openssl",
+            "NEBULAOS_OTA_DOWNLOAD_DIR": os.path.join(self.tmp, "ota-download"),
         })
         if PYLIB not in sys.path:
             sys.path.insert(0, PYLIB)
@@ -1405,61 +1405,69 @@ class CameraTests(unittest.TestCase):
         self.assertIn("zoom", cm.exception.message)
 
 
+class FakeResponse(object):
+    def __init__(self, data):
+        self.data, self.pos = data, 0
+
+    def read(self, n=-1):
+        n = len(self.data) - self.pos if n < 0 else n
+        out = self.data[self.pos:self.pos + n]
+        self.pos += len(out)
+        return out
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
 class OtaTests(unittest.TestCase):
-    """G79 S1/S2: the owner's signing tool and the printer's check - a real
-    Ed25519 key made here, never shipped."""
-    SIGN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tools", "release",
-                        "sign-release.py")
+    """G79 (Run 23, no key): the release record tool, the check over HTTPS from
+    GitHub only, the download checked against the record, and the "ota" image
+    source."""
+    TOOL = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tools", "release",
+                        "make-release-record.py")
+    BASE = "https://github.com/NebulaOS-KE/NebulaOS/releases/download/v0.9.1/"
 
     def setUp(self):
         self.e = Env()
         self.o = self.e.ota
         fake_busy(self.e.common, [None])
-        self.keys = os.path.join(self.e.tmp, "owner")
-        os.makedirs(self.keys)
-        self.priv = os.path.join(self.keys, "owner.pem")
-        subprocess.check_call(["openssl", "genpkey", "-algorithm", "ed25519", "-out", self.priv])
-        os.makedirs(self.o.KEYRING)
-        subprocess.check_call(["openssl", "pkey", "-in", self.priv, "-pubout",
-                               "-out", os.path.join(self.o.KEYRING, "test-2026.pem")])
         json.dump({"version": "0.9.0"}, open(self.o.VERSION_FILE, "w"))
+        self.payload = b"IMG" * 1000
         self.img = os.path.join(self.e.tmp, "NebulaOS-Ender3V3KE-0.9.1.img")
-        open(self.img, "wb").write(b"IMG" * 1000)
+        open(self.img, "wb").write(self.payload)
 
     def tearDown(self):
         self.e.cleanup()
 
-    def signed(self, version="0.9.1", extra=()):
+    def record(self, version="0.9.1", extra=()):
         out = os.path.join(self.e.tmp, "rel-" + version)
-        subprocess.check_call([sys.executable, self.SIGN, "--img", self.img, "--version", version,
-                               "--source-head", "a" * 40, "--key", self.priv, "--out", out]
-                              + list(extra), stdout=subprocess.DEVNULL)
-        return (open(os.path.join(out, "nebulaos-release.json"), "rb").read(),
-                open(os.path.join(out, "nebulaos-release.json.sig"), "rb").read())
+        subprocess.check_call([sys.executable, self.TOOL, "--img", self.img, "--version", version,
+                               "--source-head", "a" * 40, "--out", out] + list(extra),
+                              stdout=subprocess.DEVNULL)
+        return open(os.path.join(out, "nebulaos-release.json"), "rb").read()
 
-    def fetcher(self, data, sig):
+    def fetcher(self, data, img_size=3000, record_url=None):
+        name = os.path.basename(self.img)
+        record_url = record_url or self.BASE + "nebulaos-release.json"
         listing = json.dumps({"assets": [
-            {"name": "nebulaos-release.json", "browser_download_url": "https://x/r.json"},
-            {"name": "nebulaos-release.json.sig", "browser_download_url": "https://x/r.sig"}]}).encode()
-        answers = {self.o.CHANNEL_URL: listing, "https://x/r.json": data, "https://x/r.sig": sig}
+            {"name": "nebulaos-release.json", "browser_download_url": record_url},
+            {"name": name, "browser_download_url": self.BASE + name, "size": img_size}]}).encode()
+        answers = {self.o.CHANNEL_URL: listing, record_url: data}
         return lambda url, limit: answers[url]
 
-    def test_signature_over_the_raw_bytes(self):
-        data, sig = self.signed()
-        self.assertEqual(self.o.verify_signature(data, sig), "test-2026.pem")
-        self.assertIsNone(self.o.verify_signature(data.replace(b"0.9.1", b"0.9.2"), sig))
-        self.assertIsNone(self.o.verify_signature(data + b" ", sig))
-        other = os.path.join(self.keys, "other.pem")
-        subprocess.check_call(["openssl", "genpkey", "-algorithm", "ed25519", "-out", other])
-        pub = os.path.join(self.keys, "other-pub.pem")
-        subprocess.check_call(["openssl", "pkey", "-in", other, "-pubout", "-out", pub])
-        self.assertIsNone(self.o.verify_signature(data, sig, [pub]))     # wrong key
-        self.assertIsNone(self.o.verify_signature(data, sig, []))        # no keyring
+    def checked(self):
+        out = self.o.check(force=True, fetch=self.fetcher(self.record()), now=1800000000)
+        self.assertEqual(out["result"], "AVAILABLE")
+        return out
 
     def test_record_fields(self):
-        data, _ = self.signed(extra=["--min-version", "0.9.0"])
+        data = self.record(extra=["--min-version", "0.9.0"])
         rec = self.o.parse_record(data)
         self.assertEqual((rec["version"], rec["img"]["size"]), ("0.9.1", 3000))
+        self.assertNotIn(b"signature", data)
         for bad in (b"[]", b"{", json.dumps({"ota_schema": 2}).encode(),
                     data.replace(b'"stable"', b'"beta"'),
                     data.replace(b'"NebulaOS-Ender3V3KE"', b'"Other"')):
@@ -1467,33 +1475,49 @@ class OtaTests(unittest.TestCase):
                 self.o.parse_record(bad)
 
     def test_offer(self):
-        data, _ = self.signed(extra=["--min-version", "0.8.5", "--max-version", "0.9.0"])
-        rec = self.o.parse_record(data)
+        rec = self.o.parse_record(self.record(extra=["--min-version", "0.8.5",
+                                                     "--max-version", "0.9.0"]))
         self.assertEqual(self.o.offer(rec, "0.9.0"), (True, "AVAILABLE"))
         self.assertEqual(self.o.offer(rec, "0.9.1"), (False, "UP_TO_DATE"))
         self.assertEqual(self.o.offer(rec, "1.0.0"), (False, "UP_TO_DATE"))
         self.assertEqual(self.o.offer(rec, "0.8.0"), (False, "NOT_FROM_THIS_VERSION"))
         self.assertEqual(self.o.offer(rec, None), (False, "RUNNING_VERSION_UNKNOWN"))
 
+    def test_github_https_only(self):
+        ok = self.o.allowed_url
+        self.assertTrue(ok("https://api.github.com/repos/NebulaOS-KE/NebulaOS/releases/latest"))
+        self.assertTrue(ok("https://release-assets.githubusercontent.com/x?sig=1"))
+        for bad in ("http://github.com/x", "https://github.com.evil.example/x",
+                    "https://evil.example/x", "https://user@github.com/x", "ftp://github.com/x",
+                    "file:///etc/passwd", ""):
+            self.assertFalse(ok(bad), bad)
+        with self.assertRaises(self.e.common.OsConfigError):
+            self.o._open("https://evil.example/x.img")
+        handler = [h for h in self.o._opener().handlers
+                   if hasattr(h, "redirect_request")][0]
+        import urllib.request
+        req = urllib.request.Request("https://github.com/x")
+        with self.assertRaises(self.e.common.OsConfigError):
+            handler.redirect_request(req, None, 302, "Found", {}, "https://evil.example/x")
+        self.assertIsNotNone(handler.redirect_request(
+            req, None, 302, "Found", {}, "https://objects.githubusercontent.com/x"))
+
     def test_check_available_then_cached(self):
-        data, sig = self.signed()
-        out = self.o.check(fetch=self.fetcher(data, sig), now=1800000000)
-        self.assertEqual((out["result"], out["available"], out["version"]), ("AVAILABLE", True, "0.9.1"))
+        out = self.checked()
+        self.assertEqual((out["available"], out["version"]), (True, "0.9.1"))
+        self.assertEqual(out["img"]["url"], self.BASE + os.path.basename(self.img))
         self.assertEqual(self.o.status()["last"]["version"], "0.9.1")
         self.assertEqual(self.o.check(fetch=None, now=1800000100)["result"], "CACHED")
 
-    def test_check_refuses_a_forged_record(self):
-        data, sig = self.signed()
-        out = self.o.check(force=True, fetch=self.fetcher(data.replace(b"0.9.1", b"9.9.9"), sig),
-                           now=1800000000)
-        self.assertEqual((out["result"], out["available"]), ("SIGNATURE_REFUSED", False))
+    def test_check_refuses_assets_off_github_or_not_matching(self):
+        data = self.record()
+        out = self.o.check(force=True, fetch=self.fetcher(
+            data, record_url="https://evil.example/nebulaos-release.json"), now=1800000000)
+        self.assertEqual((out["result"], out["available"]), ("OTA_CHANNEL", False))
+        out = self.o.check(force=True, fetch=self.fetcher(data, img_size=2999), now=1800000000)
+        self.assertEqual((out["result"], out["available"]), ("OTA_BAD_RECORD", False))
 
-    def test_check_without_keys_offline_clock_busy(self):
-        shutil.rmtree(self.o.KEYRING)
-        self.assertEqual(self.o.check(force=True, now=1800000000)["result"], "NO_KEYS")
-        os.makedirs(self.o.KEYRING)
-        subprocess.check_call(["openssl", "pkey", "-in", self.priv, "-pubout",
-                               "-out", os.path.join(self.o.KEYRING, "k.pem")])
+    def test_check_offline_clock_busy(self):
         def offline(url, limit):
             raise OSError("network unreachable")
         self.assertEqual(self.o.check(force=True, fetch=offline, now=1800000000)["result"], "OFFLINE")
@@ -1501,6 +1525,50 @@ class OtaTests(unittest.TestCase):
         fake_busy(self.e.common, ["PRINTING"])
         with self.assertRaises(self.e.common.Refused):
             self.o.check(force=True, fetch=offline, now=1800000000)
+
+    def test_download_needs_an_offer(self):
+        with self.assertRaises(self.e.common.OsConfigError) as cm:
+            self.o.download(now=1800000000)
+        self.assertEqual(cm.exception.code, "OTA_NOTHING_OFFERED")
+
+    def test_download_refused_while_busy(self):
+        self.checked()
+        fake_busy(self.e.common, ["PRINTING"])
+        with self.assertRaises(self.e.common.Refused):
+            self.o.download(now=1800000000)
+
+    def test_download_becomes_the_ota_image_source(self):
+        self.checked()
+        urls = []
+        self.o.run_download(opener=lambda url: urls.append(url) or FakeResponse(self.payload))
+        name = os.path.basename(self.img)
+        self.assertEqual(urls, [self.BASE + name])
+        state = self.o.status()["download"]
+        self.assertEqual((state["state"], state["file"]), ("finished", "ota/" + name))
+        self.assertEqual(self.o.downloaded()["file"], "ota/" + name)
+        self.assertEqual(self.o.download(now=1800000000)["result"], "ALREADY_DOWNLOADED")
+        im = self.e.image
+        self.assertEqual(im.resolve("ota/" + name), os.path.join(im.OTA_DOWNLOAD_DIR, name))
+        self.assertEqual(sorted(os.listdir(im.OTA_DOWNLOAD_DIR)), [name])
+        sha = hashlib.sha256(self.payload).hexdigest()
+        self.assertTrue(im._remove_installed_upload({"file": "ota/" + name, "sha256": sha}))
+        self.assertFalse(os.path.exists(os.path.join(im.OTA_DOWNLOAD_DIR, name)))
+
+    def test_download_that_does_not_match_is_dropped(self):
+        self.checked()
+        for body in (b"IMG" * 999 + b"XXX", b"IMG" * 999, b"IMG" * 1001):
+            self.o.run_download(opener=lambda url: FakeResponse(body))
+            state = self.o.status()["download"]
+            self.assertEqual((state["state"], state["error"]), ("failed", "OTA_DOWNLOAD_BAD"))
+            self.assertEqual(os.listdir(self.e.image.OTA_DOWNLOAD_DIR), [])
+            self.assertIsNone(self.o.downloaded())
+
+    def test_discard(self):
+        self.checked()
+        self.o.run_download(opener=lambda url: FakeResponse(self.payload))
+        self.assertEqual(self.o.discard()["result"], "DISCARDED")
+        self.assertIsNone(self.o.downloaded())
+        self.assertIsNone(self.o.status()["download"])
 
 
 class MaintenanceGateTests(unittest.TestCase):
@@ -3644,6 +3712,17 @@ class ComponentTests(unittest.TestCase):
                            ("reset", "reset"), ("version", "version")):
             self.call("/machine/nebulaos/camera/" + path)
             self.assertEqual(self.argv()[:2], ["camera", verb])
+
+    def test_ota_endpoints(self):
+        """G79: check / download / discard map to the ota verbs, no shell."""
+        self.call("/machine/nebulaos/ota/check", {"force": True})
+        self.assertEqual(self.argv()[:3], ["ota", "check", "--force"])
+        self.call("/machine/nebulaos/ota/check", {})
+        self.assertEqual(self.argv()[:2], ["ota", "check"])
+        self.assertNotIn("--force", self.argv())
+        for path in ("status", "download", "discard"):
+            self.call("/machine/nebulaos/ota/" + path)
+            self.assertEqual(self.argv()[:2], ["ota", path])
 
     def test_static_ipv4_json(self):
         with self.assertRaises(Exception) as cm:

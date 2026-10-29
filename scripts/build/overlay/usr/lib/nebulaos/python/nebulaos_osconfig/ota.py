@@ -1,41 +1,52 @@
-# nebulaos_osconfig.ota - NebulaOS system updates over the internet (G79),
-# stage S2: the trust anchor, the signed release record and the check.
-# Design: _scratch/run15/G79-ota-design.md (v2, after the architecture review).
+# nebulaos_osconfig.ota - NebulaOS system updates over the internet (G79).
+# Design: _scratch/run15/G79-ota-design.md; Tim 2026-10-29 (Run 23): NO signing
+# key - the printer downloads only over HTTPS from github.com and checks the
+# size and sha256 listed in the release record.
 #
-#   ota status                 the last check (cached, read-only)
+#   ota status                 the last check and the download (read-only)
 #   ota check [--force]        ask the release channel whether a newer
 #                              NebulaOS is published (at most once per 24 h
 #                              unless forced; never while the printer is busy)
+#   ota download               fetch the offered .img (background job) into
+#                              the "ota" image source; the install is then
+#                              the ordinary `image install --file ota/<name>`
+#                              (busy refusal, stop points, trial, rollback)
+#   ota discard                delete the downloaded image
 #
-# Not here yet (later stages): the download (S3), the "ota" install source
-# (S4), the screen and Mainsail (S5). Nothing in this module writes a slot.
-#
-# Trust: a release is described by nebulaos-release.json, signed OFFLINE with
-# the project owner's Ed25519 key (tools/release/sign-release.py). The printer
-# trusts only the public keys in the read-only image keyring
-# (/usr/share/nebulaos/ota-keys/*.pem) - no runtime key chaining, rotation is
-# an image release with overlapping keys. The signature is checked over the
-# RAW bytes with the shipped OpenSSL (pkeyutl -rawin) BEFORE the JSON is
-# parsed. An image without keys (every build today) never offers an update.
+# Trust: the stable channel is the latest GitHub release of NebulaOS-KE/NebulaOS.
+# Every request is HTTPS with certificate checks (the image's CA bundle), to
+# github.com / api.github.com and, through redirects, only to GitHub's release
+# asset hosts. The release record nebulaos-release.json (tools/release/
+# make-release-record.py) names the image, its size and sha256; the image is
+# kept only when both match. TLS needs a set clock: before CLOCK_FLOOR nothing
+# is fetched.
+import fcntl
+import hashlib
 import json
 import os
 import re
 import subprocess
-import tempfile
 import time
+import urllib.parse
 
-from . import common
+from . import common, image
 from .common import invalid, OsConfigError
 
-KEYRING = os.environ.get("NEBULAOS_OTA_KEYRING", "/usr/share/nebulaos/ota-keys")
-OPENSSL = os.environ.get("NEBULAOS_OPENSSL", "/usr/bin/openssl")
 OTA_DIR = os.path.join(common.NEBULAOS_ROOT, "system", "ota")
 CHECK_CACHE = os.path.join(OTA_DIR, "check.json")
+DOWNLOAD_DIR = image.OTA_DOWNLOAD_DIR
+DOWNLOAD_STATE = os.path.join(common.RUN_DIR, "ota-download", "state.json")
+DOWNLOAD_LOCK = os.path.join(common.RUN_DIR, "ota-download", "lock")
 VERSION_FILE = os.environ.get("NEBULAOS_VERSION_FILE", "/opt/nebulaos-version.json")
+OSCONFIG = os.environ.get("NEBULAOS_OSCONFIG", "/usr/libexec/nebulaos/nebulaos-osconfig")
 # Tim 2026-10-29: complete releases are published on NebulaOS-KE/NebulaOS; the
-# stable channel is its latest GitHub release. (Key owner: still open.)
+# stable channel is its latest GitHub release.
 CHANNEL_URL = os.environ.get("NEBULAOS_OTA_CHANNEL",
                              "https://api.github.com/repos/NebulaOS-KE/NebulaOS/releases/latest")
+ASSET_PREFIX = "https://github.com/NebulaOS-KE/NebulaOS/releases/download/"
+# GitHub answers an asset URL with a redirect to its storage host.
+ALLOWED_HOSTS = ("api.github.com", "github.com", "objects.githubusercontent.com",
+                 "release-assets.githubusercontent.com")
 RELEASE_ASSET = "nebulaos-release.json"
 CHECK_INTERVAL = 24 * 3600
 FETCH_TIMEOUT = 20
@@ -44,6 +55,7 @@ PRODUCT = "NebulaOS-Ender3V3KE"
 OTA_SCHEMA = 1
 # Builds are dated 2026 on; a clock before this was never set (no NTP yet).
 CLOCK_FLOOR = 1767225600          # 2026-01-01
+SPACE_MARGIN = 16 * 1024 * 1024
 
 _VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -70,38 +82,10 @@ def running_version():
     return v
 
 
-# -- the signed record -------------------------------------------------------
-
-def keyring():
-    try:
-        names = sorted(n for n in os.listdir(KEYRING) if n.endswith(".pem"))
-    except OSError:
-        return []
-    return [os.path.join(KEYRING, n) for n in names]
-
-
-def verify_signature(data, signature, keys=None):
-    """The name of the keyring key that signed `data` (raw bytes), or None.
-    Ed25519 through the shipped OpenSSL; nothing is parsed before this."""
-    keys = keyring() if keys is None else keys
-    if not keys or not signature:
-        return None
-    with tempfile.TemporaryDirectory(prefix="nebulaos-ota-") as tmp:
-        dpath, spath = os.path.join(tmp, "data"), os.path.join(tmp, "sig")
-        with open(dpath, "wb") as handle:
-            handle.write(data)
-        with open(spath, "wb") as handle:
-            handle.write(signature)
-        for key in keys:
-            rc, _, _ = common.run([OPENSSL, "pkeyutl", "-verify", "-pubin", "-inkey", key,
-                                   "-rawin", "-in", dpath, "-sigfile", spath], 20)
-            if rc == 0:
-                return os.path.basename(key)
-    return None
-
+# -- the release record ------------------------------------------------------
 
 def parse_record(data):
-    """The fields of a VERIFIED nebulaos-release.json (raw bytes)."""
+    """The fields of nebulaos-release.json (raw bytes)."""
     try:
         rec = json.loads(data.decode("utf-8"))
     except (ValueError, UnicodeDecodeError):
@@ -116,7 +100,7 @@ def parse_record(data):
     img = rec.get("img")
     if not (isinstance(img, dict) and isinstance(img.get("name"), str)
             and _IMG_RE.match(img["name"]) and isinstance(img.get("size"), int)
-            and not isinstance(img.get("size"), bool) and 0 < img["size"] <= 1 << 30
+            and not isinstance(img.get("size"), bool) and 0 < img["size"] <= image.MAX_IMG_BYTES
             and isinstance(img.get("sha256"), str) and _SHA256_RE.match(img["sha256"])):
         raise invalid("OTA_BAD_RECORD", "the image entry is incomplete")
     if not (isinstance(rec.get("source_head"), str) and _SHA1_RE.match(rec["source_head"])):
@@ -128,7 +112,7 @@ def parse_record(data):
 
 
 def offer(rec, running):
-    """(available, reason) for a verified record and the running version."""
+    """(available, reason) for a record and the running version."""
     if running is None:
         return False, "RUNNING_VERSION_UNKNOWN"
     have, new = parse_version(running), parse_version(rec["version"])
@@ -141,38 +125,94 @@ def offer(rec, running):
     return True, "AVAILABLE"
 
 
-# -- the check ----------------------------------------------------------------
+# -- HTTPS to GitHub only ------------------------------------------------------
 
-def _fetch(url, limit):
+def allowed_url(url):
+    try:
+        parts = urllib.parse.urlsplit(url)
+    except ValueError:
+        return False
+    return parts.scheme == "https" and parts.hostname in ALLOWED_HOSTS and not parts.username
+
+
+def _opener():
     import urllib.request
+
+    class GitHubOnly(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            if not allowed_url(newurl):
+                raise OsConfigError("OTA_CHANNEL", "the release channel redirected away "
+                                    "from GitHub")
+            return super().redirect_request(req, fp, code, msg, headers, newurl)
+    return urllib.request.build_opener(GitHubOnly)
+
+
+def _open(url):
+    import urllib.request
+    if not allowed_url(url):
+        raise OsConfigError("OTA_CHANNEL", "not a GitHub HTTPS address: %s" % url)
     req = urllib.request.Request(url, headers={"User-Agent": "NebulaOS-ota",
                                                "Accept": "application/octet-stream, "
                                                          "application/json"})
-    with urllib.request.urlopen(req, timeout=FETCH_TIMEOUT) as resp:
+    return _opener().open(req, timeout=FETCH_TIMEOUT)
+
+
+def _fetch(url, limit):
+    with _open(url) as resp:
         data = resp.read(limit + 1)
     if len(data) > limit:
         raise OsConfigError("OTA_TOO_LARGE", "the release channel sent too much data")
     return data
 
 
-def _asset_urls(listing):
+def _assets(listing):
+    """{name: (url, size)} of the release's assets on github.com."""
     try:
         rel = json.loads(listing.decode("utf-8"))
     except (ValueError, UnicodeDecodeError):
         raise OsConfigError("OTA_CHANNEL", "the release channel answer is not JSON")
-    urls = {}
-    for a in rel.get("assets") or []:
-        if isinstance(a, dict) and a.get("name") in (RELEASE_ASSET, RELEASE_ASSET + ".sig"):
-            urls[a["name"]] = a.get("browser_download_url")
-    if not urls.get(RELEASE_ASSET) or not urls.get(RELEASE_ASSET + ".sig"):
-        raise OsConfigError("OTA_CHANNEL", "the latest release has no signed NebulaOS record")
-    return urls[RELEASE_ASSET], urls[RELEASE_ASSET + ".sig"]
+    out = {}
+    for a in (rel.get("assets") if isinstance(rel, dict) else None) or []:
+        if not isinstance(a, dict):
+            continue
+        url = a.get("browser_download_url")
+        if isinstance(a.get("name"), str) and isinstance(url, str) \
+                and url.startswith(ASSET_PREFIX) and allowed_url(url):
+            out[a["name"]] = (url, a.get("size"))
+    if RELEASE_ASSET not in out:
+        raise OsConfigError("OTA_CHANNEL", "the latest release has no NebulaOS record")
+    return out
+
+
+# -- the check ----------------------------------------------------------------
+
+def _download_state():
+    state, _ = common.read_json(DOWNLOAD_STATE)
+    if state and state.get("state") == "running" and not _download_running():
+        state = dict(state, state="failed", error="INTERRUPTED",
+                     message="The download stopped; start it again.")
+    return state
+
+
+def downloaded():
+    """The downloaded image that matches the last check, or None."""
+    cache, _ = common.read_json(CHECK_CACHE)
+    img = (cache or {}).get("img")
+    if not (cache and cache.get("available") and isinstance(img, dict)):
+        return None
+    path = os.path.join(DOWNLOAD_DIR, img.get("name", ""))
+    try:
+        if os.path.getsize(path) != img["size"]:
+            return None
+    except (OSError, KeyError):
+        return None
+    return {"file": "ota/" + img["name"], "sha256": img["sha256"], "version": cache["version"]}
 
 
 def status():
     cache, _ = common.read_json(CHECK_CACHE)
-    return {"last": cache or None, "keys": [os.path.basename(k) for k in keyring()],
-            "running_version": running_version(), "channel": CHANNEL_URL}
+    return {"last": cache or None, "running_version": running_version(),
+            "channel": CHANNEL_URL, "download": _download_state(), "downloaded": downloaded()}
 
 
 def _save(result):
@@ -190,32 +230,157 @@ def check(force=False, fetch=None, now=None):
             return dict(cache, result="CACHED")
     common.refuse_if_busy("request")
     base = {"checked_at": int(now), "running_version": running_version()}
-    if not keyring():
-        return _save(dict(base, result="NO_KEYS", available=False,
-                          message="System updates over the internet are not enabled "
-                                  "on this build."))
     if now < CLOCK_FLOOR:
         return dict(base, result="CLOCK_NOT_SET", available=False,
                     message="The printer's clock is not set yet; try again later.")
     try:
-        rec_url, sig_url = _asset_urls(fetch(CHANNEL_URL, MAX_RECORD))
-        data = fetch(rec_url, MAX_RECORD)
-        sig = fetch(sig_url, 1024)
+        assets = _assets(fetch(CHANNEL_URL, MAX_RECORD))
+        rec = parse_record(fetch(assets[RELEASE_ASSET][0], MAX_RECORD))
     except OsConfigError as exc:
         return _save(dict(base, result=exc.code, available=False, message=exc.message))
-    except Exception as exc:                 # network: offline, DNS, timeout, HTTP
+    except Exception as exc:                 # network: offline, DNS, TLS, timeout, HTTP
         return _save(dict(base, result="OFFLINE", available=False,
                           message="Could not reach the release channel (%s)."
                                   % exc.__class__.__name__))
-    signer = verify_signature(data, sig)
-    if signer is None:
-        return _save(dict(base, result="SIGNATURE_REFUSED", available=False,
-                          message="The release record is not signed by a NebulaOS key."))
-    try:
-        rec = parse_record(data)
-    except OsConfigError as exc:
-        return _save(dict(base, result=exc.code, available=False, message=exc.message))
+    asset = assets.get(rec["img"]["name"])
+    if asset is None or asset[1] != rec["img"]["size"]:
+        return _save(dict(base, result="OTA_BAD_RECORD", available=False,
+                          message="The release does not carry the image its record names."))
     available, reason = offer(rec, base["running_version"])
     return _save(dict(base, result=reason, available=available, version=rec["version"],
-                      img=rec["img"], source_head=rec["source_head"], signer=signer,
+                      img=dict(rec["img"], url=asset[0]), source_head=rec["source_head"],
                       notes=rec.get("notes_url")))
+
+
+# -- the download (background job) ----------------------------------------------
+
+def _download_running():
+    """True while a download worker holds the lock."""
+    os.makedirs(os.path.dirname(DOWNLOAD_LOCK), exist_ok=True)
+    fd = os.open(DOWNLOAD_LOCK, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return True
+    finally:
+        os.close(fd)
+    return False
+
+
+def _dl_state(**fields):
+    common.atomic_write_json(DOWNLOAD_STATE, dict(fields, updated=int(time.time())))
+
+
+def _clear_downloads(keep=None):
+    try:
+        names = os.listdir(DOWNLOAD_DIR)
+    except OSError:
+        return
+    for name in names:
+        if name != keep:
+            try:
+                os.unlink(os.path.join(DOWNLOAD_DIR, name))
+            except OSError:
+                pass
+
+
+def download(now=None):
+    now = time.time() if now is None else now
+    if _download_running():
+        raise invalid("BUSY", "a download is already running")
+    cache, _ = common.read_json(CHECK_CACHE)
+    if not (cache and cache.get("available") and isinstance(cache.get("img"), dict)):
+        raise invalid("OTA_NOTHING_OFFERED", "check for an update first")
+    if downloaded():
+        return {"result": "ALREADY_DOWNLOADED", "downloaded": downloaded()}
+    if now < CLOCK_FLOOR:
+        raise invalid("CLOCK_NOT_SET", "the printer's clock is not set yet; try again later")
+    common.refuse_if_busy("request")
+    os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+    st = os.statvfs(DOWNLOAD_DIR)
+    if st.f_bavail * st.f_frsize < cache["img"]["size"] + SPACE_MARGIN:
+        raise invalid("NO_SPACE", "not enough free space for the download (%d MB needed)"
+                      % ((cache["img"]["size"] + SPACE_MARGIN) // 1000000))
+    _dl_state(state="running", percent=0, version=cache["version"],
+              name=cache["img"]["name"], started=int(now))
+    subprocess.Popen([OSCONFIG, "ota", "download-worker"],
+                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                     stderr=subprocess.DEVNULL, start_new_session=True, close_fds=True)
+    return {"result": "STARTED"}
+
+
+def run_download(opener=None):
+    """The background download (nebulaos-osconfig ota download-worker)."""
+    os.makedirs(os.path.dirname(DOWNLOAD_LOCK), exist_ok=True)
+    lock = os.open(DOWNLOAD_LOCK, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(lock)
+        return
+    cache, _ = common.read_json(CHECK_CACHE)
+    img = (cache or {}).get("img") or {}
+    base = {"version": (cache or {}).get("version"), "name": img.get("name")}
+    part = None
+    try:
+        if not (cache and cache.get("available") and _IMG_RE.match(img.get("name") or "")):
+            raise OsConfigError("OTA_NOTHING_OFFERED", "check for an update first")
+        os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+        _clear_downloads()
+        final = os.path.join(DOWNLOAD_DIR, img["name"])
+        part = final + ".part"
+        digest, got, shown = hashlib.sha256(), 0, -1
+        with (opener or _open)(img["url"]) as resp, open(part, "wb") as out:
+            while True:
+                block = resp.read(image.CHUNK)
+                if not block:
+                    break
+                got += len(block)
+                if got > img["size"]:
+                    raise OsConfigError("OTA_DOWNLOAD_BAD", "the download is larger than "
+                                        "the release record says")
+                digest.update(block)
+                out.write(block)
+                percent = got * 100 // img["size"]
+                if percent != shown:
+                    shown = percent
+                    _dl_state(state="running", percent=percent, **base)
+            out.flush()
+            os.fsync(out.fileno())
+        if got != img["size"]:
+            raise OsConfigError("OTA_DOWNLOAD_BAD", "the download is incomplete")
+        if digest.hexdigest() != img["sha256"]:
+            raise OsConfigError("OTA_DOWNLOAD_BAD", "the download does not match the release "
+                                "record (sha256)")
+        os.replace(part, final)
+        common.fsync_dir(DOWNLOAD_DIR)
+        part = None
+        _dl_state(state="finished", percent=100, file="ota/" + img["name"],
+                  sha256=img["sha256"], **base)
+    except Exception as exc:  # the job must always end in a state the screen can show
+        if isinstance(exc, OsConfigError):
+            code, message = exc.code, exc.message
+        else:
+            code, message = "OTA_DOWNLOAD_FAILED", "The download failed (%s: %s)." % (
+                exc.__class__.__name__, exc)
+        _dl_state(state="failed", error=code, message=message, **base)
+    finally:
+        if part:
+            try:
+                os.unlink(part)
+            except OSError:
+                pass
+        os.close(lock)
+
+
+def discard():
+    if _download_running():
+        raise invalid("BUSY", "a download is running")
+    if image._job_active():
+        raise invalid("BUSY", "an image install is running")
+    _clear_downloads()
+    try:
+        os.unlink(DOWNLOAD_STATE)
+    except OSError:
+        pass
+    return {"result": "DISCARDED"}

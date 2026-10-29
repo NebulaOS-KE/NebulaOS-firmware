@@ -1,29 +1,24 @@
 #!/usr/bin/env python3
-"""Sign a NebulaOS release record for system updates over the internet (G79 S1).
+"""Write the NebulaOS release record for system updates over the internet (G79).
 
-Run by the project owner, OFFLINE, with the owner's Ed25519 private key - the key
-never touches CI or a build machine. Writes, next to the packaged image:
+Tim 2026-10-29 (Run 23): no signing key. The record is a release asset next to
+the image; the printer fetches both over HTTPS from github.com only and keeps the
+image when its size and sha256 match the record:
 
-    nebulaos-release.json      the record the printer verifies (raw bytes)
-    nebulaos-release.json.sig  Ed25519 signature over exactly those bytes
+    nebulaos-release.json      {product, channel, version, img {name, size, sha256},
+                                source_head, [min_version, max_version, notes_url]}
 
-    sign-release.py --img NebulaOS-Ender3V3KE-<ver>.img --version <x.y.z>
-                    --source-head <40-hex> --key owner-ed25519.pem --out <dir>
-                    [--min-version x.y.z] [--max-version x.y.z] [--notes-url URL]
+    make-release-record.py --img NebulaOS-Ender3V3KE-<ver>.img --version <x.y.z>
+                           --source-head <40-hex> --out <dir>
+                           [--min-version x.y.z] [--max-version x.y.z] [--notes-url URL]
 
-The printer (nebulaos_osconfig/ota.py) checks the signature with the public keys
-in its read-only image keyring before it parses anything. Publishing (only
-RELEASE builds, the gates of design v2) is a separate step, not this tool.
-A key pair: openssl genpkey -algorithm ed25519 -out owner-ed25519.pem;
-openssl pkey -in owner-ed25519.pem -pubout -out <name>.pem (the public half goes
-into the image keyring /usr/share/nebulaos/ota-keys/).
+The printer side is nebulaos_osconfig/ota.py.
 """
 import argparse
 import hashlib
 import json
 import os
 import re
-import subprocess
 import sys
 
 PRODUCT = "NebulaOS-Ender3V3KE"
@@ -56,7 +51,6 @@ def main(argv=None):
     ap.add_argument("--img", required=True)
     ap.add_argument("--version", required=True)
     ap.add_argument("--source-head", required=True)
-    ap.add_argument("--key", required=True, help="the owner's Ed25519 PRIVATE key (PEM)")
     ap.add_argument("--out", required=True)
     ap.add_argument("--min-version")
     ap.add_argument("--max-version")
@@ -74,14 +68,7 @@ def main(argv=None):
     rec_path = os.path.join(a.out, "nebulaos-release.json")
     with open(rec_path, "wb") as handle:
         handle.write(data)
-    sig_path = rec_path + ".sig"
-    rc = subprocess.call(["openssl", "pkeyutl", "-sign", "-inkey", a.key, "-rawin",
-                          "-in", rec_path, "-out", sig_path])
-    if rc != 0:
-        os.unlink(rec_path)
-        sys.exit("signing failed (openssl exit %d); nothing written" % rc)
     print("RELEASE_RECORD=%s" % rec_path)
-    print("RELEASE_SIGNATURE=%s" % sig_path)
     return 0
 
 

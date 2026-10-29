@@ -36,7 +36,9 @@
 #   nebulaos-osconfig spoolman status|remove | set --host HOST --port PORT   (G125)
 #   nebulaos-osconfig camera status|defaults|reset|version | set --json '{...}' |
 #                     apply [--device /dev/videoN]                       (G121)
-#   nebulaos-osconfig ota status | check [--force]     (G79 S2: signed release check)
+#   nebulaos-osconfig ota status | check [--force] | download | discard
+#                     (G79: release check over HTTPS; the download becomes the image
+#                     source ota/<name>, installed with `image install`)
 #   nebulaos-osconfig mcu status|list
 #   nebulaos-osconfig mcu flash --file ID --sha256 HEX   (ID and HEX from `list`)
 #   nebulaos-osconfig updates readiness                  (the last check, read-only)
@@ -149,6 +151,10 @@ def _dispatch(argv):
     if (domain, verb) == ("image", "trial-count"):
         _opts(rest, {})
         return image.count_start()
+    if (domain, verb) == ("ota", "download-worker"):
+        _opts(rest, {})
+        ota.run_download()
+        return {"result": "DONE"}
     if (domain, verb) == ("image", "worker"):
         o = _opts(rest, {"file": True, "sha256": True, "holder": True})
         image.run_job(o.get("file"), o.get("sha256"), o.get("holder"))
@@ -189,6 +195,9 @@ def _dispatch(argv):
         if domain == "ota":
             if verb == "check":
                 return ota.check(force=bool(_opts(rest, {"force": False}).get("force")))
+            if verb in ("download", "discard"):
+                _opts(rest, {})
+                return ota.download() if verb == "download" else ota.discard()
         if domain == "camera":
             if verb == "set":
                 raw = _opts(rest, {"json": True}).get("json")

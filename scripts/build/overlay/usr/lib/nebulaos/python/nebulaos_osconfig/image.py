@@ -5,7 +5,8 @@
 #   - NebulaOS may occupy both A/B slots; an install always writes the
 #     inactive slot (kernel + rootfs) and then switches the OTA marker to it.
 #     The running slot is never written. The RTOS partitions are never written.
-#   - Sources: USB sticks and config/firmware/os (Mainsail upload). OTA later.
+#   - Sources: USB sticks, config/firmware/os (Mainsail upload) and the image
+#     `ota download` fetched (G79, Run 23; sha256 checked against the release).
 #   - Integrity checks only (no signing): the Creality OTA envelope (7z, the
 #     chained per-chunk MD5 scheme, declared sizes and MD5s), a MIPS uImage
 #     kernel and a squashfs rootfs that fit their partitions, and a read-back
@@ -56,6 +57,9 @@ SEVENZA = os.environ.get("NEBULAOS_7ZA", "/usr/bin/7za")
 ENVELOPE_PASSWORD = "$1$cxswfile$ZFd0RWFYkJQugbtKVGL9y0"
 UPLOAD_DIR = os.environ.get("NEBULAOS_IMAGE_UPLOAD_DIR", "/opt/printer_data/config/uploads/system-image")  # G62/G63
 USB_DIR = os.environ.get("NEBULAOS_MCU_USB_DIR", "/opt/printer_data/gcodes/USB")
+# G79: ota.run_download writes the verified .img here (one at a time).
+OTA_DOWNLOAD_DIR = os.environ.get("NEBULAOS_OTA_DOWNLOAD_DIR",
+                                  os.path.join(common.NEBULAOS_ROOT, "system", "ota", "download"))
 USB_DEPTH = 2
 MAX_ENTRIES = 2000
 WORK_PARENT = os.environ.get("NEBULAOS_IMAGE_WORK", os.path.join(common.NEBULAOS_ROOT, "system", "image-work"))
@@ -360,6 +364,9 @@ def list_files():
     for rel, st in _scan(UPLOAD_DIR, 0):
         files.append({"id": "upload/" + rel, "source": "upload", "name": rel,
                       "size": st.st_size, "mtime": int(st.st_mtime)})
+    for rel, st in _scan(OTA_DOWNLOAD_DIR, 0):
+        files.append({"id": "ota/" + rel, "source": "ota", "name": rel,
+                      "size": st.st_size, "mtime": int(st.st_mtime)})
     mounts = _usb_mounts()
     for dev in mounts:
         for rel, st in _scan(os.path.join(USB_DIR, dev), USB_DEPTH):
@@ -379,6 +386,8 @@ def resolve(file_id):
         raise invalid("INVALID_FILE", "not a file from the list")
     if parts[0] == "upload" and len(parts) == 2:
         root, rel = UPLOAD_DIR, parts[1]
+    elif parts[0] == "ota" and len(parts) == 2:
+        root, rel = OTA_DOWNLOAD_DIR, parts[1]
     elif parts[0] == "usb" and len(parts) >= 3:
         root, rel = os.path.join(USB_DIR, parts[1]), "/".join(parts[2:])
     else:
@@ -911,10 +920,10 @@ def _record(trial, result, note=None):
 def _remove_installed_upload(t):
     """G66 (2026-10-16): an uploaded image (~130 MB) is deleted once the
     system it carries has started and been confirmed - only a file in the
-    upload folder (never the USB stick), and only when it still is exactly
-    the file that was installed (sha256)."""
+    upload folder or a download (G79; never the USB stick), and only when it
+    still is exactly the file that was installed (sha256)."""
     file_id, want = t.get("file"), t.get("sha256")
-    if not (isinstance(file_id, str) and file_id.startswith("upload/") and want):
+    if not (isinstance(file_id, str) and file_id.startswith(("upload/", "ota/")) and want):
         return False
     try:
         path = resolve(file_id)

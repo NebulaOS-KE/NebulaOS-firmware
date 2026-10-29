@@ -149,6 +149,12 @@ class NebulaOS:
             ("/machine/nebulaos/image/check", RequestType.POST, self._image_check),
             ("/machine/nebulaos/image/install", RequestType.POST, self._image_install),
             ("/machine/nebulaos/image/ack", RequestType.POST, self._image_ack),
+            # G79 (Run 23): system updates over the internet (nebulaos_osconfig/ota.py);
+            # the downloaded image is installed through image/install (file ota/<name>).
+            ("/machine/nebulaos/ota/status", RequestType.GET, self._ota_status),
+            ("/machine/nebulaos/ota/check", RequestType.POST, self._ota_check),
+            ("/machine/nebulaos/ota/download", RequestType.POST, self._ota_download),
+            ("/machine/nebulaos/ota/discard", RequestType.POST, self._ota_discard),
             ("/machine/nebulaos/mcu/status", RequestType.GET, self._mcu_status),
             ("/machine/nebulaos/mcu/files", RequestType.GET, self._mcu_files),
             ("/machine/nebulaos/mcu/flash", RequestType.POST, self._mcu_flash),
@@ -465,6 +471,25 @@ class NebulaOS:
 
     async def _image_ack(self, web_request: WebRequest) -> Dict[str, Any]:
         return await self._write("image", "ack")
+
+    # -- system updates over the internet (G79) ---------------------------------
+    # check asks GitHub (two HTTPS requests, 20 s each at most); download only
+    # starts the background job - the client follows it through ota/status.
+
+    async def _ota_status(self, web_request: WebRequest) -> Dict[str, Any]:
+        return await self._read("ota", "status")
+
+    async def _ota_check(self, web_request: WebRequest) -> Dict[str, Any]:
+        args = ["ota", "check"]
+        if web_request.get_boolean("force", False):
+            args.append("--force")
+        return await self._write(*args)
+
+    async def _ota_download(self, web_request: WebRequest) -> Dict[str, Any]:
+        return await self._write("ota", "download")
+
+    async def _ota_discard(self, web_request: WebRequest) -> Dict[str, Any]:
+        return await self._write("ota", "discard")
 
     async def _ack_clean_reset(self, web_request: WebRequest) -> Dict[str, Any]:
         # The screen showed the after-reset notice (G2).
