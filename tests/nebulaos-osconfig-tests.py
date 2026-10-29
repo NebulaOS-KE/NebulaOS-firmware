@@ -1346,14 +1346,14 @@ class CameraTests(unittest.TestCase):
         open(self.c.SHED, "w").close()
         self.assertEqual(self.c.apply()["result"], "SAVED_APPLIES_LATER")
 
-    def test_defaults_resets_image_settings_only(self):
+    def test_defaults_resets_every_setting(self):
         self.plug()
         fake = FakeCameraIoctl(self.c)
         self.c.set_settings({"brightness": 150, "zoom": 150, "ir_mode": "color",
                              "power_line": "50"}, fake)
         cfg = self.c.defaults(fake)["config"]
-        self.assertEqual((cfg["brightness"], cfg["zoom"]), (128, 100))
-        self.assertEqual((cfg["ir_mode"], cfg["power_line"]), ("color", "50"))
+        self.assertEqual(cfg, self.c.default_config())
+        self.assertEqual(self.c.load_config()[0], self.c.default_config())
 
     def test_version_and_status_cache(self):
         self.plug()
@@ -1378,6 +1378,25 @@ class CameraTests(unittest.TestCase):
         fake_busy(self.e.common, ["PRINTING"])
         with self.assertRaises(self.e.common.Refused):
             self.c.reset(ioctl=FakeCameraIoctl(self.c), sleep=lambda s: None)
+
+    def test_defaults_with_manual_exposure_resets_the_camera(self):
+        self.plug()
+        fake = FakeCameraIoctl(self.c)
+        self.c.set_settings({"exposure_manual": True, "exposure_time": 200, "zoom": 150}, fake)
+        del fake.calls[:]
+        out = self.c.defaults(fake, sleep=lambda s: None)
+        self.assertEqual(out["result"], "RESET")
+        self.assertEqual(self.c.load_config()[0], self.c.default_config())
+        self.assertEqual(fake.calls[0][:3], ("xu", 17, self.c.UVC_SET_CUR))
+
+    def test_defaults_with_manual_exposure_refused_while_printing(self):
+        self.plug()
+        fake = FakeCameraIoctl(self.c)
+        self.c.set_settings({"exposure_manual": True, "exposure_time": 200}, fake)
+        fake_busy(self.e.common, ["PRINTING"])
+        with self.assertRaises(self.e.common.Refused):
+            self.c.defaults(fake, sleep=lambda s: None)
+        self.assertTrue(self.c.load_config()[0]["exposure_manual"])   # nothing changed
 
     def test_apply_failure_names_the_control(self):
         self.plug()

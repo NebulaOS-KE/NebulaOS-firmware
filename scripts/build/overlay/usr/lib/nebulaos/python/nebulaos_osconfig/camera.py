@@ -3,7 +3,7 @@
 #
 #   camera status                    stored settings, defaults, the camera
 #   camera set --json '{...}'        change some settings (saved, then applied)
-#   camera defaults                  image settings back to the camera's defaults
+#   camera defaults                  every setting back to the camera's defaults
 #   camera reset                     reboot the camera (XU selector 17)
 #   camera version                   the camera's firmware string (XU selector 15)
 #   camera apply [--device DEV]      re-apply everything (S50webcam, when the
@@ -53,10 +53,6 @@ POWER_LINE = {"off": 0, "50": 1, "60": 2}              # power_line_frequency
 RANGES = {"brightness": (50, 160), "contrast": (50, 160), "saturation": (50, 160),
           "sharpness": (50, 160), "wb_temperature": (300, 600), "zoom": (100, 200),
           "exposure_time": (1, 1000)}
-IMAGE_KEYS = ("brightness", "contrast", "saturation", "sharpness", "wb_auto",
-              "wb_temperature", "zoom")
-
-
 def default_config():
     return {"schema": SCHEMA, "ir_mode": "auto", "power_line": "off",
             "brightness": 128, "contrast": 128, "saturation": 128, "sharpness": 128,
@@ -348,12 +344,21 @@ def set_settings(changes, ioctl=None):
     return {"result": _apply_now(new, ioctl), "config": new}
 
 
-def defaults(ioctl=None):
+def defaults(ioctl=None, sleep=time.sleep, monotonic=time.monotonic):
+    """Every setting back to the default (Tim 2026-10-29: "defaults resets
+    all"), night mode and anti-flicker included. Manual exposure only goes
+    back to automatic with a camera reboot, so then this is a reset - refused
+    while the printer is busy, like Reset camera."""
     cfg, _ = load_config()
-    base = default_config()
-    new = dict(cfg, **{k: base[k] for k in IMAGE_KEYS})
+    new = default_config()
+    if not cfg["exposure_manual"]:
+        _persist(new)
+        return {"result": _apply_now(new, ioctl), "config": new}
+    common.refuse_if_busy("request")
     _persist(new)
-    return {"result": _apply_now(new, ioctl), "config": new}
+    if find_camera() is None:
+        return {"result": "SAVED_APPLIES_LATER", "config": new}
+    return reset(ioctl, sleep, monotonic)
 
 
 def version(ioctl=None):
