@@ -80,6 +80,16 @@ class BootWaitTests(unittest.TestCase):
         self.assertLess(install.index("device.wait_for_boot_done", i), install.index("verify.part1_verify", i))
         self.assertEqual(agent.count("device.wait_for_boot_done("), 2)
 
+    def test_verify_proves_the_address_before_waiting(self):
+        # Run 22: a stale enrolled address must not cost the 300 s boot wait,
+        # and the slot-state retry (time.sleep) needs time at module level.
+        here = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools", "hardware")
+        agent = open(os.path.join(here, "nebulaos_agent.py")).read()
+        self.assertIn("\nimport time\n", agent)
+        i = agent.index("def op_verify(")
+        self.assertLess(agent.index("session.probe_identity()", i),
+                        agent.index("device.wait_for_boot_done(", i))
+
 
 if __name__ == "__main__":
     unittest.main()

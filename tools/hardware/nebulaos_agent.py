@@ -53,6 +53,7 @@ import os
 import re
 import shlex
 import sys
+import time
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
@@ -399,6 +400,13 @@ def op_verify(args):
             tried.append("%s: %s" % (address, str(exc)[:120]))
             continue
         try:
+            # Run 22 (2026-10-29): prove the address answers as THIS printer
+            # before the 300 s boot wait - a stale enrolled address (.242,
+            # first in the history) cost the whole wait after a watchdog reset.
+            ok, why = profile.identity_matches(session.probe_identity())
+            if not ok:
+                tried.append("%s: identity does not match the profile (%s)" % (address, why))
+                continue
             device.wait_for_boot_done(session, say, time.sleep, time.time)
             _say_slot_state(session)
             result = verifylib.part1_verify(
