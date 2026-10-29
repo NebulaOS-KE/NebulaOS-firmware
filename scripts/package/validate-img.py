@@ -146,16 +146,29 @@ def main(argv):
             return report()
         ok("the archive extracts with the derived secret")
 
+        # The stock updater looks in <file name without .img>/ (2026-10-29).
+        want_top = os.path.basename(args.img)[:-len(".img")]
         tops = [d for d in os.listdir(work) if os.path.isdir(os.path.join(work, d))]
-        if len(tops) == 1 and tops[0].startswith("Ender-3_V3_KE_F005_ota_img_V"):
-            ok("the archive holds exactly one expected top-level directory (%s)" % tops[0])
+        if tops == [want_top]:
+            ok("the archive holds exactly one top-level directory named like the file (%s)"
+               % want_top)
         else:
-            bad("the archive holds exactly one expected top-level directory", repr(tops))
+            bad("the archive holds exactly one top-level directory named like the file",
+                "%r, file %s" % (tops, os.path.basename(args.img)))
             return report()
         root = os.path.join(work, tops[0])
 
-        if os.path.isfile(os.path.join(root, "ota_config.in")):
+        config_path = os.path.join(root, "ota_config.in")
+        current_version = None
+        if os.path.isfile(config_path):
             ok("ota_config.in is present")
+            for line in open(config_path, encoding="utf-8"):
+                if line.startswith("current_version="):
+                    current_version = line.split("=", 1)[1].strip()
+            if current_version:
+                ok("ota_config.in names current_version (%s)" % current_version)
+            else:
+                bad("ota_config.in names current_version (the stock updater stops without it)")
         else:
             bad("ota_config.in is present")
 
@@ -177,6 +190,21 @@ def main(argv):
             bad("ota_update.in is present")
             return report()
         ok("ota_update.in is present")
+
+        # local_ota_update.sh: the payload directory is ota_v<current_version>
+        # and ota_update.in's ota_version must equal it, string for string.
+        update_version = None
+        for line in open(update_path, encoding="utf-8"):
+            if line.startswith("ota_version="):
+                update_version = line.split("=", 1)[1].strip()
+        if current_version and inners[0] == "ota_v%s" % current_version \
+                and update_version == current_version:
+            ok("ota_v<version>, ota_update.in ota_version and current_version agree (%s)"
+               % current_version)
+        else:
+            bad("ota_v<version>, ota_update.in ota_version and current_version agree",
+                "dir=%s ota_version=%s current_version=%s"
+                % (inners[0], update_version, current_version))
 
         records = {r["img_name"]: r for r in parse_update_in(open(update_path, encoding="utf-8").read())}
         if set(records) == set(canonical):

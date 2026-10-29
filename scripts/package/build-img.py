@@ -235,7 +235,14 @@ def build(args):
         sys.exit("FATAL: 7z is required to build the OTA envelope and was not found")
 
     version = args.ota_version
-    top = "Ender-3_V3_KE_%s_ota_img_V%s" % (BOARD_SHORT_NAME, version)
+    # Creality's updater (/etc/ota_bin/local_ota_update.sh, read from a KE on
+    # 2026-10-29) unpacks <file>.img and then looks in <file>/: the top
+    # directory IS the file name without .img. A package renamed after it was
+    # built no longer installs with the stock updater.
+    top = os.path.basename(args.out)
+    if not top.endswith(".img") or top in (".img",):
+        sys.exit("FATAL: --out must name a .img file")
+    top = top[:-len(".img")]
     inner = "ota_v%s" % version
 
     work = tempfile.mkdtemp(prefix="nebulaos-img-pack.", dir=os.environ.get("TMPDIR") or None)
@@ -319,16 +326,21 @@ def build(args):
         # The completion marker the updater looks for.
         open(os.path.join(payload_dir, "%s.ok" % inner), "w").close()
 
-        # ota_config.in. PROVENANCE GAP, recorded rather than hidden: no stock
-        # F005 .img was available to copy this from, so it is synthesised from
-        # the package's own facts. If a vendor package is later obtained, pass
-        # --ota-config-template to use its real one instead.
+        # ota_config.in. The stock updater reads ONE key from it:
+        # current_version, which names the payload directory (ota_v<it>) and
+        # must equal ota_update.in's ota_version (local_ota_update.sh,
+        # 2026-10-29; without it: "failed to get ota current version"). The
+        # stock "already newest" check compares it with /etc/ota_info's
+        # dotted version through `[ -ge ]`, which errors on dotted numbers and
+        # so never stops an install. Still no vendor ota_config.in to copy;
+        # --ota-config-template uses one if obtained.
         if args.ota_config_template:
             shutil.copyfile(args.ota_config_template, os.path.join(root, "ota_config.in"))
             config_provenance = "VENDOR_TEMPLATE(%s)" % os.path.basename(args.ota_config_template)
         else:
             with open(os.path.join(root, "ota_config.in"), "w", encoding="utf-8") as fh:
                 fh.write("\n".join([
+                    "current_version=%s" % version,
                     "ota_version=%s" % version,
                     "ota_dir=%s" % inner,
                     "board=%s" % BOARD_SHORT_NAME,
