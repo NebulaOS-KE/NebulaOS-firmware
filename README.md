@@ -1,5 +1,7 @@
 # NebulaOS Firmware
 
+> Part of [NebulaOS](https://github.com/NebulaOS-KE/NebulaOS): open firmware for the Creality Ender-3 V3 KE. The project map, releases and downloads are there.
+
 NebulaOS is custom firmware for the Creality Ender-3 V3 KE. This repository builds it: it pins
 every input, fetches them, and produces the kernel and root filesystem that go onto the printer.
 
