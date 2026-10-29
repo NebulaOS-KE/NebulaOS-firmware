@@ -2,7 +2,7 @@
 # The one documented command to reproduce the current qualified NebulaOS
 # baseline from a fresh clone:
 #
-#   git clone https://github.com/coreflake1/NebulaOS-firmware.git
+#   git clone https://github.com/NebulaOS-KE/NebulaOS-firmware.git
 #   cd NebulaOS-firmware
 #   ./build.sh
 #

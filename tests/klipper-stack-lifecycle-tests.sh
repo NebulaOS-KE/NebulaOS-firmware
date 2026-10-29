@@ -64,7 +64,7 @@ export GIT_COMMITTER_NAME=test GIT_COMMITTER_EMAIL=test@localhost
 # these exact strings and reject a mismatch, so using the real values is what
 # makes "the device really is pointed at official Klipper" a tested property.
 KLIPPER_ORIGIN="https://github.com/Klipper3d/klipper.git"
-EXTENSIONS_ORIGIN="https://github.com/coreflake1/NebulaOS-klipper-extensions.git"
+EXTENSIONS_ORIGIN="https://github.com/NebulaOS-KE/NebulaOS-klipper-extensions.git"
 
 # The maintenance gate requires zram or NebulaOS's own /system/swapfile to be
 # active in /proc/swaps. That is a real device property with its own coverage

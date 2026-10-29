@@ -192,7 +192,7 @@ SHA from this document: docs-only commits move the tip, and because
 without changing behaviour. What matters is that A and B are the same commit.
 
 ```
-SHA=$(git ls-remote https://github.com/coreflake1/NebulaOS-firmware.git \
+SHA=$(git ls-remote https://github.com/NebulaOS-KE/NebulaOS-firmware.git \
         refs/heads/buildroot-2025.02-migration | cut -f1)
 
 tools/run-nebulaos-build.sh --candidate "$SHA"     # Build A

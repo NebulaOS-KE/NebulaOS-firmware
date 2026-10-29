@@ -32,10 +32,10 @@ OPENSSL = os.environ.get("NEBULAOS_OPENSSL", "/usr/bin/openssl")
 OTA_DIR = os.path.join(common.NEBULAOS_ROOT, "system", "ota")
 CHECK_CACHE = os.path.join(OTA_DIR, "check.json")
 VERSION_FILE = os.environ.get("NEBULAOS_VERSION_FILE", "/opt/nebulaos-version.json")
-# Tim 2026-10-29: complete releases are published on coreflake1/NebulaOS; the
+# Tim 2026-10-29: complete releases are published on NebulaOS-KE/NebulaOS; the
 # stable channel is its latest GitHub release. (Key owner: still open.)
 CHANNEL_URL = os.environ.get("NEBULAOS_OTA_CHANNEL",
-                             "https://api.github.com/repos/coreflake1/NebulaOS/releases/latest")
+                             "https://api.github.com/repos/NebulaOS-KE/NebulaOS/releases/latest")
 RELEASE_ASSET = "nebulaos-release.json"
 CHECK_INTERVAL = 24 * 3600
 FETCH_TIMEOUT = 20

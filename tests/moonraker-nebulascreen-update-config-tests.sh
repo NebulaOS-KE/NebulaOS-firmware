@@ -46,7 +46,7 @@ EOF
 t "the file holds exactly [update_manager nebulascreen]" \
 	'[ "$(echo "$opts" | head -1)" = "update_manager nebulascreen" ]'
 t "options: type zip, channel stable, path, managed_services" \
-	'[ "$(echo "$opts" | tail -n +2 | tr "\n" " ")" = "channel=stable managed_services=nebulascreen path=/usr/data/nebulaos/apps/nebulascreen repo=coreflake1/NebulaOS-nebulascreen type=zip " ]'
+	'[ "$(echo "$opts" | tail -n +2 | tr "\n" " ")" = "channel=stable managed_services=nebulascreen path=/usr/data/nebulaos/apps/nebulascreen repo=NebulaOS-KE/NebulaOS-nebulascreen type=zip " ]'
 owner=$(sed -n 's/^PROJECT_OWNER = "\(.*\)"/\1/p' "$CHECK")
 project=$(sed -n 's/^PROJECT_NAME = "\(.*\)"/\1/p' "$CHECK")
 t "repo is the owner/project every release_info.json names" \

@@ -64,7 +64,7 @@ trap cleanup EXIT INT TERM
 export GIT_AUTHOR_NAME=branch-contract GIT_AUTHOR_EMAIL=bc@nebulaos.invalid
 export GIT_COMMITTER_NAME=branch-contract GIT_COMMITTER_EMAIL=bc@nebulaos.invalid
 
-EXT_ORIGIN="https://github.com/coreflake1/NebulaOS-klipper-extensions.git"
+EXT_ORIGIN="https://github.com/NebulaOS-KE/NebulaOS-klipper-extensions.git"
 
 . "$MANIFEST_LIB"
 

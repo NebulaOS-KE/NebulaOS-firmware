@@ -1,5 +1,5 @@
 built_at=2026-10-15T17:41:05Z
-build_image_repo=ghcr.io/coreflake1/nebulaos-build
+build_image_repo=ghcr.io/nebulaos-ke/nebulaos-build
 kernel_config_profile=production
 build_image_digest=sha256:a6ba57c69fa1ea630b037a1d1f55cf0c044a7f5a403bde9b155ea54bca1cceba
 git_commit_main=832a10d67072faa96bde53e04fc61dbcb49fec9a

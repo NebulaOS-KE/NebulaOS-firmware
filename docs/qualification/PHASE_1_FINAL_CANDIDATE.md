@@ -42,7 +42,7 @@ requires tomorrow's real tests to pass first.
 | k1-ustreamer | `18e30bb313d54b1b01dd995bd31ce5a3d5adffd6` |
 | v4l-utils | `3b22ab02b960e4d1e90618e9fce9b7c8a80d814a` |
 | NebulaOS-guppyscreen (**unchanged this mission**) | `5f1911ac938451bb00439e8c55c87ef60b4a1566` |
-| Build container | `ghcr.io/coreflake1/nebulaos-build@sha256:a6ba57c69fa1ea630b037a1d1f55cf0c044a7f5a403bde9b155ea54bca1cceba` |
+| Build container | `ghcr.io/nebulaos-ke/nebulaos-build@sha256:a6ba57c69fa1ea630b037a1d1f55cf0c044a7f5a403bde9b155ea54bca1cceba` |
 | GD32 MCU candidate | native candidate-001, `candidate-001.bin` SHA256 `c2db4f34586c5df88b0d8d40e1d2d1c0f3bea90ab879c7c3a1ccc3a64f91db0c` (Phase 1.7/1.8B, **unchanged this mission** — see `docs/MCU_LIFECYCLE_GUARD.md`) |
 
 None of these pins besides `KLIPPER_EXTENSIONS_PIN` were touched by either

@@ -19,11 +19,11 @@ FORMALLY_FULLY_QUALIFIED_RELEASE=NO
 
 # --- source identity (from manifests/dependencies.conf at FIRMWARE_HEAD) ---
 FIRMWARE_HEAD=b62fa188eb0abacc5065f3d1ec981d7200133975
-FIRMWARE_REPO=https://github.com/coreflake1/NebulaOS-firmware.git
+FIRMWARE_REPO=https://github.com/NebulaOS-KE/NebulaOS-firmware.git
 KERNEL_PIN=56f9f82305c99d105516ec3023cf844a1e794944
-KERNEL_REPO=https://github.com/coreflake1/NebulaOS-kernel.git (branch openke)
+KERNEL_REPO=https://github.com/NebulaOS-KE/NebulaOS-kernel.git (branch openke)
 EXTENSIONS_PIN=9ca9d6084102c16240abcf243e7e8ec093757b91
-EXTENSIONS_REPO=https://github.com/coreflake1/NebulaOS-klipper-extensions.git (branch production)
+EXTENSIONS_REPO=https://github.com/NebulaOS-KE/NebulaOS-klipper-extensions.git (branch production)
 HOST_KLIPPER_PIN=58bd67db3ce1be1951c3e4a6d1156a79903d4edc
 HOST_KLIPPER_REPO=https://github.com/Klipper3d/klipper.git (official upstream, unpatched)
 MOONRAKER_PIN=d5ee17128bb88434aacdab90c2e9e990e2b64e4a

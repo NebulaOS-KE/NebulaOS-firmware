@@ -36,7 +36,7 @@ trap 'rm -rf "$W"' EXIT
 
 KLIPPER_ORIGIN="https://github.com/Klipper3d/klipper.git"
 MOONRAKER_ORIGIN="https://github.com/Arksine/moonraker.git"
-EXT_ORIGIN="https://github.com/coreflake1/NebulaOS-klipper-extensions.git"
+EXT_ORIGIN="https://github.com/NebulaOS-KE/NebulaOS-klipper-extensions.git"
 
 # Build one complete, valid fixture: apps at "old", seeds at "new".
 # $1 = instance name, $2 = extensions branch to put in the manifest ("" = omit)

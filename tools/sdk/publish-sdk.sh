@@ -31,7 +31,7 @@ REPO_ROOT=$(cd "$HERE/../.." && pwd)
 INDEX_URL=${PUBLISH_SDK_INDEX_URL:-${NEBULAOS_PACKAGE_INDEX_URL:-}}
 # The repository behind the index. Kept here, not in the manifest: it is
 # not a product input (a change must not make builds stale).
-INDEX_REPO=${NEBULAOS_PACKAGE_INDEX_REPO:-coreflake1/nebulaos-packages}
+INDEX_REPO=${NEBULAOS_PACKAGE_INDEX_REPO:-NebulaOS-KE/nebulaos-packages}
 GH=${GH:-gh}
 GIT_REMOTE=${PUBLISH_SDK_REMOTE:-origin}
 SRC_REPO=${PUBLISH_SDK_REPO:-$REPO_ROOT}

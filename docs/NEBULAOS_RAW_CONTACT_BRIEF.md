@@ -70,7 +70,7 @@ Implement an opt-in `raw_contact` backend for the Ender-3 V3 KE's existing under
 
 ## 2. Source locations to inspect
 
-### `coreflake1/NebulaOS-klipper-extensions`
+### `NebulaOS-KE/NebulaOS-klipper-extensions`
 
 - `extras/nebulaos_z_offset_probe.py`: `_get_safety_range`, `_get_grams_per_count`, `_tare_and_arm`, `_fit_contact_z`, `touch_probe`, `get_status`.
 - `extras/nebulaos_probe_pair.py`: `measure_probe_nozzle_pair`, established versus bootstrap descent envelopes, quality and repeatability checks, `ContactSample` telemetry.
@@ -80,7 +80,7 @@ Implement an opt-in `raw_contact` backend for the Ender-3 V3 KE's existing under
 - `extras/test_z_offset_probe_safety.py`, `extras/test_nebulaos_probe_pair.py`, `extras/test_nebulaos_calibration.py`, `extras/test_z_compensate_*`: retain/add tests.
 - `nebulaos-extensions.json` and `docs/COMPATIBILITY.md`: new Klipper API dependencies and manifest/composition assumptions. The old global `qualified_commit` manifest gate was retired; use current symbol checks, not old documentation.
 
-### `coreflake1/NebulaOS-firmware`
+### `NebulaOS-KE/NebulaOS-firmware`
 
 - `scripts/build/overlay/etc/nebulaos/klipper/z_offset_probe.cfg`: image-owned static config; existing load cell section.
 - `scripts/build/overlay/etc/nebulaos/klipper/calibration.cfg`: fixed physical reference X=20,Y=25 and public calibration aliases.
@@ -328,8 +328,8 @@ For each reference hardware revision, measure **actual peak force** (not just AD
 
 ## 10. Primary source URLs
 
-- Extensions HEAD at investigation: https://github.com/coreflake1/NebulaOS-klipper-extensions/tree/8f86925087bae8e3025be4553a6bb161618bb22a
-- Firmware: https://github.com/coreflake1/NebulaOS-firmware
+- Extensions HEAD at investigation: https://github.com/NebulaOS-KE/NebulaOS-klipper-extensions/tree/8f86925087bae8e3025be4553a6bb161618bb22a
+- Firmware: https://github.com/NebulaOS-KE/NebulaOS-firmware
 - Pinned upstream `load_cell.py`: https://github.com/Klipper3d/klipper/blob/58bd67db3ce1be1951c3e4a6d1156a79903d4edc/klippy/extras/load_cell.py
 - Pinned upstream `load_cell_probe.py`: https://github.com/Klipper3d/klipper/blob/58bd67db3ce1be1951c3e4a6d1156a79903d4edc/klippy/extras/load_cell_probe.py
 - Pinned upstream `trigger_analog.py`: https://github.com/Klipper3d/klipper/blob/58bd67db3ce1be1951c3e4a6d1156a79903d4edc/klippy/extras/trigger_analog.py

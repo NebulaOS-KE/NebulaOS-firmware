@@ -15,7 +15,7 @@ hosts a Klipper fork. Two components now make up what used to be one:
 | | Source | Pin |
 |---|---|---|
 | Klipper | `Klipper3d/klipper`, `master` — **official upstream, unmodified, zero core patches** | `KLIPPER_PIN` |
-| Extensions | `coreflake1/NebulaOS-klipper-extensions`, `main` — everything this project actually owns | `KLIPPER_EXTENSIONS_PIN` |
+| Extensions | `NebulaOS-KE/NebulaOS-klipper-extensions`, `main` — everything this project actually owns | `KLIPPER_EXTENSIONS_PIN` |
 
 - **Build time:** both pins are fetched into their own factory-seed
   archives. Neither archive contains anything belonging to the other.
@@ -118,12 +118,12 @@ the record of the Phase 2 decision.** Derived from source:
 `nebulaos.conf`, `S58nebulascreen`, `/etc/nebulascreen-lib.sh` and the
 nebulascreen component of `nebulaos-update-supervisor.sh`.
 
-- Canonical source: `coreflake1/NebulaOS-nebulascreen` (renamed from
+- Canonical source: `NebulaOS-KE/NebulaOS-nebulascreen` (renamed from
   `NebulaOS-guppyscreen`; GitHub redirects the old URL - never recreate the
   old name), `main` branch, image copy pinned via `NEBULASCREEN_PIN`.
 - The image's own screen is served from `/opt/nebulascreen` (squashfs).
 - Live updates: **on**. `[update_manager nebulascreen]` (type `zip`,
-  channel `stable`, repo `coreflake1/NebulaOS-nebulascreen`, path
+  channel `stable`, repo `NebulaOS-KE/NebulaOS-nebulascreen`, path
   `/usr/data/nebulaos/apps/nebulascreen`, managed_services `nebulascreen`)
   lives in the image-owned `nebulascreen-update.conf`, included from the
   image-owned `nebulaos.conf` (never from the user's `moonraker.conf`).

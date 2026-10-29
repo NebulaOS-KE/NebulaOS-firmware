@@ -136,7 +136,7 @@ implementation:
   builds; a missing wheel fails before the venv is touched. Moonraker logs
   that failure and finishes the source update; the supervisor rolls back only
   if the new source then fails its health check.
-- **The index** (`coreflake1/nebulaos-packages`, GitHub Actions, GitHub Pages):
+- **The index** (`NebulaOS-KE/nebulaos-packages`, GitHub Actions, GitHub Pages):
   wheels cross-built with the SDK exported from an attested build (on a copy),
   every `.so` checked before publishing (ELF little-endian MIPS, FPXX FP ABI,
   no NaN2008, GLIBC symbol versions <= the fingerprint's glibc, DT_NEEDED only

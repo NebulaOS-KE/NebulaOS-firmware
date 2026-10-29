@@ -145,7 +145,7 @@ git init -q -b main "$ext_src"
 echo "fixture extensions" > "$ext_src/marker.txt"
 git -C "$ext_src" add -A && git -C "$ext_src" commit -q -m "fixture"
 make_seed_archive "$ext_src" main \
-	"https://github.com/coreflake1/NebulaOS-klipper-extensions.git" "$SEEDS/nebulaos-klipper-extensions.tar.gz" >/dev/null
+	"https://github.com/NebulaOS-KE/NebulaOS-klipper-extensions.git" "$SEEDS/nebulaos-klipper-extensions.tar.gz" >/dev/null
 
 # Moonraker fixture
 moonraker_src="$WORK/moonraker-src"

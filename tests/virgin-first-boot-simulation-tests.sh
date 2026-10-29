@@ -48,7 +48,7 @@ S04_FACTORY_SEED_SCRIPT="$REPO_ROOT/scripts/build/overlay/etc/init.d/S04nebulaos
 S04_MIGRATE_SCRIPT="$REPO_ROOT/scripts/build/overlay/etc/init.d/S04nebulaos-migrate"
 REAL_PRINTER_DATA_CONFIG="$REPO_ROOT/scripts/build/overlay/opt/printer_data/config"
 OFFICIAL_KLIPPER_ORIGIN="https://github.com/Klipper3d/klipper.git"
-EXT_ORIGIN="https://github.com/coreflake1/NebulaOS-klipper-extensions.git"
+EXT_ORIGIN="https://github.com/NebulaOS-KE/NebulaOS-klipper-extensions.git"
 SEED_MANIFEST_LIB="$REPO_ROOT/scripts/build/overlay/etc/nebulaos-seed-manifest.sh"
 # The deployed-runtime branch, from the manifest that owns the contract.
 EXT_RUNTIME_BRANCH=$(grep -E '^KLIPPER_EXTENSIONS_BRANCH=' "$REPO_ROOT/manifests/dependencies.conf" | tail -1 | cut -d= -f2)

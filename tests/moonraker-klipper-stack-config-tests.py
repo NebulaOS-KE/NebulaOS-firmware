@@ -48,7 +48,7 @@ MANAGED_DIR = REPO_ROOT / "scripts/build/overlay/etc/nebulaos/moonraker"
 OVERLAY_ROOT = REPO_ROOT / "scripts/build/overlay"
 
 OFFICIAL_KLIPPER = "https://github.com/Klipper3d/klipper.git"
-EXTENSIONS_ORIGIN = "https://github.com/coreflake1/NebulaOS-klipper-extensions.git"
+EXTENSIONS_ORIGIN = "https://github.com/NebulaOS-KE/NebulaOS-klipper-extensions.git"
 
 PASS = FAIL = SKIP = 0
 

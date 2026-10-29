@@ -292,7 +292,7 @@ cp -r "$VENDOR/klipper/docs" "$OVERLAY/opt/klipper/"
 # nebulaos_*.py, the vendored community extras) are NOT copied here, and
 # this repository does not hold a copy of them.
 #
-# They are owned by coreflake1/NebulaOS-klipper-extensions, fetched at
+# They are owned by NebulaOS-KE/NebulaOS-klipper-extensions, fetched at
 # KLIPPER_EXTENSIONS_PIN by 00-fetch-vendor-sources.sh, and composed into
 # host Klipper's klippy/extras/ as SYMLINKS driven by that repository's own
 # nebulaos-extensions.json manifest - see
@@ -869,7 +869,7 @@ klipper_is_shallow=$(git -C "$VENDOR/klipper" rev-parse --is-shallow-repository)
 # No sparse_exclude and no bytecode precompilation mount_path juggling: this
 # repository is about thirty small Python files, so neither the extraction
 # time nor the footprint that motivated Klipper's "/lib/" exclusion applies.
-extensions_origin="https://github.com/coreflake1/NebulaOS-klipper-extensions.git"
+extensions_origin="https://github.com/NebulaOS-KE/NebulaOS-klipper-extensions.git"
 # Phase 2 final software closure mission, 2026-09-09: was a hardcoded
 # "main" literal here - completely separate from, and overriding, the
 # clone_pinned() fix in 00-fetch-vendor-sources.sh that correctly attaches

@@ -548,7 +548,7 @@ start() {
 		extensions_seeded=1
 	else
 		seed_git_app nebulaos-klipper-extensions "$extensions_branch" \
-			"https://github.com/coreflake1/NebulaOS-klipper-extensions.git"
+			"https://github.com/NebulaOS-KE/NebulaOS-klipper-extensions.git"
 		extensions_seeded=$?
 	fi
 	seed_git_app moonraker master "https://github.com/Arksine/moonraker.git"

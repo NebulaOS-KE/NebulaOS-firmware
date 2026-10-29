@@ -2986,14 +2986,14 @@ multi-repo split. The one real gap: the kernel's OpenKE changes lived as a patch
 real, reviewable git history.
 
 **Fixed**: forked the real upstream kernel repo (`Llixuma/ingenic-linux-kernel6.6-x2000-v1.0-20250221`)
-to [`coreflake1/NebulaOS`](https://github.com/coreflake1/NebulaOS) via `gh repo fork`. `main` on the
+to [`NebulaOS-KE/NebulaOS`](https://github.com/NebulaOS-KE/NebulaOS) via `gh repo fork`. `main` on the
 fork tracks upstream unmodified (still exactly `a98c2e1`, "initial release"); a new `openke` branch
 carries every OpenKE kernel change (NS2009 touch, the display panel driver, BT H5 vendor extension,
 watchdog fix, DTS wiring, `arch/mips/Kconfig` compression selects, the `binder.h` build fix) as one
 real, documented commit on top of that pinned upstream commit - the exact same diff the old patch
 file carried, just as committed history instead of a blob.
 
-**Build scripts updated to match**: `00-fetch-vendor-sources.sh` now clones `coreflake1/NebulaOS`
+**Build scripts updated to match**: `00-fetch-vendor-sources.sh` now clones `NebulaOS-KE/NebulaOS`
 directly and checks out `openke` (was: clone the third-party repo, pin a commit, apply a patch
 separately). `01-apply-kernel-patches.sh` no longer applies anything - there's nothing left to apply
 - it's now a pure verification step confirming the fork's content landed correctly, kept at its same
@@ -3062,7 +3062,7 @@ confirmed explanation for the SDIO init failure, completely independent of wpa_s
 never appears - but the SDIO card itself failing is a different, deeper problem that would have
 blocked WiFi even with perfect wpa_supplicant config). Fixed by adding the missing 3rd cell
 (`INGENIC_GPIO_NOBIAS`, matching the sibling reference two lines up). Committed to the kernel fork
-(`coreflake1/NebulaOS`, `openke` branch, `e67eefc40`) and pushed - not yet re-verified on hardware as
+(`NebulaOS-KE/NebulaOS`, `openke` branch, `e67eefc40`) and pushed - not yet re-verified on hardware as
 of writing this section (rebuild was still running); see the end of this section for the real result.
 
 **USB dongle never enumerating - real root cause found via a real stock-vs-ours DTB comparison, not
@@ -3161,7 +3161,7 @@ for the next session with the user present**, rather than trying a third unverif
 known-safe resting state) - this was a deliberate choice once GuppyScreen's fix was confirmed working,
 rather than leaving the device sitting on the test kernel with no network access. All three real fixes
 this session (wlan gpio-cells, wlan post-power-on-delay, GuppyScreen ifstream) are committed and
-pushed to the kernel fork (`coreflake1/NebulaOS`, `openke` branch, commits `e67eefc40`/`5dca5971f`) and
+pushed to the kernel fork (`NebulaOS-KE/NebulaOS`, `openke` branch, commits `e67eefc40`/`5dca5971f`) and
 committed locally to the guppyscreen repo (`3496b94` on `ke-next`, not yet pushed - the user's own repo,
 left for their own review/push decision). The ke-mainline-klipper repo itself (this repo) still has no
 remote and several open questions from the repo-restructuring work (§38-39) that were paused mid-way
@@ -3183,7 +3183,7 @@ was never a wrong-driver-path problem - both trees use the identical compatible 
 (`ingenic,x2000-dwc2-hsotg` / `ingenic,usbphy-x2000`), confirmed via stock's own live `dmesg` showing
 `13500000.otg_new` as the bound device name (our tree only ever carries this one driver generation,
 simply not suffixed `_new` since there's no legacy variant to disambiguate from in this source tree).
-Fixed, committed, and pushed to the kernel fork (`coreflake1/NebulaOS`, `openke`, commit `c902097d1`).
+Fixed, committed, and pushed to the kernel fork (`NebulaOS-KE/NebulaOS`, `openke`, commit `c902097d1`).
 Also traced `ingenic,vbus-dete-gpio` (a property our board file sets that stock's real config doesn't)
 through `phy-ingenic.c`'s actual source and confirmed it only affects *peripheral/gadget*-mode
 connection detection, not host-mode VBUS driving at all - real, valid cleanup to match stock exactly,
@@ -3276,7 +3276,7 @@ confirmed by the user - the debug console this whole project has relied on all n
 be present at the same time as the connection this fix is for). This closes what's confirmed possible
 from source alone; the real MCU handshake test is the next real milestone once WiFi is working.
 
-Both commits pushed to the kernel fork (`coreflake1/NebulaOS`, `openke`: `4905cb23e` for the uart1
+Both commits pushed to the kernel fork (`NebulaOS-KE/NebulaOS`, `openke`: `4905cb23e` for the uart1
 pinctrl addition, `c60cf4d67` for the `as_dmic` disable).
 
 ## 44. The real WiFi root cause: two sessions of devicetree-property tuning were toggling a GPIO pin the chip isn't even wired to

@@ -53,7 +53,7 @@ mkfields(){
   cat <<EOF
 ATTESTATION_VERSION=2
 SOURCE_HEAD=$HEAD_SHA
-SOURCE_REPO=https://github.com/coreflake1/NebulaOS-firmware.git
+SOURCE_REPO=https://github.com/NebulaOS-KE/NebulaOS-firmware.git
 SOURCE_PUBLISHED_TIP=$HEAD_SHA
 BUILD_LAUNCHER_BLOB=$(printf 'launcher' | sha256sum | cut -d' ' -f1)
 BUILD_MODE=candidate

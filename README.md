@@ -11,13 +11,13 @@ Current version: **0.9.0** (`NEBULAOS_VERSION` in
 | Component | Source | Notes |
 |---|---|---|
 | Base system | [Buildroot](https://github.com/buildroot/buildroot) 2025.02 (tag 2025.02.18, pinned by commit) | NebulaOS configuration lives in [`br2-external/`](br2-external/) |
-| Kernel | [`coreflake1/NebulaOS-kernel`](https://github.com/coreflake1/NebulaOS-kernel), branch `openke` | Linux 6.6 with PREEMPT_RT. Every kernel change is a commit in that repository; nothing is patched at build time |
+| Kernel | [`NebulaOS-KE/NebulaOS-kernel`](https://github.com/NebulaOS-KE/NebulaOS-kernel), branch `openke` | Linux 6.6 with PREEMPT_RT. Every kernel change is a commit in that repository; nothing is patched at build time |
 | Klipper (host) | [`Klipper3d/klipper`](https://github.com/Klipper3d/klipper) | Pristine upstream, pinned by commit, zero core patches |
-| Klipper extensions | [`coreflake1/NebulaOS-klipper-extensions`](https://github.com/coreflake1/NebulaOS-klipper-extensions), branch `production` | NebulaOS's own Klipper extras, composed into Klipper at boot by symlink (see below) |
+| Klipper extensions | [`NebulaOS-KE/NebulaOS-klipper-extensions`](https://github.com/NebulaOS-KE/NebulaOS-klipper-extensions), branch `production` | NebulaOS's own Klipper extras, composed into Klipper at boot by symlink (see below) |
 | Moonraker | [`Arksine/moonraker`](https://github.com/Arksine/moonraker) | Upstream, plus one allowlisted build-time patch (`scripts/build/patches/moonraker-sqlite-nolock.patch`) applied to the image copy only |
 | Mainsail | Release `v2.18.2` | Checksum-pinned release archive |
-| Screen app | [`coreflake1/NebulaOS-nebulascreen`](https://github.com/coreflake1/NebulaOS-nebulascreen) | NebulaScreen, the touchscreen app (based on GuppyScreen; repo renamed from `NebulaOS-guppyscreen` 2026-10-24, the old URL redirects). Built into the image from `NEBULASCREEN_PIN`, and updatable on its own from its stable GitHub releases through Moonraker (`[update_manager nebulascreen]`, type `zip`) |
-| MCU firmware | `coreflake1/NebulaOS-klipper-mcu` | Native Klipper build for the mainboard's GD32F303, vendored as a binary with a provenance sidecar in `scripts/build/overlay/opt/nebulaos/mcu-candidates/` |
+| Screen app | [`NebulaOS-KE/NebulaOS-nebulascreen`](https://github.com/NebulaOS-KE/NebulaOS-nebulascreen) | NebulaScreen, the touchscreen app (based on GuppyScreen; repo renamed from `NebulaOS-guppyscreen` 2026-10-24, the old URL redirects). Built into the image from `NEBULASCREEN_PIN`, and updatable on its own from its stable GitHub releases through Moonraker (`[update_manager nebulascreen]`, type `zip`) |
+| MCU firmware | `NebulaOS-KE/NebulaOS-klipper-mcu` | Native Klipper build for the mainboard's GD32F303, vendored as a binary with a provenance sidecar in `scripts/build/overlay/opt/nebulaos/mcu-candidates/` |
 
 The exact commit, tag or digest of every input — including the build container, Wi-Fi firmware
 and the tools used for USB recovery — is in `manifests/dependencies.conf`. That file is the only

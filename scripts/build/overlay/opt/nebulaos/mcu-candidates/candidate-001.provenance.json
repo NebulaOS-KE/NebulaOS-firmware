@@ -8,7 +8,7 @@
     "raw_bin_size": 40048
   },
   "build_config_sha256": "88441a2bad54cf239df47a87e33922d583789dd267c382eaf41bb05cc5da999a",
-  "mcu_repo": "https://github.com/coreflake1/NebulaOS-klipper-mcu",
+  "mcu_repo": "https://github.com/NebulaOS-KE/NebulaOS-klipper-mcu",
   "mcu_repo_commit": "3aefd28602fe193cd5018a9acfbbf9fc3ac92bea",
   "github_action_run": "32591541420",
   "mission": "NebulaOS Phase 1.7 - native GD32F303 MCU candidate",

@@ -13,7 +13,7 @@ Prints "PROBLEM: ..." lines and RELEASE_CHECK=PASS|FAIL; exit 0 = PASS.
 
 A release passes only when:
   - release_info.json is a JSON object with project_name NebulaOS-nebulascreen,
-    project_owner coreflake1, a vMAJOR.MINOR.PATCH version and an integer
+    project_owner NebulaOS-KE, a vMAJOR.MINOR.PATCH version and an integer
     nebulaos_ui_api EQUAL to this image's "nebulaos_ui_api" (an image
     without that field never accepts a release);
   - nebulascreen and nebulabeep are executable, static, ELF32 little-endian
@@ -34,7 +34,7 @@ import struct
 import sys
 
 PROJECT_NAME = "NebulaOS-nebulascreen"
-PROJECT_OWNER = "coreflake1"
+PROJECT_OWNER = "NebulaOS-KE"
 EXECUTABLES = ("nebulascreen", "nebulabeep")
 TOP_ENTRIES = EXECUTABLES + ("themes", "release_info.json", "LICENSE", "NOTICE")
 # Written by the update supervisor itself (the approval token S58 checks); the

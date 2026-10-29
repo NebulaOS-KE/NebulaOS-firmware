@@ -402,8 +402,8 @@ except this probe layer, with no SWD required.
   the actual way to reproduce this project's build, not just a description of what was done.
 - Every kernel-source change this project made (touch/display/WiFi/Bluetooth/the NS2009 port) lives
   as real, reviewable commits on the `openke` branch of
-  [`coreflake1/NebulaOS-kernel`](https://github.com/coreflake1/NebulaOS-kernel) (renamed 2026-08-14
-  from `coreflake1/NebulaOS`) - a real fork of the original
+  [`NebulaOS-KE/NebulaOS-kernel`](https://github.com/NebulaOS-KE/NebulaOS-kernel) (renamed 2026-08-14
+  from `NebulaOS-KE/NebulaOS`) - a real fork of the original
   upstream kernel SDK (`Llixuma/ingenic-linux-kernel6.6-x2000-v1.0-20250221`), not a patch file
   applied at build time (`FIRMWARE.md` §39). `main` on the fork tracks upstream unmodified.
 - `reference/` - real source Creality published for this exact subsystem (a different printer

@@ -61,7 +61,7 @@ pass() { echo "PASS: $1"; PASS=$((PASS + 1)); }
 . "$MAKE_ARCHIVE_LIB"
 
 KLIPPER_PROD_ORIGIN="https://github.com/Klipper3d/klipper.git"
-EXTENSIONS_PROD_ORIGIN="https://github.com/coreflake1/NebulaOS-klipper-extensions.git"
+EXTENSIONS_PROD_ORIGIN="https://github.com/NebulaOS-KE/NebulaOS-klipper-extensions.git"
 MOONRAKER_PROD_ORIGIN="https://github.com/Arksine/moonraker.git"
 
 # --- helpers ---------------------------------------------------------------

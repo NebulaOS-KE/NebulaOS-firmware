@@ -1,6 +1,6 @@
 # NebulaOS build environment
 
-Source definition for `ghcr.io/coreflake1/nebulaos-build`, the single container `build.sh` runs the
+Source definition for `ghcr.io/nebulaos-ke/nebulaos-build`, the single container `build.sh` runs the
 whole `scripts/build/00-06` pipeline inside.
 
 ## What's in here

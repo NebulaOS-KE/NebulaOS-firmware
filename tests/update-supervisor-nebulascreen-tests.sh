@@ -83,7 +83,7 @@ EOF
 mk_info() { # FILE VERSION [UI_API] [PROJECT]
 	python3 -I -c '
 import json, sys
-info = {"project_name": sys.argv[4], "project_owner": "coreflake1",
+info = {"project_name": sys.argv[4], "project_owner": "NebulaOS-KE",
         "version": sys.argv[2], "nebulaos_ui_api": int(sys.argv[3])}
 open(sys.argv[1], "w").write(json.dumps(info, indent=2, sort_keys=True) + "\n")
 ' "$1" "$2" "${3:-1}" "${4:-NebulaOS-nebulascreen}"

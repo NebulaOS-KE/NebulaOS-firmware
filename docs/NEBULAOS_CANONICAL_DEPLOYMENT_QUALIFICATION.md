@@ -1,6 +1,6 @@
 # Canonical repository + baseline deployment qualification
 
-2026-08-07. Deploys the image built from `coreflake1/NebulaOS-firmware`
+2026-08-07. Deploys the image built from `NebulaOS-KE/NebulaOS-firmware`
 commit `d8a5515c7073023c9209a99d61a6e2aaaa6b37e8` (a fresh clean-room clone,
 `./build.sh` end to end, zero manual copies) to the real printer via the
 established stock-mediated inactive-slot process, then live-qualifies it.

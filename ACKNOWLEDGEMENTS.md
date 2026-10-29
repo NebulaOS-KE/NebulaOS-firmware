@@ -40,7 +40,7 @@ this entire project runs on. As of the Phase 1 no-fork migration (2026-08-17) Ne
 **official, unmodified `Klipper3d/klipper`** at a pinned, qualified commit, with **zero core file
 patches**. Everything this project actually wrote — the PRTouch load-cell probe stack, Z
 compensation, the TMC status object, the GD32 die-temperature sensor — lives in
-[`coreflake1/NebulaOS-klipper-extensions`](https://github.com/coreflake1/NebulaOS-klipper-extensions)
+[`NebulaOS-KE/NebulaOS-klipper-extensions`](https://github.com/NebulaOS-KE/NebulaOS-klipper-extensions)
 and is composed alongside an ordinary Klipper checkout at boot. See
 [`docs/NEBULAOS_KLIPPER_COMPOSITION.md`](docs/NEBULAOS_KLIPPER_COMPOSITION.md).
 

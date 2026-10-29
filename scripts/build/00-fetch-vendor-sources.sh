@@ -94,7 +94,7 @@ if [ ! -f "$WIFI_FW_TXT" ]; then
 	if [ "$archive_actual_sha256" != "$WIFI_FIRMWARE_ARCHIVE_SHA256" ] && command -v gh >/dev/null 2>&1; then
 		echo "== plain curl fetch did not match the pinned hash - retrying via gh release download (private repo) =="
 		gh release download "$WIFI_FIRMWARE_RELEASE_TAG" \
-			--repo coreflake1/NebulaOS-firmware \
+			--repo NebulaOS-KE/NebulaOS-firmware \
 			--pattern "$(basename "$WIFI_FIRMWARE_RELEASE_URL")" \
 			--output "$WIFI_FW_ARCHIVE" --clobber \
 			|| echo "WARNING: gh release download also failed - see the FATAL check below for the real error" >&2
@@ -237,8 +237,8 @@ clone_pinned() {
 	echo "== $name pinned commit verified ($expected) =="
 }
 
-# X2000 kernel SDK, OpenKE fork (FIRMWARE.md sec 39): coreflake1/NebulaOS-kernel
-# (renamed 2026-08-14 from coreflake1/NebulaOS) is a real GitHub fork of the
+# X2000 kernel SDK, OpenKE fork (FIRMWARE.md sec 39): NebulaOS-KE/NebulaOS-kernel
+# (renamed 2026-08-14 from NebulaOS-KE/NebulaOS) is a real GitHub fork of the
 # original upstream (Llixuma/ingenic-linux-kernel6.6-x2000-v1.0-20250221 @
 # a98c2e1, "initial release"), with every OpenKE change
 # (NS2009 touch, the display panel driver, BT H5 vendor ext, watchdog fix, DTS
@@ -260,7 +260,7 @@ if [ ! -d "x2000_kernel_6.6/.git" ]; then
 	# $KERNEL_BRANCH - a real, previously-latent bug found live doing the
 	# Phase 9-vs-Phase-11 rebuild-and-compare test. openke is a real,
 	# actively-pushed-to branch (kernel changes AND this repo's own docs
-	# both land real commits there - see coreflake1/NebulaOS-kernel's own
+	# both land real commits there - see NebulaOS-KE/NebulaOS-kernel's own
 	# README), so checking out the branch NAME lands wherever that branch's
 	# tip happens to be at clone time, not necessarily at KERNEL_PIN -
 	# exactly what happened here: a docs-only commit pushed to openke after
@@ -436,7 +436,7 @@ if [ ! -d v4l-utils/.git ]; then
 	if [ "$v4l_archive_actual_sha256" != "$V4L_UTILS_ARCHIVE_SHA256" ] && command -v gh >/dev/null 2>&1; then
 		echo "== plain curl fetch did not match the pinned hash - retrying via gh release download (private repo) =="
 		gh release download v4l-utils-vendor-src-3b22ab0 \
-			--repo coreflake1/NebulaOS-firmware \
+			--repo NebulaOS-KE/NebulaOS-firmware \
 			--pattern "$(basename "$V4L_UTILS_ARCHIVE_URL")" \
 			--output "$V4L_UTILS_ARCHIVE" --clobber \
 			|| echo "WARNING: gh release download also failed - see the FATAL check below for the real error" >&2
@@ -475,7 +475,7 @@ git -C nebulaos-nebulascreen submodule update --init --depth 1
 
 # Submodule patches (this fork's own documented canonical build procedure,
 # wiki/Building-from-Source.md step 2) - lv_drivers' framebuffer-ioctls fix
-# is already folded into coreflake1/lv_drivers (a real fork the .gitmodules
+# is already folded into NebulaOS-KE/lv_drivers (a real fork the .gitmodules
 # above points at, not upstream), so no patch file for it ships in patches/
 # any more; spdlog and lvgl are still plain upstream submodules and need
 # their two patches applied on every fresh checkout, or the MIPS build

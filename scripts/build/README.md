@@ -19,7 +19,7 @@ rootfs-overlay deletion gotcha) are all documented there with root causes, not j
 ## Prerequisites
 
 - Docker or Podman - `./build.sh` pulls the single, digest-pinned
-  `ghcr.io/coreflake1/nebulaos-build` image (`manifests/dependencies.conf`'s own
+  `ghcr.io/nebulaos-ke/nebulaos-build` image (`manifests/dependencies.conf`'s own
   `BUILD_IMAGE_REPO`/`BUILD_IMAGE_DIGEST`, never a mutable `:latest` tag) and runs the whole
   `00`-`06` pipeline inside it. That image already contains every host build tool these scripts
   need (see `build-env/Dockerfile`) - no separate `apt-get install`, no nested container, no
@@ -36,8 +36,8 @@ rootfs-overlay deletion gotcha) are all documented there with root causes, not j
   `vendor/` directory is gitignored on purpose (large, mixed-provenance sources, see the main
   README), so nothing under `vendor/` is checked into this repo. The kernel is the one exception to
   "gitignored, nothing checked in": this project's kernel changes live as real commits on the
-  `openke` branch of a real fork, [`coreflake1/NebulaOS-kernel`](https://github.com/coreflake1/NebulaOS-kernel)
-  (renamed 2026-08-14 from `coreflake1/NebulaOS`; forked from the original upstream,
+  `openke` branch of a real fork, [`NebulaOS-KE/NebulaOS-kernel`](https://github.com/NebulaOS-KE/NebulaOS-kernel)
+  (renamed 2026-08-14 from `NebulaOS-KE/NebulaOS`; forked from the original upstream,
   `Llixuma/ingenic-linux-kernel6.6-x2000-v1.0-20250221`) -
   `00-fetch-vendor-sources.sh` clones that branch directly, so the kernel changes travel with their
   own real git history instead of a patch file. What else *is* checked into this repo: the small set
@@ -76,7 +76,7 @@ Buildroot's own overlay dir). No manual step, no real device required.
 
 1. **`00-fetch-vendor-sources.sh`** - clones/downloads every third-party source this build needs
    into `vendor/` at the exact refs this project used: the X2000 kernel SDK, this project's own
-   fork's `openke` branch (`coreflake1/NebulaOS-kernel`, forked from `Llixuma/ingenic-linux-kernel6.6-
+   fork's `openke` branch (`NebulaOS-KE/NebulaOS-kernel`, forked from `Llixuma/ingenic-linux-kernel6.6-
    x2000-v1.0-20250221`), the Buildroot config (`lone0/buildroot-x2000`), Klipper
    (`coreflake1/NebulaOS-klipper`), GuppyScreen (`coreflake1/NebulaOS-guppyscreen`), Moonraker
    (`Arksine/moonraker`, official), `pellcorp/k1-ustreamer`, and Mainsail's latest prebuilt release.

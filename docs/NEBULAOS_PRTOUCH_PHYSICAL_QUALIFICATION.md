@@ -3,7 +3,7 @@
 Prepared 2026-08-11, closure/preparation mission. This is the test sheet for the operator
 (printer physically present) after flashing the engineering package built from
 `integration/prtouch-timer-fix-and-migrate-exec-bit`
-(`coreflake1/NebulaOS-firmware`) / `4ae82620` (`coreflake1/NebulaOS-klipper`).
+(`NebulaOS-KE/NebulaOS-firmware`) / `4ae82620` (`coreflake1/NebulaOS-klipper`).
 
 **Nothing in this document was executed by the assistant.** All commands below are for you to
 run once you decide to proceed. Stop at the first failed check in any stage.

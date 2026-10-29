@@ -373,7 +373,7 @@ def run_suite(tmp, klipper_src, ext_src, klipper_pin, ext_pin, py):
     run(["git", "remote", "set-url", "origin",
          "https://github.com/Klipper3d/klipper.git"], cwd=kdir)
     run(["git", "remote", "set-url", "origin",
-         "https://github.com/coreflake1/NebulaOS-klipper-extensions.git"],
+         "https://github.com/NebulaOS-KE/NebulaOS-klipper-extensions.git"],
         cwd=edir)
 
     # ---- compose, with the platform's own composer -----------------------

@@ -50,9 +50,9 @@ jobs:
           context: build-env
           push: true
           tags: |
-            ghcr.io/coreflake1/nebulaos-build:${{ steps.tag.outputs.tag }}
+            ghcr.io/nebulaos-ke/nebulaos-build:${{ steps.tag.outputs.tag }}
           labels: |
-            org.opencontainers.image.source=https://github.com/coreflake1/NebulaOS-firmware
+            org.opencontainers.image.source=https://github.com/NebulaOS-KE/NebulaOS-firmware
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.created=${{ github.event.repository.updated_at }}
             org.opencontainers.image.version=${{ steps.tag.outputs.tag }}
@@ -61,7 +61,7 @@ jobs:
         run: |
           echo "## Candidate build environment image" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "\`ghcr.io/coreflake1/nebulaos-build@${{ steps.build.outputs.digest }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`ghcr.io/nebulaos-ke/nebulaos-build@${{ steps.build.outputs.digest }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "This is a CANDIDATE image. It does not become canonical until a real" >> "$GITHUB_STEP_SUMMARY"
           echo "fresh-clone rebuild-and-compare against the current reference artifacts" >> "$GITHUB_STEP_SUMMARY"
@@ -71,5 +71,5 @@ jobs:
       - name: Verify environment (self-check)
         run: |
           docker run --rm -v "$PWD:$PWD" -w "$PWD" \
-            "ghcr.io/coreflake1/nebulaos-build@${{ steps.build.outputs.digest }}" \
+            "ghcr.io/nebulaos-ke/nebulaos-build@${{ steps.build.outputs.digest }}" \
             sh build-env/verify-environment.sh

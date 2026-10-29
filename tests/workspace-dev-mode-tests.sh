@@ -32,7 +32,7 @@ expect_rc(){ # <want 0|nonzero> <desc> <cmd...>
 # ---------------------------------------------------------------- fixture --
 mkrepo(){ # name branch
   git init -q -b "$2" "$R/$1"
-  git -C "$R/$1" remote add origin "https://github.com/coreflake1/$1.git"
+  git -C "$R/$1" remote add origin "https://github.com/NebulaOS-KE/$1.git"
   echo "$1" > "$R/$1/README.md"; git -C "$R/$1" add -A; git -C "$R/$1" commit -qm init
 }
 mkdir -p "$R"

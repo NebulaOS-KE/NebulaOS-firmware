@@ -2,7 +2,7 @@
 # Klipper's compiled helper (klippy/chelper -> c_helper.so), cross-compiled.
 # The ONE implementation of this recipe (G72, 2026-10-17): stage 04 builds
 # the image's copy with it, export-sdk.sh puts it into the SDK, and the
-# package index CI (coreflake1/nebulaos-packages) runs the SDK's copy to
+# package index CI (NebulaOS-KE/nebulaos-packages) runs the SDK's copy to
 # build the helpers for Klipper updates - so a helper from the index is
 # built exactly like the one the image ships.
 #

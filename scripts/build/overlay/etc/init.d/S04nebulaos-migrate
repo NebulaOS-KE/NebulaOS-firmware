@@ -490,7 +490,7 @@ seed_missing_extensions() {
 		log "ERROR: cannot determine the expected branch for $name from $SEEDS/seed-manifest.json - refusing to provision rather than guessing a branch name (is $SEED_MANIFEST_LIB present?)"
 		return 1
 	fi
-	origin="https://github.com/coreflake1/NebulaOS-klipper-extensions.git"
+	origin="https://github.com/NebulaOS-KE/NebulaOS-klipper-extensions.git"
 
 	if [ ! -f "$archive" ]; then
 		log "ERROR: seed archive missing ($archive) - cannot provision $name"
@@ -1664,7 +1664,7 @@ start() {
 			_last_error="extensions branch undeterminable"
 			log "ERROR: cannot determine the expected extensions branch from $SEEDS/seed-manifest.json - refusing to reseed rather than guessing a branch name (is $SEED_MANIFEST_LIB present?)"
 		elif reseed_git_app nebulaos-klipper-extensions "$_ext_branch" \
-			"https://github.com/coreflake1/NebulaOS-klipper-extensions.git"; then
+			"https://github.com/NebulaOS-KE/NebulaOS-klipper-extensions.git"; then
 			_extensions_reseed_result="success"
 		else
 			extensions_ok=0

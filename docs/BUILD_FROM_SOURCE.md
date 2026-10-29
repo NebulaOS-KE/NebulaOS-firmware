@@ -3,7 +3,7 @@
 If you're just trying to build the whole OS, this is all you need:
 
 ```sh
-git clone https://github.com/coreflake1/NebulaOS-firmware.git
+git clone https://github.com/NebulaOS-KE/NebulaOS-firmware.git
 cd NebulaOS-firmware
 ./build.sh
 ```
@@ -13,7 +13,7 @@ during Final Closure — it's not aspirational, it's what we use ourselves.
 
 ## What it's doing
 
-`build.sh` pulls one build image (`ghcr.io/coreflake1/nebulaos-build`, pinned by digest in
+`build.sh` pulls one build image (`ghcr.io/nebulaos-ke/nebulaos-build`, pinned by digest in
 `manifests/dependencies.conf`) and runs the whole pipeline inside it. You need Docker or Podman and
 nothing else — the image already has every build tool the pipeline needs, so there's no
 `apt-get install` beforehand, no nested containers, no messing with `/var/run/docker.sock`. See

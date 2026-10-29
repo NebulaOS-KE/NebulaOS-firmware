@@ -1,6 +1,6 @@
 #!/bin/sh
 # G50 (2026-10-17): export the cross-compilation SDK of a finished, attested
-# firmware build for the NebulaOS package index (coreflake1/nebulaos-packages).
+# firmware build for the NebulaOS package index (NebulaOS-KE/nebulaos-packages).
 #
 #   tools/sdk/export-sdk.sh <build run dir> <output dir>
 #

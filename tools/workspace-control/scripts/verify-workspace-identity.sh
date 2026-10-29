@@ -56,7 +56,7 @@ fail(){ FAILURES+=("$1"); }
 # that is an audit or release concern rather than "is this the right workspace".
 strict(){ if [ "$DEV" = 1 ]; then WARNINGS+=("$1"); else FAILURES+=("$1"); fi; }
 
-GH=https://github.com/coreflake1
+GH=https://github.com/NebulaOS-KE
 
 # ---- helpers ---------------------------------------------------------------
 loc(){ git -C "$1" rev-parse HEAD 2>/dev/null || echo UNRESOLVED; }
@@ -104,7 +104,7 @@ echo "FIRMWARE_REMOTE_MAIN=$FIRMWARE_REMOTE_MAIN"
 echo "FIRMWARE_DIRTY_FILES=$(dirty "$FW")"
 echo "FIRMWARE_WORKTREES=$(wtcount "$FW")"
 [ -d "$FW/.git" ]                                          || fail "firmware: not a git repository at canonical path"
-[ "$(norm "$(rem "$FW")")" = "$(norm "$GH/NebulaOS-firmware")" ] || strict "firmware: remote is not coreflake1/NebulaOS-firmware"
+[ "$(norm "$(rem "$FW")")" = "$(norm "$GH/NebulaOS-firmware")" ] || strict "firmware: remote is not NebulaOS-KE/NebulaOS-firmware"
 [ "$(brof "$FW")" = "main" ]                               || strict "firmware: active branch is not main"
 [ "$(dirty "$FW")" = "0" ]                                 || [ "$STRICT_CLEAN" = 0 ] || fail "firmware: working tree is not clean"
 [ "$(wtcount "$FW")" = "1" ]                               || strict "firmware: more than one working tree"
@@ -130,7 +130,7 @@ echo "EXTENSIONS_SHIPPING_BRANCH=$EXTENSIONS_SHIPPING_BRANCH"
 echo "EXTENSIONS_SHIPPING_PIN=$EXTENSIONS_SHIPPING_PIN"
 echo "EXTENSIONS_DIRTY_FILES=$(dirty "$EX")"
 [ -d "$EX/.git" ]                                          || fail "extensions: not a git repository at canonical path"
-[ "$(norm "$(rem "$EX")")" = "$(norm "$GH/NebulaOS-klipper-extensions")" ] || strict "extensions: remote is not coreflake1/NebulaOS-klipper-extensions"
+[ "$(norm "$(rem "$EX")")" = "$(norm "$GH/NebulaOS-klipper-extensions")" ] || strict "extensions: remote is not NebulaOS-KE/NebulaOS-klipper-extensions"
 [ "$(brof "$EX")" = "main" ]                               || strict "extensions: active branch is not main"
 [ "$(dirty "$EX")" = "0" ]                                 || [ "$STRICT_CLEAN" = 0 ] || fail "extensions: working tree is not clean"
 [ "$(wtcount "$EX")" = "1" ]                               || strict "extensions: more than one working tree"
@@ -169,7 +169,7 @@ echo "MCU_INTEGRATION_PROVENANCE=VENDORED_PREBUILT_BINARY(candidate-001.bin)@${M
 echo "MCU_INTEGRATION_BINARY_SHA256_MATCHES_SIDECAR=$MCU_BIN_SHA_OK"
 echo "MCU_DIRTY_FILES=$(dirty "$MC")"
 [ -d "$MC/.git" ]                                          || fail "mcu: not a git repository at canonical path"
-[ "$(norm "$(rem "$MC")")" = "$(norm "$GH/NebulaOS-klipper-mcu")" ] || strict "mcu: remote is not coreflake1/NebulaOS-klipper-mcu"
+[ "$(norm "$(rem "$MC")")" = "$(norm "$GH/NebulaOS-klipper-mcu")" ] || strict "mcu: remote is not NebulaOS-KE/NebulaOS-klipper-mcu"
 [ "$(brof "$MC")" = "main" ]                               || strict "mcu: active branch is not main"
 [ "$(dirty "$MC")" = "0" ]                                 || [ "$STRICT_CLEAN" = 0 ] || fail "mcu: working tree is not clean"
 [ "$(wtcount "$MC")" = "1" ]                               || strict "mcu: more than one working tree"
@@ -196,7 +196,7 @@ echo "KERNEL_REMOTE_OPENKE=$KERNEL_REMOTE_OPENKE"
 echo "KERNEL_SHIPPING_PIN=$KERNEL_SHIPPING_PIN"
 echo "KERNEL_DIRTY_FILES=$(dirty "$KE")"
 [ -d "$KE/.git" ]                                          || fail "kernel: not a git repository at canonical path"
-[ "$(norm "$(rem "$KE")")" = "$(norm "$GH/NebulaOS-kernel")" ] || strict "kernel: remote is not coreflake1/NebulaOS-kernel"
+[ "$(norm "$(rem "$KE")")" = "$(norm "$GH/NebulaOS-kernel")" ] || strict "kernel: remote is not NebulaOS-KE/NebulaOS-kernel"
 [ "$(brof "$KE")" = "openke" ]                             || strict "kernel: active branch is not openke"
 [ "$(dirty "$KE")" = "0" ]                                 || [ "$STRICT_CLEAN" = 0 ] || fail "kernel: working tree is not clean"
 [ "$(wtcount "$KE")" = "1" ]                               || strict "kernel: more than one working tree"
@@ -235,7 +235,7 @@ echo "GUPPYSCREEN_DIRTY_FILES=$(dirty "$GS")"
 [ -d "$GS/.git" ]                                          || fail "guppyscreen: not a git repository at canonical path"
 case "$(norm "$(rem "$GS")")" in
   "$(norm "$GH/NebulaOS-nebulascreen")"|"$(norm "$GH/NebulaOS-guppyscreen")") ;;
-  *) strict "guppyscreen: remote is not coreflake1/NebulaOS-nebulascreen (or -guppyscreen)" ;;
+  *) strict "guppyscreen: remote is not NebulaOS-KE/NebulaOS-nebulascreen (or -guppyscreen)" ;;
 esac
 [ "$(brof "$GS")" = "main" ]                               || strict "guppyscreen: active branch is not main"
 [ "$(dirty "$GS")" = "0" ]                                 || [ "$STRICT_CLEAN" = 0 ] || fail "guppyscreen: working tree is not clean"

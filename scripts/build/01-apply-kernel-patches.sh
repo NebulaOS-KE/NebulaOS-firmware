@@ -6,8 +6,8 @@
 #
 # FIRMWARE.md sec 39: these changes used to be applied here at build time from
 # patches/x2000_kernel_6.6-openke.patch. They're now real, reviewable commits
-# on the `openke` branch of a genuine fork (github.com/coreflake1/NebulaOS-kernel,
-# renamed 2026-08-14 from coreflake1/NebulaOS - forked from the original
+# on the `openke` branch of a genuine fork (github.com/NebulaOS-KE/NebulaOS-kernel,
+# renamed 2026-08-14 from NebulaOS-KE/NebulaOS - forked from the original
 # upstream Llixuma/ingenic-linux-kernel6.6-x2000-v1.0-20250221) -
 # 00-fetch-vendor-sources.sh checks out that branch directly,
 # so there's nothing left to apply here. This script stays as stage "01" (kept

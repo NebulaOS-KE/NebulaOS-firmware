@@ -47,7 +47,7 @@
 # All of the above trace to ONE underlying event, not three unrelated ones:
 # this qualified baseline tag is dated 2026-08-14, one day BEFORE the
 # unrelated Final Closure mission (2026-08-15) promoted the current unified
-# build image (ghcr.io/coreflake1/nebulaos-build) to canonical and retired
+# build image (ghcr.io/nebulaos-ke/nebulaos-build) to canonical and retired
 # the previous pellcorp/k1-bash-build + guppydev container pair. The
 # baseline's own build-manifest.txt (read directly via `git show
 # nebulaos-canonical-baseline-2026-08-14-prtouch-qualified:artifacts/.../

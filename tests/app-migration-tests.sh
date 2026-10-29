@@ -81,7 +81,7 @@ build_bare_remote() {
 # mismatch, so this constant is what makes "the device really did end up
 # pointed at official Klipper" a tested property rather than a claim.
 KLIPPER_PROD_ORIGIN="https://github.com/Klipper3d/klipper.git"
-EXTENSIONS_PROD_ORIGIN="https://github.com/coreflake1/NebulaOS-klipper-extensions.git"
+EXTENSIONS_PROD_ORIGIN="https://github.com/NebulaOS-KE/NebulaOS-klipper-extensions.git"
 
 setup_seeds() {
 	seeds_dir="$1"

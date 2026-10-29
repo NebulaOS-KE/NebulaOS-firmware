@@ -158,7 +158,7 @@ ENV GUPPYSCREEN_TOOLCHAIN_BIN=/toolchains/${GUPPYSCREEN_MIPS_TOOLCHAIN}/bin
 
 WORKDIR /work
 
-LABEL org.opencontainers.image.source="https://github.com/coreflake1/NebulaOS-firmware" \
+LABEL org.opencontainers.image.source="https://github.com/NebulaOS-KE/NebulaOS-firmware" \
       org.opencontainers.image.title="NebulaOS Build Environment" \
       org.opencontainers.image.description="Canonical unified build environment for NebulaOS - replaces pellcorp/k1-bash-build and ghcr.io/coreflake1/guppydev with one NebulaOS-owned, digest-pinned image. Does not contain project source or the Buildroot-generated target toolchain (that's built from source at build time, per manifests/dependencies.conf)."
 

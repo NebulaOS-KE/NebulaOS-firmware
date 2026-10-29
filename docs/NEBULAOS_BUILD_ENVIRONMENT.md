@@ -1,6 +1,6 @@
 # The NebulaOS build environment
 
-This covers the unified build container (`ghcr.io/coreflake1/nebulaos-build`) — why it exists,
+This covers the unified build container (`ghcr.io/nebulaos-ke/nebulaos-build`) — why it exists,
 what's actually in it, what deliberately isn't, and what has to pass before a new version of it
 becomes the one everyone builds against.
 
@@ -32,7 +32,7 @@ See `build-env/Dockerfile` and `build-env/versions.env` for the exact, current, 
 Because a floating tag (`:latest`, `:candidate`) can be silently repointed at different content later
 — the exact bug this project already closed once for `pellcorp/k1-bash-build` (see
 `manifests/dependencies.conf`'s own comment on that pin, Final Pre-Flash Audit mission, 2026-08-08).
-A digest is content-addressed: `ghcr.io/coreflake1/nebulaos-build@sha256:...` can only ever resolve to
+A digest is content-addressed: `ghcr.io/nebulaos-ke/nebulaos-build@sha256:...` can only ever resolve to
 the exact bytes that produced that hash. `manifests/dependencies.conf`'s `BUILD_IMAGE_DIGEST` is the
 one place this is recorded; `build.sh` reads it directly, never a tag.
 
@@ -49,7 +49,7 @@ produces*.
 Unchanged from before this migration:
 
 ```sh
-git clone https://github.com/coreflake1/NebulaOS-firmware.git
+git clone https://github.com/NebulaOS-KE/NebulaOS-firmware.git
 cd NebulaOS-firmware
 ./build.sh
 ```
@@ -67,7 +67,7 @@ docker build -t nebulaos-build:local build-env/
 
 To publish a new **candidate** (never automatically canonical): push to a branch touching
 `build-env/**`, or run `.github/workflows/build-environment.yml` via `workflow_dispatch`. It publishes
-to `ghcr.io/coreflake1/nebulaos-build` under a dated/short-SHA tag and prints the resulting digest —
+to `ghcr.io/nebulaos-ke/nebulaos-build` under a dated/short-SHA tag and prints the resulting digest —
 promotion to canonical is always a separate, deliberate, human step (see below).
 
 ## How is a new build image promoted?
@@ -104,7 +104,7 @@ reviewed commit — never automated, never silent.
   *written*. This means rebuilding `build-env/Dockerfile` today vs. a year from now can resolve
   different `gcc`/`make`/etc. point releases — the Dockerfile itself is not perfectly bit-reproducible
   on rebuild. What *is* reproducible: the **published, digest-pinned image** is immutable once built —
-  anyone pulling `ghcr.io/coreflake1/nebulaos-build@sha256:...` gets the exact same bytes forever. The
+  anyone pulling `ghcr.io/nebulaos-ke/nebulaos-build@sha256:...` gets the exact same bytes forever. The
   pin is on the resulting image, not on a promise that rebuilding the Dockerfile reproduces it
   identically. (`pellcorp/k1-bash-build`, the container this replaces, had the identical property and
   the identical limitation — this is not a regression, just now made explicit.)

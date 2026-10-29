@@ -45,15 +45,15 @@ when a change is genuinely architecture-sensitive or large. They are required in
 ## 1. Active repositories
 
 Five NebulaOS development repositories are active here, canonical remotes under
-`https://github.com/coreflake1/`.
+`https://github.com/NebulaOS-KE/` (organisation since 2026-10-29, Run 23; before: `coreflake1`).
 
 | Path | Canonical remote | Default branch | Role |
 |---|---|---|---|
-| `NebulaOS-firmware/` | `coreflake1/NebulaOS-firmware` | `main` | Integration & build authority; owns every dependency pin |
-| `NebulaOS-klipper-extensions/` | `coreflake1/NebulaOS-klipper-extensions` | `main` | NebulaOS-owned host Klipper functionality |
-| `NebulaOS-klipper-mcu/` | `coreflake1/NebulaOS-klipper-mcu` | `main` | GD32F303 application firmware development |
-| `NebulaOS-kernel/` | `coreflake1/NebulaOS-kernel` | `openke` | X2000 Linux kernel development |
-| `NebulaOS-nebulascreen/` | `coreflake1/NebulaOS-nebulascreen` (renamed from `NebulaOS-guppyscreen` 2026-10-24; the old URL redirects, never recreate it) | `main` | Touchscreen frontend (NebulaScreen, based on GuppyScreen) |
+| `NebulaOS-firmware/` | `NebulaOS-KE/NebulaOS-firmware` | `main` | Integration & build authority; owns every dependency pin |
+| `NebulaOS-klipper-extensions/` | `NebulaOS-KE/NebulaOS-klipper-extensions` | `main` | NebulaOS-owned host Klipper functionality |
+| `NebulaOS-klipper-mcu/` | `NebulaOS-KE/NebulaOS-klipper-mcu` | `main` | GD32F303 application firmware development |
+| `NebulaOS-kernel/` | `NebulaOS-KE/NebulaOS-kernel` | `openke` | X2000 Linux kernel development |
+| `NebulaOS-nebulascreen/` | `NebulaOS-KE/NebulaOS-nebulascreen` (renamed from `NebulaOS-guppyscreen` 2026-10-24; the old URL redirects, never recreate it) | `main` | Touchscreen frontend (NebulaScreen, based on GuppyScreen) |
 
 In DEV any branch may be checked out. The workspace root is deliberately **not** a git
 repository.

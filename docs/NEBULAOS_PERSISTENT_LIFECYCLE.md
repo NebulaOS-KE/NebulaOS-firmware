@@ -189,7 +189,7 @@ It used to be maintained in this repository's `klippy_extras/` mirror and
 synced by hand into `coreflake1/NebulaOS-klipper`'s `klippy/extras/`. There is
 no NebulaOS Klipper fork any more: the module — like every other accepted
 extra — now lives in
-[`coreflake1/NebulaOS-klipper-extensions`](https://github.com/coreflake1/NebulaOS-klipper-extensions),
+[`NebulaOS-KE/NebulaOS-klipper-extensions`](https://github.com/NebulaOS-KE/NebulaOS-klipper-extensions),
 which is its single source of truth, and is composed into an official Klipper
 checkout at boot. **This repository's `klippy_extras/` is a fork-era mirror
 retained for review and for a few local test fixtures; it has already

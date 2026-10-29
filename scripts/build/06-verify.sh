@@ -1759,10 +1759,10 @@ else
 	echo "MISS nebulaos.conf does not include nebulascreen-update.conf (NebulaScreen updates off)"
 fi
 if debugfs -R "cat /etc/nebulaos/moonraker/nebulascreen-update.conf" ${IMAGES}/rootfs.ext2 2>/dev/null \
-		| grep -qx 'repo: coreflake1/NebulaOS-nebulascreen'; then
+		| grep -qx 'repo: NebulaOS-KE/NebulaOS-nebulascreen'; then
 	echo "OK   [update_manager nebulascreen] names the renamed repository"
 else
-	echo "MISS [update_manager nebulascreen] does not name coreflake1/NebulaOS-nebulascreen"
+	echo "MISS [update_manager nebulascreen] does not name NebulaOS-KE/NebulaOS-nebulascreen"
 fi
 check_absent /etc/init.d/S58guppyscreen
 check_absent /opt/guppyscreen/guppyscreen

@@ -94,7 +94,7 @@ fi
 # --- 4. Extensions are the host customization layer ------------------------
 EREPO=$(man KLIPPER_EXTENSIONS_REPO); EBRANCH=$(man KLIPPER_EXTENSIONS_BRANCH); EPIN=$(man KLIPPER_EXTENSIONS_PIN)
 case "$EREPO" in
-  *coreflake1/NebulaOS-klipper-extensions*) ok "extensions-are-host-customization-layer" "$EREPO";;
+  *NebulaOS-KE/NebulaOS-klipper-extensions*) ok "extensions-are-host-customization-layer" "$EREPO";;
   *) bad "extensions-are-host-customization-layer" "unexpected repo '$EREPO'";;
 esac
 # Composition manifest must exist and be the module authority.
