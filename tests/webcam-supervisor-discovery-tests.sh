@@ -34,15 +34,17 @@ NOW=1000
 settime() { NOW=$1; echo "$1.00 0.00" > "$PROC_ROOT/uptime"; }
 settime 1000
 
-uvc_node() { # name index driver
+uvc_node() { # name index driver [bus: usb|platform]
 	d="$SYSFS_ROOT/class/video4linux/$1"
-	mkdir -p "$d/device" "$WORK/drivers/$3"
+	if [ "${4:-usb}" = usb ]; then t="$WORK/devices/usb1/1-$1/1-$1:1.0"; else t="$WORK/devices/platform/$1"; fi
+	mkdir -p "$d" "$t" "$WORK/drivers/$3"
 	echo "$2" > "$d/index"
-	ln -sfn "$WORK/drivers/$3" "$d/device/driver"
+	ln -sfn "$t" "$d/device"
+	ln -sfn "$WORK/drivers/$3" "$t/driver"
 }
 DISCOVER=0 STARTS=0 RUNNING=""
 # runs inside $(...), so it counts through a file
-discover_uvc_device() { echo x >> "$WORK/discover.calls"; [ -n "${DEV_PRESENT:-}" ] && echo "$DEV_PRESENT"; }
+discover_webcam() { echo x >> "$WORK/discover.calls"; [ -n "${DEV_PRESENT:-}" ] && echo "$DEV_PRESENT"; }
 dcount() { DISCOVER=$(cat "$WORK/discover.calls" 2>/dev/null | wc -l); DISCOVER=$((DISCOVER + 0)); }
 ustreamer_running_on() { [ -n "$RUNNING" ] && [ "$RUNNING" = "$1" ]; }
 start_ustreamer() { STARTS=$((STARTS + 1)); RUNNING=$1; echo 4242 > "$USTREAMER_PIDFILE"; mkdir -p "$PROC_ROOT/4242"; }
@@ -53,16 +55,31 @@ crash() { RUNNING=""; rm -rf "$PROC_ROOT/4242"; }   # process gone, pidfile left
 OSCONFIG="$WORK/osconfig"
 printf '#!/bin/sh\necho "$*" >> %s/apply.calls\n' "$WORK" > "$OSCONFIG"; chmod +x "$OSCONFIG"
 applies() { n=$(cat "$WORK/apply.calls" 2>/dev/null | wc -l); echo $((n + 0)); }
-usbid() { echo "$2" > "$SYSFS_ROOT/class/video4linux/$1/busnum"; echo "$3" > "$SYSFS_ROOT/class/video4linux/$1/devnum"; }
+usbid() { echo "$2" > "$WORK/devices/usb1/1-$1/busnum"; echo "$3" > "$WORK/devices/usb1/1-$1/devnum"; }
 
 uvc_node video0 0 uvcvideo
 uvc_node video1 1 uvcvideo
-uvc_node video9 0 other
+uvc_node video8 0 gspca_zc3xx
+uvc_node video9 0 ingenic-rot platform
 
-uvc_node_still_present /dev/video0 && pass "index-0 uvcvideo node is present" || fail "video0 not detected"
-uvc_node_still_present /dev/video1 && fail "metadata node (index 1) accepted" || pass "metadata node (index 1) rejected"
-uvc_node_still_present /dev/video9 && fail "non-uvc driver accepted" || pass "non-uvc driver rejected"
-uvc_node_still_present /dev/video7 && fail "absent node accepted" || pass "absent node rejected"
+usb_capture_node /dev/video0 && pass "index-0 uvcvideo node is present" || fail "video0 not detected"
+usb_capture_node /dev/video1 && fail "metadata node (index 1) accepted" || pass "metadata node (index 1) rejected"
+usb_capture_node /dev/video8 && pass "non-UVC USB webcam (gspca) accepted" || fail "gspca webcam rejected"
+usb_capture_node /dev/video9 && fail "SoC (non-USB) node accepted" || pass "SoC (non-USB) node rejected"
+usb_capture_node /dev/video7 && fail "absent node accepted" || pass "absent node rejected"
+
+# --- any webcam: the stream format from what the camera offers ---
+REAL_V4L2CTL=$V4L2CTL
+V4L2CTL="$WORK/v4l2-ctl"
+printf '#!/bin/sh\nprintf "%%s\\n" "$FAKE_FORMATS"\n' > "$V4L2CTL"; chmod +x "$V4L2CTL"
+fmt_of() { FAKE_FORMATS="$1" webcam_format /dev/video0 || echo none; }
+expect "MJPEG camera (Nebula Camera)" "$(fmt_of "[0]: 'YUYV' (YUYV 4:2:2)
+[1]: 'MJPG' (Motion-JPEG, compressed)")" MJPEG
+expect "JPEG-only camera (gspca zc3xx)" "$(fmt_of "[0]: 'JPEG' (JFIF JPEG, compressed)")" JPEG
+expect "raw-only camera" "$(fmt_of "[0]: 'YUYV' (YUYV 4:2:2)")" YUYV
+expect "YUV 4:2:0 camera" "$(fmt_of "[0]: 'YU12' (Planar YUV 4:2:0)")" YUV420
+expect "no streamable format" "$(fmt_of "[0]: 'BA81' (8-bit Bayer BGBG/GRGR)")" none
+V4L2CTL=$REAL_V4L2CTL
 
 last_dev=
 DEV_PRESENT=/dev/video0

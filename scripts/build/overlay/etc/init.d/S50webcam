@@ -125,49 +125,57 @@ case "$(cat "$CAMERA_QUALITY_MODE_MARKER" 2>/dev/null)" in
 		;;
 esac
 
-# Print the /dev/videoN path of the first node that is:
-#   - driven by uvcvideo (not the SoC's own jz-rot/vpu-helix/vpu-felix M2M
-#     nodes, which also live under /dev/video*)
-#   - a real Video Capture node per its own "Device Caps" block specifically
-#     (a UVC device commonly exposes a second, metadata-only node too -
-#     same driver, same "Capabilities" summary line, but Device Caps lacks
-#     "Video Capture" - confirmed via real hardware: this webcam's own
-#     /dev/video4 is exactly this case, right next to /dev/video3 which is
-#     the real one)
-#   - able to produce MJPEG directly (matches --format=MJPEG --encoder=HW)
-# Prints nothing and returns 1 if no such node exists right now.
-discover_uvc_device() {
+# Any webcam, not only the Nebula Camera (2026-10-30: an old non-UVC
+# Logitech, gspca driver, JPEG only, gave no picture). A camera is a node
+# that is:
+#   - index 0 of a USB device: not one of the SoC's own M2M nodes, and not
+#     the metadata-only sibling a UVC camera exposes (index 1, same driver);
+#     any driver (uvcvideo, gspca_*, ...)
+#   - a Video Capture node per its own "Device Caps" block
+#   - able to produce a format ustreamer can stream (webcam_format)
+# sysfs only, does not open the node (CAM-01: used on every poll).
+usb_capture_node() {
+	n=${1#/dev/}
+	[ -e "$SYSFS_ROOT/class/video4linux/$n" ] || return 1
+	idx=$(cat "$SYSFS_ROOT/class/video4linux/$n/index" 2>/dev/null)
+	[ "$idx" = 0 ] || return 1
+	readlink -f "$SYSFS_ROOT/class/video4linux/$n/device" 2>/dev/null | grep -q '/usb[0-9]'
+}
+
+# The ustreamer --format for a node: compressed first (the camera does the
+# JPEG work), then the raw formats ustreamer encodes itself. Prints nothing
+# and returns 1 when the camera offers none of them.
+webcam_format() {
+	_fmts=$("$V4L2CTL" -d "$1" --list-formats 2>/dev/null) || return 1
+	for _f in MJPG:MJPEG JPEG:JPEG YUYV:YUYV UYVY:UYVY YVYU:YVYU YU12:YUV420 YV12:YVU420 \
+		RGBP:RGB565 RGB3:RGB24 BGR3:BGR24 GREY:GREY; do
+		if echo "$_fmts" | grep -q "'${_f%%:*}'"; then
+			echo "${_f#*:}"
+			return 0
+		fi
+	done
+	return 1
+}
+
+# Print the /dev/videoN path of the first camera; nothing and 1 if none.
+discover_webcam() {
 	for dev in /dev/video*; do
 		[ -e "$dev" ] || continue
+		usb_capture_node "$dev" || continue
 
 		info=$("$V4L2CTL" -d "$dev" --info 2>/dev/null) || continue
-		echo "$info" | grep -q 'Driver name.*: uvcvideo$' || continue
-
 		# Isolate just the "Device Caps" block (up to the next blank-ish
 		# section) so we don't match the combined summary line that both
 		# the real capture node and its metadata-only sibling both show.
 		device_caps=$(echo "$info" | sed -n '/^\tDevice Caps/,/^[A-Za-z]/p')
 		echo "$device_caps" | grep -q 'Video Capture' || continue
 
-		"$V4L2CTL" -d "$dev" --list-formats 2>/dev/null | grep -q "'MJPG'" || continue
+		webcam_format "$dev" >/dev/null || continue
 
 		echo "$dev"
 		return 0
 	done
 	return 1
-}
-
-# CAM-01: is the node ustreamer serves still the UVC capture node? sysfs only:
-# re-running discover_uvc_device (v4l2-ctl --info/--list-formats) opens
-# /dev/video* every poll, which resumes the camera and defeats USB runtime
-# autosuspend while the stream is paused. index 0 is the capture node (the
-# metadata sibling is index 1); the driver link must still be uvcvideo.
-uvc_node_still_present() {
-	n=${1#/dev/}
-	[ -e "$SYSFS_ROOT/class/video4linux/$n" ] || return 1
-	idx=$(cat "$SYSFS_ROOT/class/video4linux/$n/index" 2>/dev/null)
-	[ "$idx" = 0 ] || return 1
-	readlink "$SYSFS_ROOT/class/video4linux/$n/device/driver" 2>/dev/null | grep -q '/uvcvideo$'
 }
 
 # G121 (Run 22): the Nebula Camera keeps no setting over a reboot, power cycle
@@ -208,15 +216,28 @@ ustreamer_running_on() {
 NEBULAOS_OOM_POLICY="${NEBULAOS_OOM_POLICY:-/etc/nebulaos-oom-policy.sh}"
 if [ -r "$NEBULAOS_OOM_POLICY" ]; then . "$NEBULAOS_OOM_POLICY"; else nebulaos_start_with_adj() { shift; "$@"; }; fi
 
+# A camera without (M)JPEG: ustreamer encodes on the CPU, which this
+# real-time printer shares with Klipper - one worker, at most 640x480, 10 fps.
+RAW_RESOLUTION=640x480
+RAW_FPS=10
+
 start_ustreamer() {
 	dev="$1"
-	echo "S50webcam: starting ustreamer on $dev"
+	fmt=$(webcam_format "$dev") || fmt=MJPEG
+	case "$fmt" in
+		MJPEG|JPEG) enc="--encoder=HW" res=$RESOLUTION fps=$DESIRED_FPS ;;
+		*) enc="--encoder=CPU --workers=1" res=$RAW_RESOLUTION fps=$RAW_FPS ;;
+	esac
+	echo "S50webcam: starting ustreamer on $dev ($fmt, $res)"
 	# OOM priority at birth (MEM-T07): optional media, expendable.
+	# A camera that cannot do $res gets the nearest size its driver offers
+	# (ustreamer asks again with it).
+	# shellcheck disable=SC2086
 	nebulaos_start_with_adj "$NEBULAOS_ADJ_USTREAMER" \
 		start-stop-daemon -S -b -m -p "$USTREAMER_PIDFILE" -N 5 \
 		-x "$USTREAMER" -- \
-		--device="$dev" --format=MJPEG --encoder=HW \
-		--resolution="$RESOLUTION" --desired-fps="$DESIRED_FPS" \
+		--device="$dev" --format="$fmt" $enc \
+		--resolution="$res" --desired-fps="$fps" \
 		--host=127.0.0.1 --port=8080 --tcp-nodelay
 	# NebulaOS WiFi/camera IRQ contention mission (2026-08-03/04): live
 	# frame-timing measurement (JPEG SOI/EOI-boundary timestamps, not just
@@ -290,11 +311,11 @@ supervise_tick() {
 	fi
 	# CAM-01: while ustreamer serves a node that is still present, do not
 	# re-open it for discovery.
-	if [ -n "$last_dev" ] && ustreamer_running_on "$last_dev" && uvc_node_still_present "$last_dev"; then
+	if [ -n "$last_dev" ] && ustreamer_running_on "$last_dev" && usb_capture_node "$last_dev"; then
 		apply_camera_settings_once "$last_dev"
 		return 0
 	fi
-	dev=$(discover_uvc_device)
+	dev=$(discover_webcam)
 	[ -n "$dev" ] && last_dev=$dev
 	if [ -n "$dev" ]; then
 		if ! ustreamer_running_on "$dev"; then
