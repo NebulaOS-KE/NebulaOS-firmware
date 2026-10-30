@@ -1,5 +1,7 @@
 # The canonical NebulaOS OTA flow
 
+> **Superseded (2026-10):** releases are built by the NebulaOS repository's GitHub release workflow (`scripts/release/` here) and published as `.img` + `.ingenic`; see [RELEASE_ARTIFACTS.md](RELEASE_ARTIFACTS.md) and [README.md](README.md). Kept as history.
+
 Clean-Update + Virgin Baseline mission, Phase 7 (2026-08-08). Every real
 mechanism referenced here already exists (built across this and earlier
 missions) - this document is the first place that states the full,

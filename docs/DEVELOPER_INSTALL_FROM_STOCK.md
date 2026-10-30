@@ -1,5 +1,7 @@
 # Installing a developer build from stock
 
+> **Superseded (2026-10):** users install with Creality's own updater ([INSTALL_FROM_STOCK.md](INSTALL_FROM_STOCK.md)); developers use the Hardware Agent ([HARDWARE_AGENT.md](HARDWARE_AGENT.md)). Kept as history.
+
 NebulaOS uses the KE's existing stock/custom A/B layout, which is genuinely convenient here: we
 don't need to touch or overwrite the stock system to get a NebulaOS build onto the printer.
 NebulaOS just goes into the second, custom slot that's normally sitting empty.

@@ -94,18 +94,28 @@ sizes, and a package that fails any of them is rejected rather than half
 installed. What is absent is an *authenticity* check, which is exactly why
 custom F005 firmware can be installed through the stock path at all.
 
-### Versioning
+### What Creality's updater actually checks (read from a KE, 2026-10-29)
 
-The updater gates on version. Releases use a version namespace above anything
-stock ships, and the metadata inside the package agrees with the filename — the
-updater reads the metadata, not the name.
+`/etc/ota_bin/local_ota_update.sh` (captured in the workspace as
+`_scratch/run23/stock-updater*.txt`), proven by the first install through it
+(ke-dev, from OpenKE):
 
-### Known provenance gap
+- It unpacks `<file>.img` and reads `<file>/ota_config.in`: **the top directory
+  is the file name without `.img`**. A renamed package stops before anything is
+  written. `build-img.py` names the directory after `--out`.
+- `ota_config.in` must carry `current_version=<v>`. The payloads live in
+  `ota_v<v>/` and `ota_update.in`'s `ota_version` must equal `<v>` exactly.
+- The "already newest" check compares `<v>` with `/etc/ota_info`'s
+  `ota_version` through `[ -ge ]`. With dotted versions (`1.1.0.15`) that test
+  errors, which counts as "not newer", so the install goes ahead: a NebulaOS
+  `0.9.0` installs over stock `1.1.0.15`. No inflated version number is needed.
+- It writes kernel, rootfs and rtos of the other slot plus the marker, prints
+  `ota update ok`, and **does not reboot**: Creality's touchscreen does that;
+  over SSH it is a soft `reboot`.
 
-`ota_config.in` is synthesised from the package's own facts, because no stock
-F005 `.img` was available to copy a real one from. Every generated manifest
-records this as `IMG_OTA_CONFIG_PROVENANCE=SYNTHESISED_NO_VENDOR_TEMPLATE`. If
-you obtain a vendor package, pass `--ota-config-template` to use its real one.
+`validate-img.py` checks the three package rules. `ota_config.in` is still
+synthesised (no vendor one to copy); `--ota-config-template` takes one if
+obtained.
 
 ---
 

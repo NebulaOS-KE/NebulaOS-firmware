@@ -188,6 +188,11 @@ production-branch extensions, pin resolvability, etc.).
 
 ## Docs that match the current code
 
+Index of everything in `docs/` (current, reference, superseded, history):
+[`docs/README.md`](docs/README.md). User guides: the
+[NebulaOS wiki](https://github.com/NebulaOS-KE/NebulaOS-nebulascreen/wiki).
+
+- [`docs/INSTALL_FROM_STOCK.md`](docs/INSTALL_FROM_STOCK.md) — installing with Creality's updater (stock or OpenKE)
 - [`docs/A_B_SLOT_MODEL.md`](docs/A_B_SLOT_MODEL.md) — slots, marker, partitions
 - [`docs/HOW_TO_SWITCH_STOCK_AND_CUSTOM.md`](docs/HOW_TO_SWITCH_STOCK_AND_CUSTOM.md) — switching between slots
 - [`docs/DEVELOPER_RECOVERY.md`](docs/DEVELOPER_RECOVERY.md) — recovery

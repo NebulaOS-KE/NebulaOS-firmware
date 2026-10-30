@@ -124,10 +124,10 @@ capacity, per-chunk MD5 and declared sizes, and this packager satisfies all of
 them. What is absent is an *authenticity* check, which is precisely why custom
 F005 firmware installs through the stock path at all.
 
-One provenance gap remains, recorded in every manifest as
-`IMG_OTA_CONFIG_PROVENANCE`: no stock F005 `.img` was available to copy
-`ota_config.in` from, so it is synthesised from the package's own facts. Pass
-`--ota-config-template` once a vendor package is obtained.
+`ota_config.in` is still synthesised (`IMG_OTA_CONFIG_PROVENANCE`), but since
+2026-10-29 its rules come from the real updater script and a real install
+through it (see RELEASE_ARTIFACTS.md, "What Creality's updater actually
+checks").
 
 ### `.ingenic` — the Ingenic Cloner recovery package
 

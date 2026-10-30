@@ -1,5 +1,7 @@
 # Updating an existing NebulaOS install
 
+> **Superseded (2026-10):** NebulaScreen now updates through Moonraker too, and system images install from the screen (USB, upload or online). Current guide: the wiki's [Updating NebulaOS](https://github.com/NebulaOS-KE/NebulaOS-nebulascreen/wiki/Updating-NebulaOS). Kept as history.
+
 This assumes NebulaOS is already installed and booted. If it isn't yet, start with
 `docs/DEVELOPER_INSTALL_FROM_STOCK.md`.
 
