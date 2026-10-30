@@ -552,6 +552,31 @@ configured
 ns_refresh_update_info "first poll on this image"
 t "refresh log names the real reason" 'grep -q "refresh (first poll on this image)" "$WORK/log"'
 
+# --- a crashed screen is started again (2026-10-30) ---------------------------
+crash() { kill "$(cat "$NS_PIDFILE")" 2>/dev/null; sleep 0.2; }
+setup; poll_nebulascreen_once; rm -f "$WORK/s58.calls"
+ns_revive_crashed
+t "running screen: no restart" '[ "$(restarts)" = 0 ]'
+crash; ns_revive_crashed
+t "crashed screen: started again" \
+	'[ "$(restarts)" = 1 ] && [ -d "/proc/$(cat "$NS_PIDFILE")" ] && grep -q "ended without a stop" "$WORK/log"'
+t "crashed screen: its log kept" '[ -s "$NEBULAOS_ROOT/maintenance/logs/nebulascreen-last-crash.log" ]'
+"$NS_S58" stop; rm -f "$WORK/s58.calls"; ns_revive_crashed
+t "stopped screen (S58 stop): left stopped" '[ "$(restarts)" = 0 ]'
+"$NS_S58" start; : > "$NEBULAOS_RUN_DIR/shed/nebulascreen"; crash; rm -f "$WORK/s58.calls"
+ns_revive_crashed
+t "shed by memguard: left stopped" '[ "$(restarts)" = 0 ]'
+rm -f "$NEBULAOS_RUN_DIR/shed/nebulascreen"
+ns_set state=validating; ns_revive_crashed
+t "during a release trial: left to the trial" '[ "$(restarts)" = 0 ]'
+ns_set state=healthy
+setup; poll_nebulascreen_once; rm -f "$WORK/s58.calls" "$WORK/log"
+for _i in 1 2 3 4 5 6 7; do crash; ns_revive_crashed; done
+t "at most NS_REVIVE_MAX restarts per boot" \
+	'[ "$(restarts)" = "$NS_REVIVE_MAX" ] && [ "$(grep -c "crashed $NS_REVIVE_MAX times" "$WORK/log")" = 1 ]'
+t "poll_once revives the screen" \
+	'sed -n "/^poll_once() {/,/^}/p" "$SUP" | grep -q ns_revive_crashed'
+
 # --- wiring -------------------------------------------------------------------
 t "poll_once runs the nebulascreen component" \
 	'sed -n "/^poll_once() {/,/^}/p" "$SUP" | grep -q poll_nebulascreen_once'

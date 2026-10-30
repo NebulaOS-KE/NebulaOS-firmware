@@ -1080,6 +1080,39 @@ ns_bootstrap() {
 	ns_refresh_update_info "first poll on this image"
 }
 
+# The screen died by itself (2026-10-30: a crash left the display frozen on
+# its last picture until the next power cycle). S58 stop removes the pidfile
+# and memguard's shed leaves a marker; a pidfile whose process is gone is a
+# crash. Start it again, at most NS_REVIVE_MAX times per boot. Not during a
+# release trial: ns_judge_trial decides about a release that does not run.
+NS_REVIVE_MAX="${NS_REVIVE_MAX:-5}"
+NS_REVIVE_COUNT="${NS_REVIVE_COUNT:-$NEBULAOS_RUN_DIR/nebulascreen-revives}"
+ns_revive_crashed() {
+	_nspid=$(cat "$NS_PIDFILE" 2>/dev/null)
+	[ -n "$_nspid" ] || return 0
+	[ -d "/proc/$_nspid" ] && return 0
+	[ -e "$NEBULAOS_RUN_DIR/shed/nebulascreen" ] && return 0
+	case "$(ns_get state)" in
+		validating|rolling-back) return 0 ;;
+	esac
+	_nsn=$(cat "$NS_REVIVE_COUNT" 2>/dev/null)
+	case "$_nsn" in ''|*[!0-9]*) _nsn=0 ;; esac
+	if [ "$_nsn" -ge "$NS_REVIVE_MAX" ]; then
+		[ "$_nsn" -eq "$NS_REVIVE_MAX" ] \
+			&& log "$NS_NAME: the screen crashed $NS_REVIVE_MAX times since boot - not starting it again until the next boot"
+		echo $((_nsn + 1)) > "$NS_REVIVE_COUNT"
+		return 0
+	fi
+	echo $((_nsn + 1)) > "$NS_REVIVE_COUNT"
+	log "$NS_NAME: the screen (pid $_nspid) ended without a stop - starting it again ($((_nsn + 1))/$NS_REVIVE_MAX)"
+	_nsd="$NEBULAOS_ROOT/maintenance/logs"
+	mkdir -p "$_nsd" 2>/dev/null
+	# The last crash only: bounded, and in "Save logs to USB".
+	tail -c 65536 "$NS_SCREEN_LOG" > "$_nsd/nebulascreen-last-crash.log" 2>/dev/null
+	rm -f "$NS_PIDFILE" "$NS_REPORT"
+	"$NS_S58" start >/dev/null 2>&1
+}
+
 poll_nebulascreen_once() {
 	ns_component_ready || return 0
 	[ -n "$(ns_get state)" ] || ns_bootstrap
@@ -1861,6 +1894,7 @@ poll_once() {
 	done
 
 	poll_mainsail_once
+	ns_revive_crashed
 	poll_nebulascreen_once
 	poll_readiness_once
 }
