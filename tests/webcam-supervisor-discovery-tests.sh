@@ -55,7 +55,8 @@ crash() { RUNNING=""; rm -rf "$PROC_ROOT/4242"; }   # process gone, pidfile left
 OSCONFIG="$WORK/osconfig"
 printf '#!/bin/sh\necho "$*" >> %s/apply.calls\n' "$WORK" > "$OSCONFIG"; chmod +x "$OSCONFIG"
 applies() { n=$(cat "$WORK/apply.calls" 2>/dev/null | wc -l); echo $((n + 0)); }
-usbid() { echo "$2" > "$WORK/devices/usb1/1-$1/busnum"; echo "$3" > "$WORK/devices/usb1/1-$1/devnum"; }
+usbid() { echo "$2" > "$WORK/devices/usb1/1-$1/busnum"; echo "$3" > "$WORK/devices/usb1/1-$1/devnum"
+	echo "${4:-a108}" > "$WORK/devices/usb1/1-$1/idVendor"; echo "${5:-2231}" > "$WORK/devices/usb1/1-$1/idProduct"; }
 
 uvc_node video0 0 uvcvideo
 uvc_node video1 1 uvcvideo
@@ -152,6 +153,10 @@ sleep 0.2
 expect "same node, new USB device: applied again" "$(applies)" 2
 grep -q -- "camera apply --device /dev/video5" "$WORK/apply.calls" \
 	&& pass "apply names the device" || fail "apply args: $(cat "$WORK/apply.calls")"
+usbid video5 1 9 046d 08a2                         # another webcam, re-enumerating
+supervise_tick; usbid video5 1 10 046d 08a2; supervise_tick
+sleep 0.2
+expect "another webcam: never applied, however often it re-enumerates" "$(applies)" 2
 
 echo "webcam-supervisor-discovery-tests: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

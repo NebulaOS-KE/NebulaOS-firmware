@@ -192,11 +192,22 @@ camera_identity() {
 	d=$(cat "$SYSFS_ROOT/class/video4linux/$n/device/../devnum" 2>/dev/null)
 	[ -n "$b" ] && [ -n "$d" ] && echo "$b:$d"
 }
+# Only the Nebula Camera has settings to apply. Checked here, in sysfs: a
+# camera that keeps re-enumerating (2026-10-30: an old USB 1.1 webcam, every
+# ~10 s) otherwise started a Python process each time.
+NEBULA_CAMERA_USB_ID=a108:2231
+camera_usb_id() {
+	n=${1#/dev/}
+	v=$(cat "$SYSFS_ROOT/class/video4linux/$n/device/../idVendor" 2>/dev/null)
+	p=$(cat "$SYSFS_ROOT/class/video4linux/$n/device/../idProduct" 2>/dev/null)
+	echo "$v:$p"
+}
 apply_camera_settings_once() {
 	id=$(camera_identity "$1")
 	[ -n "$id" ] || return 0
 	[ "$id" = "${applied_id:-}" ] && return 0
 	applied_id=$id
+	[ "$(camera_usb_id "$1")" = "$NEBULA_CAMERA_USB_ID" ] || return 0
 	[ -x "$OSCONFIG" ] || return 0
 	echo "S50webcam: camera $1 ($id) - applying the saved camera settings"
 	( "$OSCONFIG" camera apply --device "$1" >/dev/null 2>&1 & )
