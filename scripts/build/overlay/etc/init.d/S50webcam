@@ -232,13 +232,43 @@ if [ -r "$NEBULAOS_OOM_POLICY" ]; then . "$NEBULAOS_OOM_POLICY"; else nebulaos_s
 RAW_RESOLUTION=640x480
 RAW_FPS=10
 
+# Run 23 (2026-10-31): a USB 1.1 (full-speed) camera reaches the SoC through
+# the internal USB 2.0 hub as split isochronous transfers, which on this
+# real-time kernel fail when the controller's interrupt is served late. On
+# ke-dev an old Logitech (046d:08a2, gspca zc3xx) at 640x480 lost its port
+# ("disabled by hub (EMI?)") every ~10 s whenever the printer was busy -
+# 9 disconnects in 60 s with every core loaded - and streamed cleanly at
+# 320x240 under the same load (0 disconnects, 14 fps): the smaller frame
+# uses a smaller isochronous slot. USB 2.0 cameras are unaffected.
+FULL_SPEED_RESOLUTION=320x240
+
+usb_speed() {
+	n=${1#/dev/}
+	cat "$SYSFS_ROOT/class/video4linux/$n/device/../speed" 2>/dev/null
+}
+
+# -> "<resolution> <fps>" to ask ustreamer for, from the stream format and
+# the camera's USB speed.
+stream_size() {
+	case "$2" in
+		MJPEG|JPEG) _res=$RESOLUTION _fps=$DESIRED_FPS ;;
+		*) _res=$RAW_RESOLUTION _fps=$RAW_FPS ;;
+	esac
+	case "$(usb_speed "$1")" in
+		1.5|12) _res=$FULL_SPEED_RESOLUTION ;;
+	esac
+	echo "$_res $_fps"
+}
+
 start_ustreamer() {
 	dev="$1"
 	fmt=$(webcam_format "$dev") || fmt=MJPEG
 	case "$fmt" in
-		MJPEG|JPEG) enc="--encoder=HW" res=$RESOLUTION fps=$DESIRED_FPS ;;
-		*) enc="--encoder=CPU --workers=1" res=$RAW_RESOLUTION fps=$RAW_FPS ;;
+		MJPEG|JPEG) enc="--encoder=HW" ;;
+		*) enc="--encoder=CPU --workers=1" ;;
 	esac
+	size=$(stream_size "$dev" "$fmt")
+	res=${size% *} fps=${size#* }
 	echo "S50webcam: starting ustreamer on $dev ($fmt, $res)"
 	# OOM priority at birth (MEM-T07): optional media, expendable.
 	# A camera that cannot do $res gets the nearest size its driver offers

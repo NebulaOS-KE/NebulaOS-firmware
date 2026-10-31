@@ -78,6 +78,19 @@ expect "MJPEG camera (Nebula Camera)" "$(fmt_of "[0]: 'YUYV' (YUYV 4:2:2)
 [1]: 'MJPG' (Motion-JPEG, compressed)")" MJPEG
 expect "JPEG-only camera (gspca zc3xx)" "$(fmt_of "[0]: 'JPEG' (JFIF JPEG, compressed)")" JPEG
 expect "raw-only camera" "$(fmt_of "[0]: 'YUYV' (YUYV 4:2:2)")" YUYV
+
+# --- Run 23: a USB 1.1 (full-speed) camera streams at 320x240 ---
+speed() { echo "$2" > "$WORK/devices/usb1/1-$1/speed"; }
+speed video0 480
+expect "USB 2.0 MJPEG camera: the full 1080p request" "$(stream_size /dev/video0 MJPEG)" "1920x1080 30"
+expect "USB 2.0 raw camera: the CPU-encoder size" "$(stream_size /dev/video0 YUYV)" "640x480 10"
+speed video8 12
+expect "USB 1.1 JPEG camera: 320x240" "$(stream_size /dev/video8 JPEG)" "320x240 30"
+expect "USB 1.1 raw camera: 320x240" "$(stream_size /dev/video8 YUYV)" "320x240 10"
+speed video8 1.5
+expect "USB 1.0 low-speed camera: 320x240" "$(stream_size /dev/video8 JPEG)" "320x240 30"
+rm -f "$WORK/devices/usb1/1-video8/speed"
+expect "speed unknown: unchanged" "$(stream_size /dev/video8 JPEG)" "1920x1080 30"
 expect "YUV 4:2:0 camera" "$(fmt_of "[0]: 'YU12' (Planar YUV 4:2:0)")" YUV420
 expect "no streamable format" "$(fmt_of "[0]: 'BA81' (8-bit Bayer BGBG/GRGR)")" none
 V4L2CTL=$REAL_V4L2CTL
