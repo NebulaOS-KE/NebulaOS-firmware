@@ -925,7 +925,8 @@ EXERCISE_PROFILES["camera-resolution-trial"] = (
     360)
 
 # Run 23 (2026-10-31): a picture per candidate image setting of the Nebula
-# Camera (a108:2231), to choose its defaults. Only the plain UVC controls are
+# Camera (a108:2231), to choose its defaults. One v4l2-ctl per control (one
+# unknown name makes v4l2-ctl drop the whole list). Only the plain UVC controls are
 # set, temporarily, with v4l2-ctl: brightness, contrast, saturation,
 # sharpness, anti-flicker. Never exposure (manual is one-way), white balance
 # mode or the vendor XU (night mode). A local viewer keeps the stream awake;
@@ -945,10 +946,10 @@ EXERCISE_PROFILES["nebula-camera-sweep"] = (
     "&& { DEV=/dev/${n##*/}; break; }; done; [ -n \"$DEV\" ] || { echo NO_NEBULA_CAMERA; exit 3; }; "
     "command -v ffmpeg >/dev/null || { echo NO_FFMPEG; exit 3; }; "
     "echo \"== $DEV saved: $(cat /usr/data/nebulaos/camera/camera.json 2>/dev/null)\"; "
-    "v4l2-ctl -d $DEV --list-ctrls 2>&1 | head -30; "
+    "v4l2-ctl -d $DEV --list-ctrls 2>&1 | head -40; "
     "curl -s -o /dev/null --max-time 400 http://127.0.0.1:8080/stream & V=$!; sleep 8; "
-    "shot(){ v4l2-ctl -d $DEV --set-ctrl=brightness=$2 --set-ctrl=contrast=$3 --set-ctrl=saturation=$4 "
-    "--set-ctrl=sharpness=$5 --set-ctrl=power_line_frequency=$6 2>&1; sleep 4; "
+    "shot(){ for c in brightness=$2 contrast=$3 saturation=$4 sharpness=$5 power_line_frequency=$6; do "
+    "v4l2-ctl -d $DEV --set-ctrl=$c 2>&1 | head -1; done; sleep 4; "
     "curl -s -o /dev/null --max-time 5 http://127.0.0.1:8080/snapshot; sleep 1; "
     "curl -s -o /tmp/nebulaos-sweep.jpg --max-time 5 http://127.0.0.1:8080/snapshot; "
     "ffmpeg -loglevel error -y -i /tmp/nebulaos-sweep.jpg -vf scale=960:-2 -q:v 3 /tmp/nebulaos-sweep-s.jpg "
@@ -957,7 +958,7 @@ EXERCISE_PROFILES["nebula-camera-sweep"] = (
     "base64 /tmp/nebulaos-sweep-s.jpg; echo END; }; "
     + "; ".join("shot %s %s" % (n, v) for n, v in _CAM_SWEEP) + "; "
     "kill $V 2>/dev/null; V=; rm -f /tmp/nebulaos-sweep.jpg /tmp/nebulaos-sweep-s.jpg; "
-    "$OSC camera apply >/dev/null 2>&1; echo \"restored=$?\"",
+    "$OSC camera apply >/dev/null 2>&1; echo \"restored=$?\"; v4l2-ctl -d $DEV --list-ctrls 2>&1 | head -40",
     "[ -n \"${V:-}\" ] && kill $V 2>/dev/null; rm -f /tmp/nebulaos-sweep.jpg /tmp/nebulaos-sweep-s.jpg; "
     "/usr/libexec/nebulaos/nebulaos-osconfig camera apply >/dev/null 2>&1",
     300)
