@@ -647,7 +647,7 @@ CAPTURE_PROFILES = {
 # Defined by the plan as reversible state changes: TOOL-02 `exercise`, never `capture`.
 EXERCISE_ONLY = ("camera-resume", "camera-states", "memexercise", "sof-filter-ab", "storage-autosuspend",
                  "cpu-load", "camera-viewer", "wifi-load", "usb-storage-io", "ktimers-ab", "ttyflip-ab",
-                 "memexercise-sw100", "watchdog-arm", "watchdog-fire", "camera-resolution-trial", "nebula-camera-sweep")
+                 "memexercise-sw100", "watchdog-arm", "watchdog-fire", "camera-resolution-trial", "nebula-camera-sweep", "nebula-camera-sweep2")
 
 
 class CaptureError(Exception):
@@ -960,6 +960,40 @@ EXERCISE_PROFILES["nebula-camera-sweep"] = (
     "kill $V 2>/dev/null; V=; rm -f /tmp/nebulaos-sweep.jpg /tmp/nebulaos-sweep-s.jpg; "
     "$OSC camera apply >/dev/null 2>&1; echo \"restored=$?\"; v4l2-ctl -d $DEV --list-ctrls 2>&1 | head -40",
     "[ -n \"${V:-}\" ] && kill $V 2>/dev/null; rm -f /tmp/nebulaos-sweep.jpg /tmp/nebulaos-sweep-s.jpg; "
+    "/usr/libexec/nebulaos/nebulaos-osconfig camera apply >/dev/null 2>&1",
+    300)
+
+# Round 2: combinations through the product path (nebulaos-osconfig camera
+# set), which reaches sharpness and anti-flicker (v4l2-ctl does not know
+# them on this camera). Never exposure_manual (one-way). The saved
+# camera.json is copied first and put back, then applied.
+_CAM_SWEEP2 = (
+    ("c150s140", '{"brightness":128,"contrast":150,"saturation":140,"sharpness":140,"power_line":"off"}'),
+    ("c160s145b122", '{"brightness":122,"contrast":160,"saturation":145,"sharpness":140,"power_line":"off"}'),
+    ("c145s150b120", '{"brightness":120,"contrast":145,"saturation":150,"sharpness":140,"power_line":"off"}'),
+    ("c140s135", '{"brightness":128,"contrast":140,"saturation":135,"sharpness":140,"power_line":"off"}'),
+    ("c150s140sh100", '{"brightness":128,"contrast":150,"saturation":140,"sharpness":100,"power_line":"off"}'),
+    ("c150s140sh160", '{"brightness":128,"contrast":150,"saturation":140,"sharpness":160,"power_line":"off"}'),
+    ("c150s140pl50", '{"brightness":128,"contrast":150,"saturation":140,"sharpness":140,"power_line":"50"}'),
+)
+EXERCISE_PROFILES["nebula-camera-sweep2"] = (
+    "OSC=/usr/libexec/nebulaos/nebulaos-osconfig; CJ=/usr/data/nebulaos/camera/camera.json; "
+    "[ -f $CJ ] || { echo NO_SAVED_SETTINGS; exit 3; }; cp $CJ /tmp/nebulaos-camera.json.keep || exit 3; "
+    "command -v ffmpeg >/dev/null || { echo NO_FFMPEG; exit 3; }; "
+    "curl -s -o /dev/null --max-time 400 http://127.0.0.1:8080/stream & V=$!; sleep 8; "
+    "shot(){ r=$($OSC camera set --json \"$2\" 2>&1 | head -c 200); echo \"== $1 $r\"; sleep 4; "
+    "curl -s -o /dev/null --max-time 5 http://127.0.0.1:8080/snapshot; sleep 1; "
+    "curl -s -o /tmp/nebulaos-sweep.jpg --max-time 5 http://127.0.0.1:8080/snapshot; "
+    "ffmpeg -loglevel error -y -i /tmp/nebulaos-sweep.jpg -vf scale=960:-2 -q:v 3 /tmp/nebulaos-sweep-s.jpg "
+    "|| cp /tmp/nebulaos-sweep.jpg /tmp/nebulaos-sweep-s.jpg; "
+    "echo \"IMG $1 bytes=$(wc -c < /tmp/nebulaos-sweep.jpg)\"; base64 /tmp/nebulaos-sweep-s.jpg; echo END; }; "
+    + "; ".join("shot %s '%s'" % (n, v) for n, v in _CAM_SWEEP2) + "; "
+    "kill $V 2>/dev/null; V=; rm -f /tmp/nebulaos-sweep.jpg /tmp/nebulaos-sweep-s.jpg; "
+    "cp /tmp/nebulaos-camera.json.keep $CJ.tmp && mv $CJ.tmp $CJ && rm -f /tmp/nebulaos-camera.json.keep; "
+    "$OSC camera apply >/dev/null 2>&1; echo \"restored=$? $(tr -d ' \\n' < $CJ)\"",
+    "[ -n \"${V:-}\" ] && kill $V 2>/dev/null; rm -f /tmp/nebulaos-sweep.jpg /tmp/nebulaos-sweep-s.jpg; "
+    "CJ=/usr/data/nebulaos/camera/camera.json; [ -f /tmp/nebulaos-camera.json.keep ] && "
+    "cp /tmp/nebulaos-camera.json.keep $CJ.tmp && mv $CJ.tmp $CJ && rm -f /tmp/nebulaos-camera.json.keep; "
     "/usr/libexec/nebulaos/nebulaos-osconfig camera apply >/dev/null 2>&1",
     300)
 
