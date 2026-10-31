@@ -22,6 +22,7 @@ claude/agents/nebula-architect.md       .claude/agents/nebula-architect.md      
 claude/agents/nebula-verifier.md        .claude/agents/nebula-verifier.md       644
 claude/agents/nebulaos-build.md         .claude/agents/nebulaos-build.md        644
 claude/agents/nebulaos-hardware.md      .claude/agents/nebulaos-hardware.md     644
+claude/agents/nebulaos-docs.md          .claude/agents/nebulaos-docs.md         644
 claude/rules/architecture-authority.md  .claude/rules/architecture-authority.md 644
 claude/hooks/session-start.sh           .claude/hooks/session-start.sh          755
 claude/hooks/pre-tool-use-identity.sh   .claude/hooks/pre-tool-use-identity.sh  755

@@ -63,6 +63,10 @@ One main programmer works directly; it may run both launchers. `nebulaos-build` 
 `nebulaos-hardware` are optional operators for long-running work. `nebula-architect` and
 `nebula-verifier` are read-only reviewers: optional in DEV (use them for genuinely
 architecture-sensitive or large changes), required in RELEASE. No agent teams.
+`nebulaos-docs` (Tim, 2026-10-31) is a separate long-running documentation session
+(`claude --bg -n nebulaos-docs --agent nebulaos-docs`): docs/* branches and PRs only, its own
+worktrees under `_worktrees/docs/`, no printer, no launchers; state in
+`_scratch/docs-agent/START.md`.
 
 ## Derived state
 
