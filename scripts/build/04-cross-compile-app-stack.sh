@@ -1300,7 +1300,7 @@ done
 # this exact function rather than a parallel reimplementation.
 . "$SCRIPT_DIR/lib/validate-frontend-controls.sh"
 PRINTER_DATA_CONFIG_CLOSURE="$WORK/printer-data-config-closure.txt"
-if ! frontend_controls_resolve_closure "$PRINTER_DATA_CONFIG_SRC" printer.cfg "$PRINTER_DATA_CONFIG_CLOSURE" "$SCRIPT_DIR/overlay"; then
+if ! frontend_controls_resolve_closure "$PRINTER_DATA_CONFIG_SRC" printer.cfg "$PRINTER_DATA_CONFIG_CLOSURE" "$OVERLAY"; then
 	echo "FATAL: could not resolve the printer_data config include closure" >&2
 	exit 1
 fi
