@@ -53,9 +53,15 @@ POWER_LINE = {"off": 0, "50": 1, "60": 2}              # power_line_frequency
 RANGES = {"brightness": (50, 160), "contrast": (50, 160), "saturation": (50, 160),
           "sharpness": (50, 160), "wb_temperature": (300, 600), "zoom": (100, 200),
           "exposure_time": (1, 1000)}
+# Image defaults chosen from snapshots on ke-dev (Run 23, 2026-10-31,
+# hardware-agent exercises nebula-camera-sweep*): at the camera's own 128 the
+# picture is hazy with milky blacks; contrast 155 / saturation 145 give depth
+# and natural colour without using the top of the range; sharpness 140+ adds
+# grain on flat surfaces and doubles the JPEG size, 110 is clean. Anti-flicker
+# off showed no banding (50 Hz would band in 60 Hz countries).
 def default_config():
     return {"schema": SCHEMA, "ir_mode": "auto", "power_line": "off",
-            "brightness": 128, "contrast": 128, "saturation": 128, "sharpness": 128,
+            "brightness": 125, "contrast": 155, "saturation": 145, "sharpness": 110,
             "wb_auto": True, "wb_temperature": 417, "zoom": 100,
             "exposure_manual": False, "exposure_time": 156}
 

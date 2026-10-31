@@ -647,7 +647,7 @@ CAPTURE_PROFILES = {
 # Defined by the plan as reversible state changes: TOOL-02 `exercise`, never `capture`.
 EXERCISE_ONLY = ("camera-resume", "camera-states", "memexercise", "sof-filter-ab", "storage-autosuspend",
                  "cpu-load", "camera-viewer", "wifi-load", "usb-storage-io", "ktimers-ab", "ttyflip-ab",
-                 "memexercise-sw100", "watchdog-arm", "watchdog-fire", "camera-resolution-trial", "nebula-camera-sweep", "nebula-camera-sweep2", "nebula-camera-sweep3")
+                 "memexercise-sw100", "watchdog-arm", "watchdog-fire", "camera-resolution-trial", "nebula-camera-sweep", "nebula-camera-sweep2", "nebula-camera-sweep3", "nebula-camera-set-defaults")
 
 
 class CaptureError(Exception):
@@ -1008,6 +1008,16 @@ _CAM_SWEEP3 = (
     ("final_b125c155s145sh110", '{"brightness":125,"contrast":155,"saturation":145,"sharpness":110,"power_line":"off"}'),
 )
 EXERCISE_PROFILES["nebula-camera-sweep3"] = _cam_sweep_osconfig(_CAM_SWEEP3)
+
+# Saves the chosen image defaults (camera.py default_config, Run 23) on a
+# printer that already has saved camera settings, through the product path.
+# Exposure, white balance mode, night mode and zoom are left as they are.
+EXERCISE_PROFILES["nebula-camera-set-defaults"] = (
+    "/usr/libexec/nebulaos/nebulaos-osconfig camera set --json "
+    "'{\"brightness\":125,\"contrast\":155,\"saturation\":145,\"sharpness\":110,\"power_line\":\"off\"}' 2>&1 | head -c 600; "
+    "echo; echo \"saved=$(tr -d ' \\n' < /usr/data/nebulaos/camera/camera.json)\"",
+    "true",
+    60)
 
 # HWDP-MEM-6: the same memory ramp at swappiness 100 (MEM-T11 ships 60).
 EXERCISE_PROFILES["memexercise-sw100"] = (
