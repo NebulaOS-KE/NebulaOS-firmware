@@ -51,8 +51,9 @@ APP="$T/apps/moonraker"
 git clone -q "$T/origin" "$APP"
 git -C "$APP" reset -q --hard "$OLD"
 
-echo "# fake component" > "$T/nebulaos.py"
+echo "# fake component" > "$T/nebulaos.py"; echo "# fake timelapse" > "$T/timelapse.py"
 export NEBULAOS_MOONRAKER_COMPONENT="$T/nebulaos.py"
+export NEBULAOS_TIMELAPSE_COMPONENT="$T/timelapse.py"
 . "$LIB"
 
 pristine() {
@@ -71,6 +72,8 @@ check "composed: repo pristine to Moonraker (excluded)" pristine
 check "composed: exclude entry recorded once" '[ "$(grep -cx /moonraker/components/nebulaos.py "$APP/.git/info/exclude")" = 1 ]'
 compose_moonraker_component "$APP" >/dev/null
 check "compose is idempotent (no duplicate exclude)" '[ "$(grep -cx /moonraker/components/nebulaos.py "$APP/.git/info/exclude")" = 1 ]'
+check "timelapse (2026-10-31): upstream component composed too" \
+	'[ "$(readlink "$APP/moonraker/components/timelapse.py")" = "$T/timelapse.py" ] && [ "$(grep -cx /moonraker/components/timelapse.py "$APP/.git/info/exclude")" = 1 ]'
 
 git -C "$APP" pull -q origin "$BR" 2>/dev/null
 check "update (pull) to $NEW: reached" '[ "$(git -C "$APP" rev-parse HEAD)" = "$NEW" ]'

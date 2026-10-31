@@ -195,5 +195,64 @@ class EndParkTests(unittest.TestCase):
         self.assertEqual(variable("_CLIENT_VARIABLE", "custom_park_y"), "0.0")
 
 
+
+def steps(lines):
+    out = []
+    for l in lines:
+        m = re.match(r"SET_GCODE_VARIABLE MACRO=START_PRINT VARIABLE=step VALUE='\"(.*)\"'$", l)
+        if m:
+            out.append(m.group(1))
+    return out
+
+
+class StartStepTests(unittest.TestCase):
+    """G112 (2026-10-31): START_PRINT says which step it is in (screen step list)."""
+
+    def test_steps_in_order_without_soak(self):
+        ctx = start_ctx(0)
+        ctx["gcode_macro _NEBULAOS_TIMELAPSE"] = Obj({})
+        lines = render("START_PRINT", params={"BED_TEMP": "60"}, rawparams="BED_TEMP=60",
+                       printer=ctx)
+        self.assertEqual(steps(lines), ["preparing", "heating_bed", "mesh", "heating_nozzle",
+                                        "purge", ""])
+        # each step is set right before the command it names
+        self.assertTrue(lines[lines.index("M190 S60.0  # wait for bed temperature before next step") - 1]
+                        .endswith("\"heating_bed\"'"))
+        self.assertIn("_NEBULAOS_TIMELAPSE ACTION=START", lines)
+        self.assertGreater(lines.index("_NEBULAOS_TIMELAPSE ACTION=START"),
+                           lines.index("_LINE_PURGE"))
+
+    def test_soak_step_only_when_soaking(self):
+        lines = render("START_PRINT", params={"BED_TEMP": "85", "BED_SOAK": "1"},
+                       rawparams="BED_TEMP=85 BED_SOAK=1", printer=start_ctx(0))
+        self.assertEqual(steps(lines), ["preparing", "heating_bed", "soak", "mesh",
+                                        "heating_nozzle", "purge", ""])
+
+    def test_without_camera_cfg_no_watcher_call(self):
+        lines = render("START_PRINT", params={"BED_TEMP": "60"}, rawparams="BED_TEMP=60",
+                       printer=start_ctx(0))
+        self.assertNotIn("_NEBULAOS_TIMELAPSE ACTION=START", lines)
+
+    def test_filament_abort_clears_the_step(self):
+        ctx = start_ctx(0)
+        ctx["gcode_macro _CLIENT_VARIABLE"] = Obj({"runout_sensor": "filament_switch_sensor s"})
+        ctx["filament_switch_sensor s"] = Obj({"filament_detected": False})
+        lines = render("START_PRINT", params={"BED_TEMP": "60"}, rawparams="BED_TEMP=60",
+                       printer=ctx)
+        self.assertEqual(steps(lines), [""])
+        self.assertLess(lines.index("SET_GCODE_VARIABLE MACRO=START_PRINT VARIABLE=step VALUE='\"\"'"),
+                        lines.index("CANCEL_PRINT"))
+
+    def test_end_and_cancel_stop_the_watcher_and_clear_the_step(self):
+        for name in ("END_PRINT", "CANCEL_PRINT"):
+            text = macro(name)
+            self.assertIn("_NEBULAOS_TIMELAPSE ACTION=STOP", text, name)
+            self.assertIn("VARIABLE=step VALUE='\"\"'", text, name)
+
+    def test_soak_publishes_its_length(self):
+        self.assertIn("SET_GCODE_VARIABLE MACRO=START_PRINT VARIABLE=soak_seconds VALUE={total_time}",
+                      macro("_WARP_STABILISE"))
+        self.assertEqual(variable("START_PRINT", "step"), '""')
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

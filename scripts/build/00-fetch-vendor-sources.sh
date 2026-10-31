@@ -400,6 +400,9 @@ deepen_to_release_tag nebulaos-klipper-extensions "$KLIPPER_EXTENSIONS_PIN"
 # Official Moonraker - not a fork, no reason to deviate.
 clone_pinned moonraker "$MOONRAKER_REPO" "$MOONRAKER_PIN"
 
+# Timelapse: upstream, unchanged (component + Klipper macros; see the manifest).
+clone_pinned moonraker-timelapse "$MOONRAKER_TIMELAPSE_REPO" "$MOONRAKER_TIMELAPSE_PIN"
+
 # Camera pipeline - a real GPLv3-licensed uStreamer port for this board
 # family (the vendored ustreamer/LICENSE is the full GPLv3 text - this repo
 # previously, incorrectly, called it MIT-licensed; corrected 2026-07-26).

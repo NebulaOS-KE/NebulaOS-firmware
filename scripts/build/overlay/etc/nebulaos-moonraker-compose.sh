@@ -1,6 +1,7 @@
 # shellcheck shell=sh
 #
-# Compose the NebulaOS [nebulaos] Moonraker component into a Moonraker
+# Compose the NebulaOS [nebulaos] Moonraker component (and, since 2026-10-31,
+# upstream's [timelapse]) into a Moonraker
 # checkout (GUI/service readiness mission, 2026-10-09). Sourced by
 # S05nebulaos-activate and S56moonraker.
 #
@@ -24,21 +25,33 @@
 # [nebulaos] as an optional component.
 
 NEBULAOS_MOONRAKER_COMPONENT="${NEBULAOS_MOONRAKER_COMPONENT:-/usr/lib/nebulaos/moonraker/nebulaos.py}"
+# Timelapse (2026-10-31): upstream moonraker-timelapse's component, shipped
+# on the rootfs by the image and composed the same way.
+NEBULAOS_TIMELAPSE_COMPONENT="${NEBULAOS_TIMELAPSE_COMPONENT:-/usr/lib/nebulaos/moonraker/timelapse.py}"
 
 compose_moonraker_component() {
+	for _src in "$NEBULAOS_MOONRAKER_COMPONENT" "$NEBULAOS_TIMELAPSE_COMPONENT"; do
+		_compose_one_component "$1" "$_src"
+	done
+	return 0
+}
+
+_compose_one_component() {
 	_mr="$1"
-	_dst="$_mr/moonraker/components/nebulaos.py"
+	_src="$2"
+	_name=$(basename "$_src")
+	_dst="$_mr/moonraker/components/$_name"
 	_excl="$_mr/.git/info/exclude"
-	_rel="/moonraker/components/nebulaos.py"
+	_rel="/moonraker/components/$_name"
 	[ -d "$_mr/moonraker/components" ] || return 0
-	[ -f "$NEBULAOS_MOONRAKER_COMPONENT" ] || { echo "moonraker-compose: component source missing - not composing"; return 0; }
+	[ -f "$_src" ] || { echo "moonraker-compose: $_src missing - not composing $_name"; return 0; }
 	if [ -e "$_dst" ] && [ ! -L "$_dst" ]; then
-		echo "moonraker-compose: $_dst is a real file (upstream collision?) - not replacing it, [nebulaos] unavailable"
+		echo "moonraker-compose: $_dst is a real file (upstream collision?) - not replacing it, $_name unavailable"
 		return 0
 	fi
-	if [ "$(readlink "$_dst" 2>/dev/null)" != "$NEBULAOS_MOONRAKER_COMPONENT" ]; then
-		ln -sfn "$NEBULAOS_MOONRAKER_COMPONENT" "$_dst" 2>/dev/null \
-			|| { echo "moonraker-compose: could not compose the [nebulaos] component"; return 0; }
+	if [ "$(readlink "$_dst" 2>/dev/null)" != "$_src" ]; then
+		ln -sfn "$_src" "$_dst" 2>/dev/null \
+			|| { echo "moonraker-compose: could not compose $_name"; return 0; }
 	fi
 	if [ -d "$_mr/.git" ]; then
 		mkdir -p "$_mr/.git/info" 2>/dev/null

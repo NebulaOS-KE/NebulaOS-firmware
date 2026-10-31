@@ -1,0 +1,97 @@
+#!/usr/bin/env python3
+"""Timelapse defaults, set once (2026-10-31).
+
+Upstream moonraker-timelapse ships enabled. NebulaOS ships it switched off
+(Tim: users turn it on in Mainsail, Settings > Timelapse) and renders with
+x264's lightest preset (the KE has 256 MB of RAM). Writing these into
+moonraker.conf would lock them in Mainsail, so they go through the
+component's own settings API instead - the same call Mainsail makes - once
+per printer: a marker records it, and whatever the user changes later stays.
+
+Same never-block-boot conventions as nebulaos-seed-camera: started in the
+background by S57nebulaos-timelapse-seed, waits (bounded) for Moonraker's
+[timelapse] component to answer, never fails boot.
+tests/nebulaos-seed-timelapse-tests.py calls run() with fakes.
+"""
+from __future__ import annotations
+
+import json
+import os
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+NEBULAOS_ROOT = os.environ.get("NEBULAOS_ROOT", "/usr/data/nebulaos")
+MOONRAKER_BASE = os.environ.get("NEBULAOS_MOONRAKER_BASE", "http://127.0.0.1:7125")
+MARKER_PATH = os.environ.get(
+    "NEBULAOS_TIMELAPSE_MARKER",
+    os.path.join(NEBULAOS_ROOT, "system", "timelapse-defaults-seeded.json"),
+)
+RETRY_ATTEMPTS = int(os.environ.get("NEBULAOS_TIMELAPSE_SEED_RETRIES", "60"))
+RETRY_DELAY_S = float(os.environ.get("NEBULAOS_TIMELAPSE_SEED_RETRY_DELAY", "5"))
+
+SETTINGS_PATH = "/machine/timelapse/settings"
+DEFAULTS = {
+    "enabled": "false",
+    "parkhead": "false",
+    "extraoutputparams": "-preset ultrafast",
+}
+
+
+def real_get_status(path: str) -> int:
+    try:
+        with urllib.request.urlopen(MOONRAKER_BASE + path, timeout=5) as resp:
+            return resp.status
+    except urllib.error.HTTPError as e:
+        return e.code
+    except (urllib.error.URLError, OSError):
+        return 0
+
+
+def real_post(path: str, query: dict) -> int:
+    url = MOONRAKER_BASE + path + "?" + urllib.parse.urlencode(query)
+    req = urllib.request.Request(url, data=b"", method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return resp.status
+    except urllib.error.HTTPError as e:
+        return e.code
+    except (urllib.error.URLError, OSError):
+        return 0
+
+
+def log_line(msg: str) -> None:
+    print(time.strftime("%Y-%m-%dT%H:%M:%S") + " timelapse-seed: " + msg, flush=True)
+
+
+def run(get_status=real_get_status, post=real_post, marker_path: str | None = None,
+        log=log_line, sleep=time.sleep, attempts: int = RETRY_ATTEMPTS,
+        delay: float = RETRY_DELAY_S) -> int:
+    marker = marker_path or MARKER_PATH
+    if os.path.exists(marker):
+        return 0
+    for attempt in range(1, attempts + 1):
+        if get_status(SETTINGS_PATH) == 200:
+            break
+        if attempt == attempts:
+            log(f"Moonraker's [timelapse] did not answer after {attempts} attempts - "
+                "trying again at the next boot")
+            return 0
+        sleep(delay)
+    status = post(SETTINGS_PATH, DEFAULTS)
+    if status != 200:
+        log(f"setting the defaults failed (HTTP {status}) - trying again at the next boot")
+        return 0
+    os.makedirs(os.path.dirname(marker), exist_ok=True)
+    tmp = marker + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump({"defaults": DEFAULTS, "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}, f)
+    os.replace(tmp, marker)
+    log("timelapse defaults set (off, no parking, x264 ultrafast)")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(run())

@@ -99,6 +99,8 @@ check_vendor_pin klipper "$KLIPPER_PIN" \
 	klippy/chelper/c_helper.so
 check_vendor_pin moonraker "$MOONRAKER_PIN" \
 	"$MOONRAKER_REPO" 0
+check_vendor_pin moonraker-timelapse "$MOONRAKER_TIMELAPSE_PIN" \
+	"$MOONRAKER_TIMELAPSE_REPO" 0
 check_vendor_pin pellcorp-creality "$PELLCORP_CREALITY_PIN" \
 	"$PELLCORP_CREALITY_REPO" 0
 # buildroot-x2000: the .mk change and board/halley5-nebulaos-* files are
@@ -910,6 +912,14 @@ fi
 echo "=== Moonraker update_manager / camera / Mainsail macro seeding ==="
 check /usr/libexec/nebulaos-seed-camera
 check /etc/init.d/S57nebulaos-camera-seed
+# Timelapse (2026-10-31): upstream moonraker-timelapse, ffmpeg (Buildroot,
+# libx264) and the once-only defaults seed.
+check /usr/bin/ffmpeg
+check /usr/lib/nebulaos/moonraker/timelapse.py
+check /opt/moonraker/moonraker/components/timelapse.py
+check /etc/nebulaos/klipper/timelapse.cfg
+check /usr/libexec/nebulaos-seed-timelapse
+check /etc/init.d/S57nebulaos-timelapse-seed
 check /usr/libexec/nebulaos-seed-mainsail-macros
 check /etc/init.d/S57nebulaos-mainsail-macros-seed
 

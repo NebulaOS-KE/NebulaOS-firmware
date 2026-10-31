@@ -445,6 +445,23 @@ fi
 ln -sfn /usr/lib/nebulaos/moonraker/nebulaos.py \
 	"$OVERLAY/opt/moonraker/moonraker/components/nebulaos.py"
 
+# Timelapse (2026-10-31): upstream moonraker-timelapse at its pin, both files
+# byte-for-byte. The component sits next to nebulaos.py on the rootfs and is
+# composed into Moonraker the same way (nebulaos-moonraker-compose.sh); the
+# Klipper macros become an image Klipper file, materialized with the others
+# and included by camera.cfg. Copied before the config manifest below is
+# generated, so timelapse.cfg is part of it.
+TIMELAPSE_SRC="$VENDOR/moonraker-timelapse"
+for _tl_f in component/timelapse.py klipper_macro/timelapse.cfg; do
+	[ -s "$TIMELAPSE_SRC/$_tl_f" ] || { echo "FATAL: $TIMELAPSE_SRC/$_tl_f missing - run 00-fetch-vendor-sources.sh" >&2; exit 1; }
+done
+mkdir -p "$OVERLAY/usr/lib/nebulaos/moonraker" "$OVERLAY/etc/nebulaos/klipper"
+cp "$TIMELAPSE_SRC/component/timelapse.py" "$OVERLAY/usr/lib/nebulaos/moonraker/timelapse.py"
+cp "$TIMELAPSE_SRC/klipper_macro/timelapse.cfg" "$OVERLAY/etc/nebulaos/klipper/timelapse.cfg"
+ln -sfn /usr/lib/nebulaos/moonraker/timelapse.py \
+	"$OVERLAY/opt/moonraker/moonraker/components/timelapse.py"
+echo "== moonraker-timelapse $(git -C "$TIMELAPSE_SRC" rev-parse --short HEAD): component + timelapse.cfg in the overlay =="
+
 # Buildroot 2025.02.18 migration (2026-09-27): Moonraker's Python dependency
 # chain is no longer assembled here.
 #

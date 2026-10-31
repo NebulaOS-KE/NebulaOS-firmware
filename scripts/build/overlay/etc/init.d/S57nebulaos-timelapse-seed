@@ -1,0 +1,10 @@
+#!/bin/sh
+#
+# Timelapse defaults, set once (2026-10-31): runs
+# /usr/libexec/nebulaos-seed-timelapse in the background, same never-block-boot
+# convention as S57nebulaos-camera-seed - the script waits (bounded) for
+# Moonraker's [timelapse] component itself.
+if [ "$1" = "start" ]; then
+	/usr/bin/python3 /usr/libexec/nebulaos-seed-timelapse >> /usr/data/nebulaos/maintenance/logs/timelapse-seed.log 2>&1 &
+fi
+exit 0
