@@ -257,9 +257,9 @@ prune_backup_dir() {
 # run, forever. Extends this existing script rather than adding a second
 # mechanism, per this project's own standing "one cleanup path" rule.
 #
-# Three distinct shapes under migration-backups/, all handled the same way
-# (age +7 days, keep newest 2 - same KEEP as clean_obsolete_versions()'s
-# failed-* retention above, for consistency):
+# Three distinct shapes under migration-backups/ (keep newest 2 - same KEEP
+# as clean_obsolete_versions()'s failed-* retention above; shapes 2 and 3
+# are also age-gated at 7 days, shape 1 is not - see below):
 #   1. Timestamp-named directories (BACKUP_ROOT/<ISO8601>/) - each one IS a
 #      single backup event covering whichever of klipper/moonraker/
 #      extensions were reseeded that run; pruned as one atomic unit by its
@@ -308,28 +308,33 @@ clean_migration_backups() {
 		fi
 	done
 
-	# Shape 1 (timestamp directories) and shape 3 (loose root files) are
-	# both direct children of $root with no further category grouping -
-	# prune them together as one pool, newest N protected regardless of
-	# whether that "newest" happens to be a directory or a loose file.
-	# Named-category subdirectories (shape 2) are excluded here because
-	# they were already handled, per-category, above - counting them
-	# against the shape-1/3 pool would let an old, low-value loose file
-	# use up a "keep" slot that should protect a real per-boot backup, or
-	# vice versa.
-	tmp_list=$(mktemp "${TMPDIR:-/tmp}/migration-backup-prune.XXXXXX" 2>/dev/null) || return 0
-	find "$root" -mindepth 1 -maxdepth 1 -mtime +7 2>/dev/null | while read -r entry; do
-		base=$(basename "$entry")
-		case "$base" in
-			[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z) echo "$entry" ;;
-			printer-cfg-migration|printer-cfg-migration-refused|moonraker-conf-migration|moonraker-conf-migration-refused) ;;
-			*) [ -f "$entry" ] && echo "$entry" ;;
-		esac
-	done | sort -r > "$tmp_list"
-	tail -n "+$((MIGRATION_BACKUP_KEEP + 1))" "$tmp_list" | while read -r f; do
+	# Shape 1 (timestamp directories): the newest MIGRATION_BACKUP_KEEP
+	# stay, whatever their age. Run 23 (2026-10-31): these used to be
+	# age-gated like the small files (only entries older than 7 days were
+	# candidates, and the newest 2 of THOSE were kept as well) - every
+	# version's first boot adds ~290 MB here, so a printer updated more than
+	# once a week never pruned any (ke-dev: 13 of them, 3.4 GB, /usr/data at
+	# 0 bytes free, which then blocked the next install).
+	prune_migration_events "$MIGRATION_BACKUP_KEEP"
+
+	# Shape 3 (loose files at the root): small - age +7 days, keep newest 2.
+	# Named categories (shape 2) were already handled above.
+	find "$root" -mindepth 1 -maxdepth 1 -type f -mtime +7 2>/dev/null | sort -r | \
+		tail -n "+$((MIGRATION_BACKUP_KEEP + 1))" | while read -r f; do
 		path_is_namespace_safe "$f" && delete "$f" "old-migration-backup"
 	done
-	rm -f "$tmp_list"
+}
+
+# prune_migration_events KEEP - keep the newest KEEP timestamp-named backup
+# events (one directory each, named by S04nebulaos-migrate's UTC timestamp,
+# so newest-first is a reverse name sort) and delete the rest, whole.
+prune_migration_events() {
+	_keep="$1"
+	find "$NEBULAOS_ROOT/system/migration-backups" -mindepth 1 -maxdepth 1 -type d \
+		-name '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z' 2>/dev/null | \
+		sort -r | tail -n "+$((_keep + 1))" | while read -r f; do
+		path_is_namespace_safe "$f" && delete "$f" "old-migration-backup"
+	done
 }
 
 # A separate top-level directory from migration-backups/ (see
@@ -582,6 +587,11 @@ start() {
 	if [ "$free" -lt "$CRITICAL_FLOOR_MB" ]; then
 		log "CRITICAL: ${free}MB free (floor ${CRITICAL_FLOOR_MB}MB)"
 		clean_pip_cache
+		# Run 23: our own backups go before any of the user's print files -
+		# down to the newest migration backup only.
+		prune_migration_events 1
+		free=$(free_mb)
+		[ -n "$free" ] && [ "$free" -ge "$CRITICAL_FLOOR_MB" ] && return 0
 		# G66: deleting the user's print files stays a once-per-boot last
 		# resort (S45), never every 30 minutes from the housekeeping loop.
 		if [ -n "${NEBULAOS_RETENTION_PERIODIC:-}" ]; then

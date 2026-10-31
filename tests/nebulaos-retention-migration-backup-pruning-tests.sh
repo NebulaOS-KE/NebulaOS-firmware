@@ -99,7 +99,9 @@ else
 fi
 
 # =========================================================================
-# Test 3: recent entries (< 7 days) are never touched, regardless of count
+# Test 3 (Run 23): backup events are pruned by count, not age - six recent
+#     ones (one install a day) leave the newest 2 by name, so a printer that
+#     is updated often cannot fill /usr/data with them
 # =========================================================================
 
 t3="$WORK/t3"
@@ -107,16 +109,39 @@ mkdir -p "$t3/system/migration-backups"
 for n in 1 2 3 4 5 6; do
 	d="$t3/system/migration-backups/2026020${n}T000000Z"
 	mkdir -p "$d/klipper"
-	# 3 days old - well within the 7-day protection window
-	age_days_ago 3 "$d"
+	age_days_ago 1 "$d"
 done
+recent_file="$t3/system/migration-backups/printer.cfg.pre-something.20260201T000000Z"
+echo cfg > "$recent_file"
 run_fn "$t3" "clean_migration_backups" >/dev/null 2>&1
-remaining3=$(find "$t3/system/migration-backups" -mindepth 1 -maxdepth 1 -type d | wc -l)
-if [ "$remaining3" = "6" ]; then
-	pass "test 3: all 6 recent (<7 day) backups survive untouched"
+remaining3=$(cd "$t3/system/migration-backups" && find . -mindepth 1 -maxdepth 1 -type d | sort | tr '\n' ' ')
+if [ "$remaining3" = "./20260205T000000Z ./20260206T000000Z " ]; then
+	pass "test 3: of 6 recent backup events, the newest 2 remain"
 else
-	fail "test 3: expected all 6 recent backups to survive, got $remaining3 remaining"
+	fail "test 3: expected the newest 2 recent backup events, got: $remaining3"
 fi
+[ -f "$recent_file" ] && pass "test 3: a recent loose backup file stays (small files keep the 7-day rule)" \
+	|| fail "test 3: a recent loose backup file was deleted"
+
+# =========================================================================
+# Test 3b (Run 23): under critical disk pressure our backups go before the
+#     user's print files - down to the newest one
+# =========================================================================
+
+t3b="$WORK/t3b"
+mkdir -p "$t3b/system/migration-backups"
+for n in 1 2 3; do
+	mkdir -p "$t3b/system/migration-backups/2026020${n}T000000Z/klipper"
+done
+run_fn "$t3b" "prune_migration_events 1" >/dev/null 2>&1
+remaining3b=$(ls "$t3b/system/migration-backups" | tr '\n' ' ')
+[ "$remaining3b" = "20260203T000000Z " ] && pass "test 3b: prune_migration_events 1 keeps only the newest event" \
+	|| fail "test 3b: expected only the newest event, got: $remaining3b"
+crit=$(sed -n '/-lt "\$CRITICAL_FLOOR_MB"/,/emergency_gcode_cleanup$/p' "$RETENTION_SCRIPT")
+case "$crit" in
+	*"prune_migration_events 1"*emergency_gcode_cleanup*) pass "test 3b: the critical path prunes backups before print files" ;;
+	*) fail "test 3b: the critical path does not prune backups before print files" ;;
+esac
 
 # =========================================================================
 # Test 4: unrelated files (active config, SAVE_CONFIG, PLR/MCU state,
