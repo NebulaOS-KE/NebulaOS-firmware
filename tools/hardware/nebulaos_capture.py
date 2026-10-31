@@ -647,7 +647,7 @@ CAPTURE_PROFILES = {
 # Defined by the plan as reversible state changes: TOOL-02 `exercise`, never `capture`.
 EXERCISE_ONLY = ("camera-resume", "camera-states", "memexercise", "sof-filter-ab", "storage-autosuspend",
                  "cpu-load", "camera-viewer", "wifi-load", "usb-storage-io", "ktimers-ab", "ttyflip-ab",
-                 "memexercise-sw100", "watchdog-arm", "watchdog-fire", "camera-resolution-trial")
+                 "memexercise-sw100", "watchdog-arm", "watchdog-fire", "camera-resolution-trial", "nebula-camera-sweep")
 
 
 class CaptureError(Exception):
@@ -923,6 +923,44 @@ EXERCISE_PROFILES["camera-resolution-trial"] = (
     "[ -n \"${U:-}\" ] && kill $U 2>/dev/null; [ -n \"${H:-}\" ] && kill $H 2>/dev/null; rm -f /tmp/nebulaos-camtrial.log; "
     "/etc/init.d/S50webcam status 2>/dev/null | grep -q 'supervisor: RUNNING' || /etc/init.d/S50webcam start",
     360)
+
+# Run 23 (2026-10-31): a picture per candidate image setting of the Nebula
+# Camera (a108:2231), to choose its defaults. Only the plain UVC controls are
+# set, temporarily, with v4l2-ctl: brightness, contrast, saturation,
+# sharpness, anti-flicker. Never exposure (manual is one-way), white balance
+# mode or the vendor XU (night mode). A local viewer keeps the stream awake;
+# each picture is a 1080p snapshot scaled to 960 px by ffmpeg and printed as
+# base64 between "IMG <name>" and "END". The saved settings are re-applied.
+_CAM_SWEEP = (
+    ("base", "128 128 128 128 0"), ("flicker50", "128 128 128 128 1"),
+    ("flicker60", "128 128 128 128 2"), ("bright105", "105 128 128 128 0"),
+    ("bright150", "150 128 128 128 0"), ("contrast105", "128 105 128 128 0"),
+    ("contrast150", "128 150 128 128 0"), ("sat105", "128 128 105 128 0"),
+    ("sat150", "128 128 150 128 0"), ("sharp90", "128 128 128 90 0"),
+    ("sharp150", "128 128 128 150 0"),
+)
+EXERCISE_PROFILES["nebula-camera-sweep"] = (
+    "OSC=/usr/libexec/nebulaos/nebulaos-osconfig; DEV=; for n in /sys/class/video4linux/video*; do "
+    "[ \"$(cat $n/index 2>/dev/null)\" = 0 ] && [ \"$(cat $n/device/../idVendor 2>/dev/null)\" = a108 ] "
+    "&& { DEV=/dev/${n##*/}; break; }; done; [ -n \"$DEV\" ] || { echo NO_NEBULA_CAMERA; exit 3; }; "
+    "command -v ffmpeg >/dev/null || { echo NO_FFMPEG; exit 3; }; "
+    "echo \"== $DEV saved: $(cat /usr/data/nebulaos/camera/camera.json 2>/dev/null)\"; "
+    "v4l2-ctl -d $DEV --list-ctrls 2>&1 | head -30; "
+    "curl -s -o /dev/null --max-time 400 http://127.0.0.1:8080/stream & V=$!; sleep 8; "
+    "shot(){ v4l2-ctl -d $DEV --set-ctrl=brightness=$2 --set-ctrl=contrast=$3 --set-ctrl=saturation=$4 "
+    "--set-ctrl=sharpness=$5 --set-ctrl=power_line_frequency=$6 2>&1; sleep 4; "
+    "curl -s -o /dev/null --max-time 5 http://127.0.0.1:8080/snapshot; sleep 1; "
+    "curl -s -o /tmp/nebulaos-sweep.jpg --max-time 5 http://127.0.0.1:8080/snapshot; "
+    "ffmpeg -loglevel error -y -i /tmp/nebulaos-sweep.jpg -vf scale=960:-2 -q:v 3 /tmp/nebulaos-sweep-s.jpg "
+    "|| cp /tmp/nebulaos-sweep.jpg /tmp/nebulaos-sweep-s.jpg; "
+    "echo \"IMG $1 ($2 $3 $4 $5 $6) bytes=$(wc -c < /tmp/nebulaos-sweep.jpg)\"; "
+    "base64 /tmp/nebulaos-sweep-s.jpg; echo END; }; "
+    + "; ".join("shot %s %s" % (n, v) for n, v in _CAM_SWEEP) + "; "
+    "kill $V 2>/dev/null; V=; rm -f /tmp/nebulaos-sweep.jpg /tmp/nebulaos-sweep-s.jpg; "
+    "$OSC camera apply >/dev/null 2>&1; echo \"restored=$?\"",
+    "[ -n \"${V:-}\" ] && kill $V 2>/dev/null; rm -f /tmp/nebulaos-sweep.jpg /tmp/nebulaos-sweep-s.jpg; "
+    "/usr/libexec/nebulaos/nebulaos-osconfig camera apply >/dev/null 2>&1",
+    300)
 
 # HWDP-MEM-6: the same memory ramp at swappiness 100 (MEM-T11 ships 60).
 EXERCISE_PROFILES["memexercise-sw100"] = (
