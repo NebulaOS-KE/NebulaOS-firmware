@@ -1011,10 +1011,10 @@ EXERCISE_PROFILES["nebula-camera-sweep3"] = _cam_sweep_osconfig(_CAM_SWEEP3)
 
 # Saves the chosen image defaults (camera.py default_config, Run 23) on a
 # printer that already has saved camera settings, through the product path.
-# Exposure, white balance mode, night mode and zoom are left as they are.
+# Exposure, white balance mode and zoom are left as they are.
 EXERCISE_PROFILES["nebula-camera-set-defaults"] = (
     "/usr/libexec/nebulaos/nebulaos-osconfig camera set --json "
-    "'{\"brightness\":125,\"contrast\":155,\"saturation\":145,\"sharpness\":110,\"power_line\":\"off\"}' 2>&1 | head -c 600; "
+    "'{\"brightness\":125,\"contrast\":155,\"saturation\":145,\"sharpness\":110,\"power_line\":\"off\",\"ir_mode\":\"color\"}' 2>&1 | head -c 600; "
     "echo; echo \"saved=$(tr -d ' \\n' < /usr/data/nebulaos/camera/camera.json)\"",
     "true",
     60)

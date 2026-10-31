@@ -58,9 +58,11 @@ RANGES = {"brightness": (50, 160), "contrast": (50, 160), "saturation": (50, 160
 # picture is hazy with milky blacks; contrast 155 / saturation 145 give depth
 # and natural colour without using the top of the range; sharpness 140+ adds
 # grain on flat surfaces and doubles the JPEG size, 110 is clean. Anti-flicker
-# off showed no banding (50 Hz would band in 60 Hz countries).
+# off showed no banding (50 Hz would band in 60 Hz countries). Night mode
+# defaults to colour: the camera's own automatic switch (threshold fixed in
+# its firmware) went black-and-white in normal room light (Tim: colour).
 def default_config():
-    return {"schema": SCHEMA, "ir_mode": "auto", "power_line": "off",
+    return {"schema": SCHEMA, "ir_mode": "color", "power_line": "off",
             "brightness": 125, "contrast": 155, "saturation": 145, "sharpness": 110,
             "wb_auto": True, "wb_temperature": 417, "zoom": 100,
             "exposure_manual": False, "exposure_time": 156}
