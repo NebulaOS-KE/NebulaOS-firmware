@@ -287,7 +287,18 @@ fi
 # - without it, resolution correctly FATALs (see scenario 15 below), which
 # is exactly why this scenario needs updating rather than left as-is.
 
-REAL_OVERLAY_ROOT="$REPO_ROOT/scripts/build/overlay"
+# Timelapse (2026-10-31): the build adds upstream moonraker-timelapse's
+# timelapse.cfg (pinned) next to the tracked files and resolves against that
+# generated overlay ($OVERLAY) - so this does the same: the tracked overlay
+# plus timelapse.cfg from the pinned checkout (a stub when it is not fetched).
+REAL_OVERLAY_ROOT="$WORK/real-overlay"
+mkdir -p "$REAL_OVERLAY_ROOT"
+cp -a "$REPO_ROOT/scripts/build/overlay/." "$REAL_OVERLAY_ROOT/"
+if [ -f "$REPO_ROOT/vendor/moonraker-timelapse/klipper_macro/timelapse.cfg" ]; then
+	cp "$REPO_ROOT/vendor/moonraker-timelapse/klipper_macro/timelapse.cfg" "$REAL_OVERLAY_ROOT/etc/nebulaos/klipper/"
+else
+	printf '[gcode_macro TIMELAPSE_TAKE_FRAME]\ngcode:\n' > "$REAL_OVERLAY_ROOT/etc/nebulaos/klipper/timelapse.cfg"
+fi
 
 if [ -f "$REAL_SRC/printer.cfg" ]; then
 	real_closure="$WORK/real-closure.txt"
