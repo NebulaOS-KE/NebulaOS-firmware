@@ -358,6 +358,19 @@ CAPTURE_PROFILES = {
         "echo '== processes (start times)'; ps -o pid,etime,args 2>/dev/null | grep -E '[k]lippy|[m]oonraker|[n]ebulascreen' "
         "|| ps | grep -E '[k]lippy|[m]oonraker|[n]ebulascreen'",
         False, None, 60),
+    # Live print state after a power-loss resume (Run 23, Tim 2026-10-31):
+    # what Klipper and Moonraker believe right now, and the screen's view.
+    # Read-only.
+    "plr-state": ("echo '== now'; date; uptime; "
+        "echo '== klipper objects'; wget -q -T 5 -O - 'http://127.0.0.1:7125/printer/objects/query?"
+        "print_stats&virtual_sdcard&idle_timeout&pause_resume&webhooks&nebulaos_power_loss_recovery"
+        "&extruder=target,temperature&heater_bed=target,temperature&toolhead=homed_axes,position' 2>&1 | head -c 6000; echo; "
+        "echo '== moonraker job queue / history (last 3)'; wget -q -T 5 -O - 'http://127.0.0.1:7125/server/job_queue/status' 2>&1 | head -c 800; echo; "
+        "wget -q -T 5 -O - 'http://127.0.0.1:7125/server/history/list?limit=3' 2>&1 | head -c 3000; echo; "
+        "L=/opt/printer_data/logs; echo '== nebulascreen.log (last 80)'; tail -n 80 $L/nebulascreen.log 2>/dev/null | cut -c1-300; "
+        "echo '== klippy.log after the last Malformed / cancel (non-Stats)'; n=$(grep -nE 'Malformed|action:cancel' $L/klippy.log | tail -n 4 | head -n 1 | cut -d: -f1); "
+        "[ -n \"$n\" ] && tail -n +$n $L/klippy.log | grep -v -e '^Stats ' -e '^Reactor' -e '^- ' | head -n 80 | cut -c1-300",
+        False, None, 60),
     # Who paused a print (Run 19 test, G112): klippy.log of the last prints
     # with the file position (sd_pos) stall/move transitions, Moonraker's
     # pause/resume/job lines, the screen's pause/resume lines and Moonraker's
