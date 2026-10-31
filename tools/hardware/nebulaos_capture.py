@@ -647,7 +647,7 @@ CAPTURE_PROFILES = {
 # Defined by the plan as reversible state changes: TOOL-02 `exercise`, never `capture`.
 EXERCISE_ONLY = ("camera-resume", "camera-states", "memexercise", "sof-filter-ab", "storage-autosuspend",
                  "cpu-load", "camera-viewer", "wifi-load", "usb-storage-io", "ktimers-ab", "ttyflip-ab",
-                 "memexercise-sw100", "watchdog-arm", "watchdog-fire")
+                 "memexercise-sw100", "watchdog-arm", "watchdog-fire", "camera-resolution-trial")
 
 
 class CaptureError(Exception):
@@ -887,6 +887,38 @@ EXERCISE_PROFILES["watchdog-arm"] = (
     "|| echo WATCHDOG_ARM_RESULT=STILL_ENABLED",
     "[ -n \"${W:-}\" ] && kill -TERM $W 2>/dev/null",
     150)
+
+# Run 23 (2026-10-31): an old full-speed (USB 1.1) webcam behind the internal
+# hub loses its port ("disabled by hub (EMI?)") within seconds of streaming.
+# Does a smaller frame (a smaller isochronous alt setting) hold? The product
+# ustreamer is stopped; a trial one serves each size for 60 s on port 8090
+# with a viewer attached, counting USB disconnects. S50webcam is restarted.
+EXERCISE_PROFILES["camera-resolution-trial"] = (
+    "W=/etc/init.d/S50webcam; [ -x $W ] || { echo NO_S50WEBCAM; exit 3; }; "
+    "DEV=; for n in /sys/class/video4linux/video*; do [ \"$(cat $n/index 2>/dev/null)\" = 0 ] && "
+    "readlink -f $n/device | grep -q /usb && { DEV=/dev/${n##*/}; break; }; done; "
+    "[ -n \"$DEV\" ] || { echo NO_USB_CAMERA; exit 3; }; "
+    "echo \"== $DEV $(cat /sys/class/video4linux/${DEV#/dev/}/device/../idVendor):"
+    "$(cat /sys/class/video4linux/${DEV#/dev/}/device/../idProduct) "
+    "speed=$(cat /sys/class/video4linux/${DEV#/dev/}/device/../speed)\"; "
+    "v4l2-ctl -d $DEV --list-formats-ext 2>&1 | head -40; "
+    "v4l2-ctl -d $DEV --list-formats 2>/dev/null | grep -q \"'MJPG'\" && F=MJPEG || F=JPEG; "
+    "$W stop; sleep 3; "
+    "for R in 640x480 320x240 160x120; do "
+    "D0=$(dmesg | grep -c 'USB disconnect'); E0=$(dmesg | grep -c 'URB error'); "
+    "/usr/bin/ustreamer --device=$DEV --format=$F --encoder=HW --resolution=$R --desired-fps=30 "
+    "--host=127.0.0.1 --port=8090 > /tmp/nebulaos-camtrial.log 2>&1 & U=$!; sleep 3; "
+    "curl -s --max-time 60 -o /dev/null -w \"res=$R stream_bytes=%{size_download} Bps=%{speed_download}\\n\" "
+    "http://127.0.0.1:8090/stream; "
+    "echo \"res=$R state=$(curl -s --max-time 3 http://127.0.0.1:8090/state | tr -d ' \\n' | cut -c1-300)\"; "
+    "kill $U 2>/dev/null; wait $U 2>/dev/null; U=; "
+    "echo \"res=$R usb_disconnects=$(( $(dmesg | grep -c 'USB disconnect') - D0 )) "
+    "urb_errors=$(( $(dmesg | grep -c 'URB error') - E0 ))\"; "
+    "grep -iE 'resolution|format|error|lost|device' /tmp/nebulaos-camtrial.log | head -8; sleep 5; done; "
+    "rm -f /tmp/nebulaos-camtrial.log; $W start; sleep 5; $W status",
+    "[ -n \"${U:-}\" ] && kill $U 2>/dev/null; rm -f /tmp/nebulaos-camtrial.log; "
+    "/etc/init.d/S50webcam status 2>/dev/null | grep -q 'supervisor: RUNNING' || /etc/init.d/S50webcam start",
+    360)
 
 # HWDP-MEM-6: the same memory ramp at swappiness 100 (MEM-T11 ships 60).
 EXERCISE_PROFILES["memexercise-sw100"] = (
