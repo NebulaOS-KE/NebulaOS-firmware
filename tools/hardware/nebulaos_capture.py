@@ -891,8 +891,10 @@ EXERCISE_PROFILES["watchdog-arm"] = (
 # Run 23 (2026-10-31): an old full-speed (USB 1.1) webcam behind the internal
 # hub loses its port ("disabled by hub (EMI?)") within seconds of streaming.
 # Does a smaller frame (a smaller isochronous alt setting) hold? The product
-# ustreamer is stopped; a trial one serves each size for 60 s on port 8090
-# with a viewer attached, counting USB disconnects. S50webcam is restarted.
+# ustreamer is stopped; a trial one serves 60 s on port 8090 with a viewer
+# attached, counting USB disconnects: the product's 1080p request on an idle
+# CPU, then 640x480 and 320x240 with every core busy (is it IRQ latency?).
+# S50webcam is restarted.
 EXERCISE_PROFILES["camera-resolution-trial"] = (
     "W=/etc/init.d/S50webcam; [ -x $W ] || { echo NO_S50WEBCAM; exit 3; }; "
     "DEV=; for n in /sys/class/video4linux/video*; do [ \"$(cat $n/index 2>/dev/null)\" = 0 ] && "
@@ -903,20 +905,22 @@ EXERCISE_PROFILES["camera-resolution-trial"] = (
     "speed=$(cat /sys/class/video4linux/${DEV#/dev/}/device/../speed)\"; "
     "v4l2-ctl -d $DEV --list-formats-ext 2>&1 | head -40; "
     "v4l2-ctl -d $DEV --list-formats 2>/dev/null | grep -q \"'MJPG'\" && F=MJPEG || F=JPEG; "
-    "$W stop; sleep 3; "
-    "for R in 640x480 320x240 160x120; do "
+    "$W stop; sleep 3; H=; "
+    "trial(){ L=$1; R=$2; "
+    "if [ $3 = load ]; then N=$(nproc); i=0; while [ $i -lt $N ]; do sh -c 'while :; do :; done' & H=\"$H $!\"; i=$((i + 1)); done; fi; "
     "D0=$(dmesg | grep -c 'USB disconnect'); E0=$(dmesg | grep -c 'URB error'); "
     "/usr/bin/ustreamer --device=$DEV --format=$F --encoder=HW --resolution=$R --desired-fps=30 "
-    "--host=127.0.0.1 --port=8090 > /tmp/nebulaos-camtrial.log 2>&1 & U=$!; sleep 3; "
-    "curl -s --max-time 60 -o /dev/null -w \"res=$R stream_bytes=%{size_download} Bps=%{speed_download}\\n\" "
+    "--host=127.0.0.1 --port=8090 --tcp-nodelay > /tmp/nebulaos-camtrial.log 2>&1 & U=$!; sleep 3; "
+    "curl -s --max-time 60 -o /dev/null -w \"$L stream_bytes=%{size_download} Bps=%{speed_download}\\n\" "
     "http://127.0.0.1:8090/stream; "
-    "echo \"res=$R state=$(curl -s --max-time 3 http://127.0.0.1:8090/state | tr -d ' \\n' | cut -c1-300)\"; "
-    "kill $U 2>/dev/null; wait $U 2>/dev/null; U=; "
-    "echo \"res=$R usb_disconnects=$(( $(dmesg | grep -c 'USB disconnect') - D0 )) "
+    "echo \"$L load=$(cut -d' ' -f1-3 /proc/loadavg) state=$(curl -s --max-time 3 http://127.0.0.1:8090/state | tr -d ' \\n' | cut -c90-260)\"; "
+    "kill $U 2>/dev/null; wait $U 2>/dev/null; U=; [ -n \"$H\" ] && kill $H 2>/dev/null; H=; "
+    "echo \"$L usb_disconnects=$(( $(dmesg | grep -c 'USB disconnect') - D0 )) "
     "urb_errors=$(( $(dmesg | grep -c 'URB error') - E0 ))\"; "
-    "grep -iE 'resolution|format|error|lost|device' /tmp/nebulaos-camtrial.log | head -8; sleep 5; done; "
+    "grep -iE 'error|lost|unavailable' /tmp/nebulaos-camtrial.log | head -5; sleep 5; }; "
+    "trial product-1080-idle 1920x1080 idle; trial 640-cpu-load 640x480 load; trial 320-cpu-load 320x240 load; "
     "rm -f /tmp/nebulaos-camtrial.log; $W start; sleep 5; $W status",
-    "[ -n \"${U:-}\" ] && kill $U 2>/dev/null; rm -f /tmp/nebulaos-camtrial.log; "
+    "[ -n \"${U:-}\" ] && kill $U 2>/dev/null; [ -n \"${H:-}\" ] && kill $H 2>/dev/null; rm -f /tmp/nebulaos-camtrial.log; "
     "/etc/init.d/S50webcam status 2>/dev/null | grep -q 'supervisor: RUNNING' || /etc/init.d/S50webcam start",
     360)
 
