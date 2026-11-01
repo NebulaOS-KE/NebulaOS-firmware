@@ -226,6 +226,17 @@ class NetworkApplyTests(unittest.TestCase):
         self.assertEqual(cfg, self.n.default_config())
         self.assertIsNone(err)
 
+    def test_default_hostname_is_the_boot_derived_one(self):
+        # Run 23: unique per printer, derived once at boot (nebulaos-network.sh).
+        self.assertEqual(self.n.default_config()["hostname"], "nebulaos")
+        os.makedirs(os.path.dirname(self.n.DEFAULT_HOSTNAME_FILE), exist_ok=True)
+        with open(self.n.DEFAULT_HOSTNAME_FILE, "w") as handle:
+            handle.write("nebulaos-9e4f\n")
+        self.assertEqual(self.n.default_config()["hostname"], "nebulaos-9e4f")
+        with open(self.n.DEFAULT_HOSTNAME_FILE, "w") as handle:
+            handle.write("Not Valid!")
+        self.assertEqual(self.n.default_config()["hostname"], "nebulaos")
+
     def test_corrupt_config_falls_back_and_reports(self):
         os.makedirs(os.path.dirname(self.n.CONFIG))
         with open(self.n.CONFIG, "w") as handle:

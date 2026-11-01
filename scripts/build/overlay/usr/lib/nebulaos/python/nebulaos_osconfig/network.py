@@ -18,7 +18,7 @@ from . import common
 from .common import invalid, OsConfigError
 
 SCHEMA = 1
-DEFAULT_HOSTNAME = "nebulaos"
+DEFAULT_HOSTNAME = "nebulaos"   # only when the boot could not derive one
 IFACE = "wlan0"
 
 NET_DIR = os.path.join(common.NEBULAOS_ROOT, "network")
@@ -26,14 +26,24 @@ CONFIG = os.path.join(NET_DIR, "osconfig.json")
 LKG = os.path.join(NET_DIR, "osconfig.lkg.json")
 BOOT_ENV = os.path.join(NET_DIR, "boot.env")
 BOOT_STATE = os.path.join(common.RUN_DIR, "network", "boot-state")
+# Written at boot by /etc/nebulaos-network.sh (nnet_default_hostname): the
+# per-printer default "nebulaos-<last 4 hex of the stable Wi-Fi MAC>".
+DEFAULT_HOSTNAME_FILE = os.path.join(common.RUN_DIR, "network", "default-hostname")
 NETAPPLY = os.environ.get("NEBULAOS_NETAPPLY", "/usr/libexec/nebulaos/nebulaos-netapply")
 APPLY_TIMEOUT = 60
 
 _HOSTNAME_RE = re.compile(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")
 
 
+def default_hostname():
+    try:
+        return validate_hostname(_read_text(DEFAULT_HOSTNAME_FILE) or "")
+    except OsConfigError:
+        return DEFAULT_HOSTNAME
+
+
 def default_config():
-    return {"schema": SCHEMA, "hostname": DEFAULT_HOSTNAME,
+    return {"schema": SCHEMA, "hostname": default_hostname(),
             "ipv4": {"mode": "dhcp"}}
 
 

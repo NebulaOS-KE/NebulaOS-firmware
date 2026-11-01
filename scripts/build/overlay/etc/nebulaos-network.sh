@@ -27,7 +27,10 @@ NNET_RUN_DIR="${NNET_RUN_DIR:-/run/nebulaos/network}"
 NNET_IFACES="${NNET_IFACES:-$NNET_RUN_DIR/interfaces}"
 NNET_STATE="${NNET_STATE:-$NNET_RUN_DIR/boot-state}"
 NNET_RESOLV="${NNET_RESOLV:-/tmp/resolv.conf}"
-NNET_DEFAULT_HOSTNAME="${NNET_DEFAULT_HOSTNAME:-nebulaos}"
+# Empty: derived per printer by nnet_default_hostname (Run 23). Tests set it.
+NNET_DEFAULT_HOSTNAME="${NNET_DEFAULT_HOSTNAME:-}"
+NNET_STABLE_MAC_LIB="${NNET_STABLE_MAC_LIB:-/etc/nebulaos-stable-mac.sh}"
+NNET_DEFAULT_FILE="${NNET_DEFAULT_FILE:-$NNET_RUN_DIR/default-hostname}"
 NNET_HOSTNAME_CMD="${NNET_HOSTNAME_CMD:-hostname}"
 NNET_IFACE="${NNET_IFACE:-wlan0}"
 # /etc/hosts is on the read-only rootfs (it names "buildroot"): a generated copy
@@ -75,11 +78,37 @@ nnet_valid_ipv4() {
 	return 0
 }
 
+# The default host name, unique per printer (Run 23, Tim: every printer was
+# "nebulaos", so two on one network clashed in the router, Mainsail and
+# nebulaos.local): "nebulaos-" + the last 4 hex digits of the stable Wi-Fi
+# MAC (nebulaos-stable-mac.sh - derived from the eMMC CID, the same address
+# the router shows). Falls back to "nebulaos" when there is no identifier.
+nnet_default_hostname() {
+	if [ -n "$NNET_DEFAULT_HOSTNAME" ]; then
+		printf '%s' "$NNET_DEFAULT_HOSTNAME"
+		return 0
+	fi
+	_mac=""
+	if [ -f "$NNET_STABLE_MAC_LIB" ]; then
+		_mac=$(
+			. "$NNET_STABLE_MAC_LIB"
+			_id=$(nebulaos_read_hardware_identifier) \
+				|| _id=$(nebulaos_read_or_create_fallback_identifier "$NEBULAOS_MAC_SEED_FILE")
+			nebulaos_derive_mac_from_identifier "$_id"
+		) 2>/dev/null
+	fi
+	_tail=$(printf '%s' "$_mac" | tr -d ':' | tr 'A-F' 'a-f' | tail -c 4)
+	case "$_tail" in
+		[0-9a-f][0-9a-f][0-9a-f][0-9a-f]) printf 'nebulaos-%s' "$_tail" ;;
+		*) printf 'nebulaos' ;;
+	esac
+}
+
 # Reads $NNET_ENV into NNET_* (only the known keys, only through validation).
 # Returns 0 with a usable configuration; otherwise leaves the DHCP default and
 # returns 1 with the reason in NNET_REASON.
 nnet_load() {
-	NNET_HOSTNAME="$NNET_DEFAULT_HOSTNAME"
+	NNET_HOSTNAME=$(nnet_default_hostname)
 	NNET_MODE=dhcp
 	NNET_ADDRESS=""; NNET_NETMASK=""; NNET_GATEWAY=""; NNET_DNS=""
 	NNET_REASON=""
@@ -195,6 +224,9 @@ nnet_set_state() {
 # Returns 0 when $NNET_IFACES is ready for `ifup -i`, 1 when S01wifi must use
 # the stock /etc/network/interfaces.
 nnet_boot_prepare() {
+	# For nebulaos-osconfig (network.default_hostname): one derivation only.
+	mkdir -p "$NNET_RUN_DIR" 2>/dev/null
+	{ nnet_default_hostname > "$NNET_DEFAULT_FILE"; } 2>/dev/null
 	if nnet_load; then
 		nnet_log "config: hostname=$NNET_HOSTNAME mode=$NNET_MODE"
 	else

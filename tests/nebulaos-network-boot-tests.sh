@@ -41,6 +41,7 @@ setup() {
 	printf '#!/bin/sh\necho "mount $*" >> "%s"\n' "$T/w/log" > "$T/w/bin/mount"; chmod 755 "$T/w/bin/mount"
 	echo "/dev/root / squashfs ro 0 0" > "$T/w/mounts"
 	export NNET_HOSTS="$T/w/run/hosts" NNET_ETC_HOSTS=/etc/hosts NNET_MOUNTS="$T/w/mounts" NNET_MOUNT_CMD="$T/w/bin/mount"
+	export NNET_STABLE_MAC_LIB="$T/w/no-stable-mac.sh" NNET_DEFAULT_FILE="$T/w/run/default-hostname"
 	: > "$T/w/log"
 }
 
@@ -162,6 +163,33 @@ check "S01wifi ifup -i generated file" 'grep -q "/sbin/ifup -i \"\$NNET_IFACES\"
 check "S01wifi falls back to stock ifup" 'grep -q "^		/sbin/ifup wlan0 2>/dev/null" "$S01WIFI"'
 check "S01wifi probes static in background" 'grep -q "nnet_static_probe >/dev/null 2>&1 &" "$S01WIFI"'
 check "stock interfaces file still DHCP" 'grep -qx "iface wlan0 inet dhcp" "$OVERLAY/etc/network/interfaces"'
+
+# --- Run 23: per-printer default host name from the stable Wi-Fi MAC ---------
+setup
+cat > "$T/w/fake-mac.sh" <<-'EOF2'
+	NEBULAOS_MAC_SEED_FILE=/nonexistent
+	nebulaos_read_hardware_identifier() { printf 'cid'; }
+	nebulaos_read_or_create_fallback_identifier() { return 1; }
+	nebulaos_derive_mac_from_identifier() { [ "$1" = cid ] && printf '0a:1b:2c:3d:9E:4f'; }
+	EOF2
+h=$(NNET_STABLE_MAC_LIB="$T/w/fake-mac.sh" sh -c ". '$LIB'; nnet_default_hostname")
+check "default hostname: nebulaos-<last 4 hex of the stable MAC>, lower case" '[ "$h" = nebulaos-9e4f ]'
+h=$(sh -c ". '$LIB'; nnet_default_hostname")
+check "default hostname: plain nebulaos without the MAC library" '[ "$h" = nebulaos ]'
+h=$(NNET_DEFAULT_HOSTNAME=fixed sh -c ". '$LIB'; nnet_default_hostname")
+check "default hostname: an explicit NNET_DEFAULT_HOSTNAME wins" '[ "$h" = fixed ]'
+real=$(sh -c ". '$OVERLAY/etc/nebulaos-stable-mac.sh'; nebulaos_derive_mac_from_identifier 0123456789abcdef0123456789abcdef")
+h=$(NNET_STABLE_MAC_LIB="$T/w/real-mac.sh" sh -c "
+	nebulaos_dummy=1; . '$LIB'
+	printf '. \"%s\"\nnebulaos_read_hardware_identifier() { printf 0123456789abcdef0123456789abcdef; }\n' '$OVERLAY/etc/nebulaos-stable-mac.sh' > '$T/w/real-mac.sh'
+	nnet_default_hostname")
+check "default hostname: the real derivation gives the MAC's last 4 hex" '[ "$h" = "nebulaos-$(printf %s "$real" | tr -d : | tail -c 4)" ]'
+( export NNET_STABLE_MAC_LIB="$T/w/fake-mac.sh"; . "$LIB"; nnet_boot_prepare >/dev/null 2>&1 )
+check "boot without a config: hostname set to the per-printer default" 'grep -q "^hostname nebulaos-9e4f$" "$T/w/log"'
+check "boot: the default is written for nebulaos-osconfig" '[ "$(cat "$NNET_DEFAULT_FILE")" = nebulaos-9e4f ]'
+setup; env_static
+( export NNET_STABLE_MAC_LIB="$T/w/fake-mac.sh"; . "$LIB"; nnet_boot_prepare >/dev/null 2>&1 )
+check "boot with a configured hostname: the user's name wins" 'grep -q "^hostname ke-shop$" "$T/w/log"'
 
 # --- G103 P1: S40nebulaos-ntpsync waits for a default route itself -------------
 NTP="$OVERLAY/etc/init.d/S40nebulaos-ntpsync"
