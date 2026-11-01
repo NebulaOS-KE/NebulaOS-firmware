@@ -78,29 +78,50 @@ every boot would start at 2020-03-01, so early log lines and files would carry a
 It restores the last saved time, in the manner of `fake-hwclock`. Worth knowing before
 debugging a timestamp.
 
-## The decision that is the opposite of what you expect
-
-**There is no automatic rollback to the stock system, and that is deliberate.**
+## No automatic rollback to stock - and why that is not a brick
 
 `S00revert-safety` used to write `ota:kernel` - the stock slot - on *every* boot, so that any
-failure before the health check would land the next reboot on stock automatically. Classic
-watchdog-style safety.
+failure before the health check would land the next reboot on stock automatically.
 
-It was **removed** in Phase 1.8B, and the script is now an explicit no-op. The reason, from its
-own header: *booting the stock Creality slot auto-flashes the MCU with old Creality firmware,
-destroying the qualified native GD32F303 MCU build.*
+It was **removed** in Phase 1.8B and the script is now an explicit no-op. Its header gives the
+reason: booting the stock Creality slot auto-flashes the MCU with Creality's own firmware,
+replacing the native GD32F303 build. An automatic fallback would have converted a software
+failure - Klipper not starting - into an MCU firmware change nobody asked for.
 
-So the automatic safety net was itself the larger hazard. Falling back to stock would have
-turned a software failure - Klipper not starting - into a hardware one, needing the MCU
-reflashed. The risk of silently bricking the MCU outweighed the convenience of automatic
-rollback.
+**That is a reason to remove the automatic fallback. It is not a reason to call stock a
+one-way door, and current code makes that clear.**
 
-**What happens now:** if Klipper fails to reach ready, the printer stays on NebulaOS and waits
-for manual recovery. Nothing is undone for you.
+`S50nebulaos-mcu-guard` runs before Klipper and delegates to `mcu_lifecycle.py`, which
+classifies the application the MCU is actually running:
 
-This is also the root of the warning users see throughout the manual - *never power-cycle a
-printer running the stock Creality system*. Same mechanism: a stock power-on reflashes the MCU.
-One hardware behaviour, two consequences, and they are worth recognising as the same fact.
+| Classification | What happens |
+|---|---|
+| `NATIVE_CANDIDATE_001` | Healthy native build. Klipper starts; nothing is reflashed. |
+| `KNOWN_STOCK` | `SUPPORTED_HW_KNOWN_STOCK_APP` → `RESTORE_AUTHORIZED`. `mcu_restore.py` reinstalls the built-in native firmware automatically. |
+| `UNKNOWN_APPLICATION` | **Never auto-flashed.** Whatever is there is kept. |
+
+So the symmetry is the point: **stock reinstalls its MCU firmware at a cold boot, and NebulaOS
+reinstalls its own at boot too.** Each system restores what it needs, and moving between them is
+self-correcting in both directions.
+
+`mcu_restore.py` is bounded rather than best-effort: a single attempt, SHA256 verification of
+the on-device artifact against a pinned value, and a hardware identity allow-list checked both
+before any erase or write and again after bootloader entry.
+
+The `UNKNOWN_APPLICATION` branch is the considered part. A firmware the user installed
+deliberately - through NebulaScreen's own MCU page, from a Mainsail upload or a USB stick - is
+not recognised as stock, so it is left alone. The automation only undoes the one thing it can
+identify as not-ours.
+
+### What this means for documentation
+
+Older documents in this repository predate `mcu_restore.py` and describe the Phase 1.8B
+situation, where a stock boot genuinely left the MCU mismatched until someone intervened. Where
+they conflict with the behaviour above, **the code wins.** `docs/DEVELOPER_RECOVERY.md` and
+`docs/HOW_TO_SWITCH_STOCK_AND_CUSTOM.md` carry corrections to that effect.
+
+The genuine remaining caution is the ordinary one: **do not cut power while an MCU flash is in
+progress.** NebulaScreen says so on screen while it runs one.
 
 ### The health check that remains
 

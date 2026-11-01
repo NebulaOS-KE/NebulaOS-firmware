@@ -99,6 +99,31 @@ below.
 
 ### What happens if custom firmware fails to start?
 
+> **Current behaviour (2026-11-01): this is no longer a one-way risk.**
+>
+> The reasoning below is preserved as the record of the Phase 1.8B decision, and the decision
+> itself still stands - there is no automatic rollback to stock. But the *consequence* described
+> here, an MCU left carrying old Creality firmware until someone intervenes, is now handled
+> automatically.
+>
+> `S50nebulaos-mcu-guard` delegates to `mcu_lifecycle.py`, which classifies the running MCU
+> application. `NATIVE_CANDIDATE_001` starts Klipper untouched. `KNOWN_STOCK` authorises
+> `mcu_restore.py`, which reinstalls the built-in native firmware - one bounded attempt, SHA256
+> verified against a pinned value, hardware allow-list checked before any erase or write and
+> again after bootloader entry. `UNKNOWN_APPLICATION` is never auto-flashed, so firmware a user
+> installed deliberately is kept.
+>
+> So stock reinstalls its MCU firmware at a cold boot and NebulaOS reinstalls its own at boot,
+> and switching between the two is self-correcting in both directions - power switch included.
+> Nothing here is a hard brick.
+>
+> The genuine caution is the ordinary one: do not cut power **while an MCU flash is running**.
+> NebulaScreen says so on screen while it performs one.
+>
+> These paragraphs predate `mcu_restore.py`. Where old prose and current code disagree, the code
+> wins.
+
+
 **Important change (Phase 1.8B):** custom firmware no longer automatically falls back to stock on
 failure. The automatic stock fallback was removed because a genuine power cycle while booted into
 stock Creality firmware lets it auto-flash the printer's MCU (motor/heater controller) with old
