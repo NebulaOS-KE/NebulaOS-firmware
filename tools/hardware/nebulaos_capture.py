@@ -358,6 +358,16 @@ CAPTURE_PROFILES = {
         "echo '== processes (start times)'; ps -o pid,etime,args 2>/dev/null | grep -E '[k]lippy|[m]oonraker|[n]ebulascreen' "
         "|| ps | grep -E '[k]lippy|[m]oonraker|[n]ebulascreen'",
         False, None, 60),
+    # Did a print make a timelapse (Run 23, Tim 2026-11-01): the rendered
+    # videos, the frame directory, the timelapse settings and Moonraker's
+    # timelapse lines. Read-only.
+    "timelapse": ("echo '== now'; date; "
+        "echo '== videos'; ls -la /opt/printer_data/timelapse/ 2>&1 | tail -n 20; "
+        "echo '== frames'; F=/opt/printer_data/misc/timelapse-frames; ls $F 2>&1 | head -n 3; "
+        "echo \"frame count: $(ls $F 2>/dev/null | wc -l)\"; du -sh $F 2>/dev/null; "
+        "echo '== settings'; wget -q -T 5 -O - 'http://127.0.0.1:7125/machine/timelapse/settings' 2>&1 | head -c 2500; echo; "
+        "echo '== moonraker.log: timelapse'; grep -hi timelapse /opt/printer_data/logs/moonraker.log 2>/dev/null | tail -n 60 | cut -c1-250",
+        False, None, 60),
     # Live print state after a power-loss resume (Run 23, Tim 2026-10-31):
     # what Klipper and Moonraker believe right now, and the screen's view.
     # Read-only.
