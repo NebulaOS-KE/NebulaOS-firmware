@@ -10,10 +10,14 @@ documents, which remain the place to read *why* things are the way they are. The
 
 | Page | What it is |
 |---|---|
+| [ARCHITECTURE.md](ARCHITECTURE.md) | **Start here.** Two slots and the marker that selects them, the boot order, why there is no automatic rollback to stock, the trial after an image install, recovery in order of severity, the build pipeline |
 | [MOONRAKER-API.md](MOONRAKER-API.md) | **58** `machine.nebulaos.*` endpoints: HTTP method, JSON-RPC name, handler, and the request parameters each handler reads, with defaults |
 | [BOOT-SERVICES.md](BOOT-SERVICES.md) | **35** boot services in boot order, with each script's own stated purpose |
 
-Both are **generated** from source by tools in the central NebulaOS repository
+`ARCHITECTURE.md` is hand-written: explanation cannot be extracted. Every factual claim in it
+names the file it came from, so any sentence can be re-checked.
+
+The other two are **generated** from source by tools in the central NebulaOS repository
 (`documentation/agent/tools/gen_firmware_api_reference.py`,
 `gen_firmware_services_reference.py`), parsed with Python's `ast` where the source is Python.
 Do not edit them by hand; regeneration overwrites.
@@ -39,12 +43,12 @@ Honest list, so nothing looks finished that is not:
   runtime, so documenting them from the component source alone would mean inventing them. Read
   `usr/lib/nebulaos/python/nebulaos_osconfig/` for the real shapes, and
   `tests/nebulaos-osconfig-tests.py` for fixtures.
-- **The build pipeline.** 14 numbered scripts in `scripts/build/`, from
-  `00-fetch-vendor-sources.sh` to `06-verify.sh`, plus packaging, SBOM and baseline gates.
-- **The 56 runtime helpers** in the overlay outside `init.d` - update supervisor, slot swap,
-  clean reset, OTA markers, network apply.
-- **A/B slots, OTA and recovery as an architecture**, rather than as a list of files.
-- **Buildroot integration, the filesystem layout, and the kernel's part in the image.**
+- **The 56 runtime helpers** in the overlay outside `init.d`, individually - update supervisor,
+  clean reset, network apply and the rest. `ARCHITECTURE.md` covers the ones that matter to
+  boot, slots and recovery.
+- **Buildroot internals, the filesystem layout, and the kernel's part in the image.**
+- **Per-service detail.** `BOOT-SERVICES.md` lists all 35 with each script's own stated
+  purpose; it does not explain each one's failure behaviour or dependencies.
 
 Those are tracked in the central repository's `documentation/agent/COVERAGE.md`, which reports
 firmware coverage against all 194 discovered items rather than against these two pages.
