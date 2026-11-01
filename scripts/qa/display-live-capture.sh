@@ -17,7 +17,7 @@
 #   sh scripts/qa/display-live-capture.sh <device-ip> [output-dir]
 #
 # Environment overrides:
-#   NEBULAOS_SSH_PASSWORD   default: openke (custom's root password)
+#   NEBULAOS_SSH_PASSWORD   default: NebulaOS (the image default root password)
 #   NEBULAOS_SSH_USER       default: root
 #
 # Confirm printer identity (hostname/CID-MAC/manifest) BEFORE running the
@@ -30,7 +30,7 @@ set -eu
 DEVICE_IP="${1:?usage: $0 <device-ip> [output-dir]}"
 OUT_DIR="${2:-}"
 SSH_USER="${NEBULAOS_SSH_USER:-root}"
-SSH_PASSWORD="${NEBULAOS_SSH_PASSWORD:-openke}"
+SSH_PASSWORD="${NEBULAOS_SSH_PASSWORD:-NebulaOS}"
 
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 REPO_ROOT=$(cd "$SCRIPT_DIR/../.." && pwd)

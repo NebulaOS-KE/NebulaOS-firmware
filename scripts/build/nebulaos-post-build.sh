@@ -23,16 +23,16 @@
 # world-readable shadow file. That is a worse defect than the one being fixed.
 #
 # So: edit the line in place, here, preserving the file's existing mode and
-# every other account. Same password as before - only the salt stops being
-# random.
+# every other account. Only the salt stops being random.
 set -eu
 
 TARGET_DIR=${1:?usage: nebulaos-post-build.sh <TARGET_DIR>}
 SHADOW="$TARGET_DIR/etc/shadow"
 
-# sha256-crypt of the project's existing root password, with a fixed salt.
+# sha256-crypt of the default root password (NebulaOS since Run 23; was
+# openke), with a fixed salt.
 # Regenerate with:  openssl passwd -5 -salt NebulaOSrootsalt <password>
-ROOT_HASH='$5$NebulaOSrootsalt$loBE3SnC0VQEEc2oYlmeqfOM/8ttzKP9k6xuKkH25NB'
+ROOT_HASH='$5$NebulaOSrootsalt$4v6AIFzVR6/q86xThfAfN9nA.W.6LRJWpihRPqth2n6'
 
 [ -f "$SHADOW" ] || {
 	echo "FATAL: post-build: $SHADOW not found" >&2

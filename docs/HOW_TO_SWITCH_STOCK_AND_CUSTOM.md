@@ -49,8 +49,8 @@ that flips a switch, then reboot the printer. Two minutes, no tools, no opening 
    ```
    ssh root@<the-ip-address>
    ```
-   Password: `openke` on **custom**. Stock's root password is different (this project doesn't
-   control or change it) - a real "Permission denied" was hit live confirming `openke` does not
+   Password: `NebulaOS` on **custom** (images before Run 23: `openke`; an existing printer keeps the password it had). Stock's root password is different (this project doesn't
+   control or change it) - a real "Permission denied" was hit live confirming the custom password does not
    work on stock; check with whoever set up the printer if you don't already have it.
 
 3. **Tell it which one to boot next.** Run exactly one of these two commands:
