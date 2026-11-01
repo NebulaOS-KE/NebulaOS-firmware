@@ -9,6 +9,7 @@
 #   nebulaos-osconfig system busy --profile request|point_of_no_return|git|restart|recovery
 #                                 [--holder TOKEN]   (G91 busy check, read-only)
 #   nebulaos-osconfig system cleanup-creality [--videos]
+#   nebulaos-osconfig system cleanup-nebulaos-plan (read-only) | cleanup-nebulaos
 #   nebulaos-osconfig image list|status|ack
 #   nebulaos-osconfig image check --file ID
 #   nebulaos-osconfig image install --file ID --sha256 HEX   (starts "image worker")
@@ -78,6 +79,7 @@ READ_ONLY = {("system", "info"), ("network", "status"),
              ("wifi", "status"), ("mcu", "status"), ("mcu", "list"),
              ("image", "list"), ("image", "status"), ("logs", "status"),
              ("settings", "status"), ("system", "storage"), ("system", "cleanup-plan"),
+             ("system", "cleanup-nebulaos-plan"),
              ("updates", "readiness"), ("system", "busy"), ("spoolman", "status"),
              ("camera", "status"), ("ota", "status")}
 
@@ -145,6 +147,9 @@ def _dispatch(argv):
         return cleanup.storage()
     if (domain, verb) == ("system", "cleanup-plan"):
         return cleanup.plan(bool(_opts(rest, {"videos": False}).get("videos")))
+    if (domain, verb) == ("system", "cleanup-nebulaos-plan"):
+        _opts(rest, {})
+        return cleanup.nebulaos_plan()
     if (domain, verb) == ("image", "trial"):
         _opts(rest, {})
         return image.trial()
@@ -269,6 +274,9 @@ def _dispatch(argv):
             if verb == "cleanup-creality":
                 videos = bool(_opts(rest, {"videos": False}).get("videos"))
                 return cleanup.clean_creality(videos, log=_syslog_line)
+            if verb == "cleanup-nebulaos":
+                _opts(rest, {})
+                return cleanup.clean_nebulaos()
             if verb == "ack-notice":
                 return system.ack_notice(_opts(rest, {"id": True}).get("id"))
         elif domain == "logs":

@@ -51,7 +51,13 @@ RETENTION_LOCK="${RETENTION_LOCK:-$NEBULAOS_ROOT/maintenance/retention.lock}"
 MOONRAKER_PRINT_STATS="${MOONRAKER_PRINT_STATS:-http://127.0.0.1:7125/printer/objects/query?print_stats}"
 
 dryrun=false
-[ "$1" = "--dry-run" ] && dryrun=true
+manual=false
+for _arg in "$@"; do
+	case "$_arg" in
+		--dry-run) dryrun=true ;;
+		--manual) manual=true ;;
+	esac
+done
 
 log() {
 	echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) $1" >> "$LOG"
@@ -447,8 +453,9 @@ clean_obsolete_versions() {
 	done
 }
 
+PIP_CACHE="${PIP_CACHE:-/root/.cache}"
 clean_pip_cache() {
-	[ -d /root/.cache ] && [ "$dryrun" != "true" ] && rm -rf /root/.cache
+	[ -d "$PIP_CACHE" ] && [ "$dryrun" != "true" ] && rm -rf "$PIP_CACHE"
 }
 
 # --- Disk-pressure handling ---
@@ -545,6 +552,74 @@ retention_lock() {
 	return 1
 }
 
+# --- Run 23 (Tim): the Storage page's "Free up space" (--manual) ---
+#
+# NebulaOS's own leftovers, now and regardless of age, on top of the normal
+# rules: every rotated log (system.log.* stays syslogd's), the migration
+# backups down to the newest event, abandoned update staging that no lock
+# holds, uploaded system images, and the pip cache. Never print files (no
+# emergency gcode cleanup), configuration or calibration (printer.cfg, its
+# SAVE_CONFIG backups, PLR state), settings, the update supervisor's
+# last-known-good, or anything of the Creality system (that is "Clean up
+# Creality files", nebulaos-osconfig cleanup.py). Not while printing or
+# updating: the caller is told why (exit 3).
+clean_all_rotated_logs() {
+	find "$NEBULAOS_ROOT/printer_data/logs" "$NEBULAOS_ROOT/maintenance/logs" \
+		-maxdepth 1 -type f -name "*.log.*" 2>/dev/null | while read -r f; do
+		case "$(basename "$f")" in
+			system.log.*) continue ;;
+		esac
+		path_is_namespace_safe "$f" && delete "$f" "rotated-log"
+	done
+}
+
+clean_all_staging() {
+	find "$NEBULAOS_ROOT/updates/staging" -mindepth 1 -maxdepth 1 2>/dev/null | while read -r f; do
+		[ -e "$LOCKDIR/$(basename "$f").lock" ] && continue
+		path_is_namespace_safe "$f" && delete "$f" "abandoned-staging"
+	done
+}
+
+clean_all_system_images() {
+	[ -d "$SYSTEM_IMAGE_DIR" ] && path_is_namespace_safe "$SYSTEM_IMAGE_DIR" || return 0
+	grep -qE '"state": *"(running|restarting)"' "$IMAGE_JOB_STATE" 2>/dev/null && return 0
+	find "$SYSTEM_IMAGE_DIR" -maxdepth 1 -type f 2>/dev/null | while read -r f; do
+		path_is_namespace_safe "$f" && delete "$f" "uploaded-system-image"
+	done
+}
+
+manual_cleanup() {
+	if print_active; then
+		echo "PRINTING"
+		return 3
+	fi
+	if update_in_progress; then
+		echo "UPDATING"
+		return 3
+	fi
+	log "manual cleanup (Free up space), dry-run=$dryrun"
+	# Rotation copies and truncates live logs - not part of a preview.
+	[ "$dryrun" = "true" ] || rotate_platform_logs
+	clean_all_rotated_logs
+	trim_small_logs
+	clean_old_config_backups
+	clean_old_save_config_backups
+	clean_all_staging
+	clean_obsolete_versions
+	clean_migration_backups
+	prune_migration_events 1
+	clean_mainsail_namespace_backups
+	clean_stray_bak_files
+	clean_old_nebulaos_changes
+	clean_all_system_images
+	if [ "$dryrun" = "true" ]; then
+		[ -d "$PIP_CACHE" ] && log "[DRY-RUN] would delete (pip-cache): $PIP_CACHE"
+	else
+		clean_pip_cache
+	fi
+	return 0
+}
+
 start() {
 	mkdir -p "$NEBULAOS_ROOT/maintenance"
 	retention_lock || return 0           # another run is busy - it does the work
@@ -610,5 +685,12 @@ start() {
 # with fake NEBULAOS_ROOT/LOG paths, without start() running immediately
 # and without waiting on wait_for_clock_sync's real clock check.
 if [ -z "${NEBULAOS_RETENTION_NO_AUTORUN:-}" ]; then
+	if [ "$manual" = "true" ]; then
+		mkdir -p "$NEBULAOS_ROOT/maintenance"
+		retention_lock || { echo "BUSY"; exit 4; }
+		trap 'rmdir "$RETENTION_LOCK" 2>/dev/null' EXIT
+		manual_cleanup
+		exit $?
+	fi
 	start
 fi

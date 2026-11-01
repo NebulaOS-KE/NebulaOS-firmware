@@ -1602,6 +1602,7 @@ class MaintenanceGateTests(unittest.TestCase):
                 ("reset_image", self.e.bootdisplay.reset_image),
                 ("restore_original_logo", self.e.bootdisplay.restore_original_logo),
                 ("clean_creality", lambda: self.cleanup.clean_creality(False)),
+                ("clean_nebulaos", self.cleanup.clean_nebulaos),
                 ("request_clean_reset", self.e.system.request_clean_reset),
                 ("swap_slot", self.e.system.swap_slot),
                 ("mcu_flash", lambda: self.e.mcu.flash("upload/x.bin", "0" * 64))]
@@ -2552,6 +2553,76 @@ class CrealityCleanupTests(unittest.TestCase):
         labels = [p["label"] for p in out["parts"]]
         self.assertEqual(labels, ["Print files", "Logs", "Uploads", "Backups", "NebulaOS", "Creality files"])
         self.assertGreater(out["parts"][-1]["bytes"], 0)
+
+
+class FreeUpSpaceTests(unittest.TestCase):
+    """Run 23 (Tim): Storage > "Free up space" - NebulaOS's own leftovers
+    through the real /etc/nebulaos-retention.sh --manual, never print files,
+    configuration, calibration or Creality's data."""
+
+    def setUp(self):
+        self.e = Env()
+        self.c = importlib.import_module("nebulaos_osconfig.cleanup")
+        t = self.e.tmp
+        self.d = os.path.join(t, "usrdata")
+        self.c.DATA = self.d
+        self.r = self.c.NEBULAOS_ROOT = os.path.join(self.d, "nebulaos")
+        self.c.RETENTION = os.path.join(OVERLAY, "etc", "nebulaos-retention.sh")
+        self.saved = {k: os.environ.get(k) for k in ("PIP_CACHE", "MOONRAKER_PRINT_STATS")}
+        os.environ["PIP_CACHE"] = os.path.join(t, "pip-cache")
+        os.environ["MOONRAKER_PRINT_STATS"] = "http://127.0.0.1:9/none"
+        files = ["nebulaos/printer_data/logs/klippy.log", "nebulaos/printer_data/logs/klippy.log.1",
+                 "nebulaos/system/migration-backups/20261030T100000Z/k.tar",
+                 "nebulaos/system/migration-backups/20261031T100000Z/k.tar",
+                 "nebulaos/printer_data/config/printer.cfg",
+                 "nebulaos/backups/klipper/last-known-good/klippy.py",
+                 "printer_data/gcodes/benchy.gcode", "creality/userdata/config.json"]
+        for rel in files:
+            path = os.path.join(self.d, rel)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as h:
+                h.write("x" * 5000)
+        os.makedirs(os.environ["PIP_CACHE"])
+
+    def tearDown(self):
+        for k, v in self.saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        self.e.cleanup()
+
+    def exists(self, rel):
+        return os.path.lexists(os.path.join(self.d, rel))
+
+    def test_plan_changes_nothing_then_clean(self):
+        plan = self.c.nebulaos_plan()
+        labels = {i["label"]: i for i in plan["items"]}
+        self.assertEqual(labels["Old logs"]["count"], 1)
+        self.assertEqual(labels["Old update backups"]["count"], 1)
+        self.assertIn("Download cache", labels)
+        self.assertGreater(plan["bytes"], 0)
+        self.assertTrue(self.exists("nebulaos/printer_data/logs/klippy.log.1"))  # preview only
+        out = self.c.clean_nebulaos()
+        self.assertEqual(out["result"], "CLEANED")
+        self.assertFalse(self.exists("nebulaos/printer_data/logs/klippy.log.1"))
+        self.assertFalse(self.exists("nebulaos/system/migration-backups/20261030T100000Z"))
+        self.assertFalse(os.path.exists(os.environ["PIP_CACHE"]))
+        for kept in ("nebulaos/printer_data/logs/klippy.log",
+                     "nebulaos/system/migration-backups/20261031T100000Z/k.tar",
+                     "nebulaos/printer_data/config/printer.cfg",
+                     "nebulaos/backups/klipper/last-known-good/klippy.py",
+                     "printer_data/gcodes/benchy.gcode", "creality/userdata/config.json"):
+            self.assertTrue(self.exists(kept), kept)
+        self.assertEqual(self.c.nebulaos_plan()["items"], [])
+
+    def test_refused_while_an_update_runs(self):
+        os.makedirs(os.path.join(self.r, "updates", "locks"))
+        open(os.path.join(self.r, "updates", "locks", "klipper.lock"), "w").close()
+        with self.assertRaises(self.c.common.OsConfigError) as ctx:
+            self.c.clean_nebulaos()
+        self.assertEqual(ctx.exception.code, "UPDATING")
+        self.assertTrue(self.exists("nebulaos/printer_data/logs/klippy.log.1"))
 
 
 class PowerOnLogoTests(unittest.TestCase):
@@ -3801,7 +3872,7 @@ class ComponentTests(unittest.TestCase):
         for reason in ("PRINTING", "PAUSED", "ACTIVE", "UPDATING"):
             self.set_busy(reason)
             for p in ("system/clean_reset", "system/swap_slot", "image/install",
-                      "boot_display/image", "cleanup/creality"):
+                      "boot_display/image", "cleanup/creality", "cleanup/nebulaos"):
                 self.server.events.clear()
                 with self.assertRaises(Exception) as cm:
                     self.call("/machine/nebulaos/" + p, {"file": "upload/x.img", "sha256": "0" * 64,

@@ -247,3 +247,85 @@ def storage():
     return {"parts": out, "total_bytes": total, "free_bytes": free,
             "other_slot": other["other_slot"], "at": int(time.time())}
 
+
+
+# -- "Free up space" (Run 23, Tim) ----------------------------------------------
+# NebulaOS's own leftovers - old logs, old update backups, unfinished update
+# downloads, uploaded system images, the download cache - through the one
+# cleanup path that already owns them: /etc/nebulaos-retention.sh --manual.
+# Never print files, configuration, calibration, settings or Creality's data
+# (that stays "Clean up Creality files" above, so going back to stock keeps
+# working). Refused while printing or updating.
+RETENTION = os.environ.get("NEBULAOS_RETENTION", "/etc/nebulaos-retention.sh")
+RETENTION_TIMEOUT = 600
+# (reason prefix in the retention log, label for the screen)
+NEBULAOS_GROUPS = (
+    ("rotated-log", "Old logs"),
+    ("old-migration-backup", "Old update backups"),
+    ("abandoned-staging", "Unfinished update downloads"),
+    ("uploaded-system-image", "Uploaded system images"),
+    ("pip-cache", "Download cache"),
+)
+_REFUSALS = {"PRINTING": "the printer is printing",
+             "UPDATING": "an update is running",
+             "BUSY": "a cleanup is already running"}
+
+
+def _retention(args, log_path=None):
+    env = dict(os.environ, NEBULAOS_ROOT=NEBULAOS_ROOT)
+    if log_path:
+        env["LOG"] = log_path
+    rc, out, err = common.run(["sh", RETENTION, "--manual"] + list(args),
+                              RETENTION_TIMEOUT, env=env)
+    word = (out or "").strip().splitlines()[-1:] or [""]
+    if rc in (3, 4) and word[0] in _REFUSALS:
+        raise common.OsConfigError(word[0], "Not now: %s." % _REFUSALS[word[0]])
+    if rc != 0:
+        raise common.OsConfigError("CLEANUP_FAILED", "the cleanup did not run",
+                                   detail=(err or out)[-300:])
+
+
+def nebulaos_plan():
+    """What "Free up space" would remove, grouped, with sizes. Changes nothing
+    (the retention script's --dry-run)."""
+    import tempfile
+    fd, log_path = tempfile.mkstemp(prefix="nebulaos-cleanup-plan.")
+    os.close(fd)
+    try:
+        _retention(["--dry-run"], log_path)
+        with open(log_path) as handle:
+            lines = handle.read().splitlines()
+    finally:
+        os.unlink(log_path)
+    paths = {}
+    for line in lines:
+        if "[DRY-RUN] would delete (" not in line or "): " not in line:
+            continue
+        reason, path = line.split("[DRY-RUN] would delete (", 1)[1].split("): ", 1)
+        paths.setdefault(path, reason)
+    groups = [{"label": label, "bytes": 0, "count": 0} for _, label in NEBULAOS_GROUPS]
+    other = {"label": "Other leftovers", "bytes": 0, "count": 0}
+    total = 0
+    for path, reason in sorted(paths.items()):
+        size = _size(path)
+        total += size
+        group = other
+        for (prefix, _), g in zip(NEBULAOS_GROUPS, groups):
+            if reason.startswith(prefix):
+                group = g
+                break
+        group["bytes"] += size
+        group["count"] += 1
+    items = [g for g in groups + [other] if g["count"]]
+    return {"items": items, "bytes": total}
+
+
+@common.maintenance("nebulaos-cleanup")
+def clean_nebulaos(log=None):
+    freed_before = _free()
+    _retention([])
+    os.sync()
+    freed = max(0, _free() - freed_before)
+    if log:
+        log("free up space: %d bytes" % freed)
+    return {"result": "CLEANED", "freed_bytes": freed}

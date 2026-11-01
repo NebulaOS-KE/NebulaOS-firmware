@@ -48,7 +48,7 @@ env NEBULAOS_RETENTION_NO_AUTORUN=1 NEBULAOS_ROOT="$WORK" LOG="$WORK/maintenance
 [ "$(wc -l < "$WORK/maintenance/logs/camera-seed.log")" -eq 2000 ] && [ "$(tail -n 1 "$WORK/maintenance/logs/camera-seed.log")" = 100000 ] && pass || fail "seed log not trimmed to its last 2000 lines"
 [ "$(wc -l < "$WORK/system/diagnostics/data-fs.log")" -eq 10 ] && pass || fail "small log touched"
 [ "$(wc -l < "$WORK/maintenance/retention.log")" -le 2010 ] && pass || fail "retention.log not trimmed"
-grep -q "trim_small_logs" "$RETENTION_SCRIPT" && [ "$(grep -c '^	trim_small_logs$\|^		trim_small_logs$' "$RETENTION_SCRIPT")" -eq 2 ] && pass || fail "not run in both paths"
+grep -q "trim_small_logs" "$RETENTION_SCRIPT" && [ "$(grep -c '^	trim_small_logs$\|^		trim_small_logs$' "$RETENTION_SCRIPT")" -eq 3 ] && pass || fail "not run in both start() paths and the manual cleanup"
 
 echo "nebulaos-retention-live-log-tests: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]

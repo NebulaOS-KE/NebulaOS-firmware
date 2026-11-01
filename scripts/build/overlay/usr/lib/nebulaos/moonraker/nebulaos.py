@@ -111,6 +111,8 @@ class NebulaOS:
             ("/machine/nebulaos/storage", RequestType.GET, self._storage),
             ("/machine/nebulaos/cleanup/plan", RequestType.GET, self._cleanup_plan),
             ("/machine/nebulaos/cleanup/creality", RequestType.POST, self._cleanup_creality),
+            ("/machine/nebulaos/cleanup/nebulaos/plan", RequestType.GET, self._cleanup_nebulaos_plan),
+            ("/machine/nebulaos/cleanup/nebulaos", RequestType.POST, self._cleanup_nebulaos),
             ("/machine/nebulaos/boot_display/preview", RequestType.POST, self._bd_preview),
             ("/machine/nebulaos/boot_display/import_usb", RequestType.POST, self._bd_import_usb),
             ("/machine/nebulaos/boot_display/delete_image", RequestType.POST,
@@ -301,6 +303,14 @@ class NebulaOS:
         await self._refuse_if_busy()
         return await self._write("system", "cleanup-creality", *self._videos_args(web_request),
                                  timeout=CLEANUP_TIMEOUT)
+
+    # Run 23: "Free up space" - NebulaOS's own leftovers (retention --manual).
+    async def _cleanup_nebulaos_plan(self, web_request: WebRequest) -> Dict[str, Any]:
+        return await self._exec(["system", "cleanup-nebulaos-plan"], CLEANUP_TIMEOUT)
+
+    async def _cleanup_nebulaos(self, web_request: WebRequest) -> Dict[str, Any]:
+        await self._refuse_if_busy()
+        return await self._write("system", "cleanup-nebulaos", timeout=CLEANUP_TIMEOUT)
 
     async def _disp_status(self, web_request: WebRequest) -> Dict[str, Any]:
         return await self._read("display", "status")
