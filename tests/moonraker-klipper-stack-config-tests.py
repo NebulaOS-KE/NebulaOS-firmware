@@ -297,6 +297,12 @@ check(
 # mirrored above) and checks the closure, not the unresolved entrypoint.
 
 
+# Includes the build copies into the overlay from a pinned upstream source,
+# so they are not in the repository's overlay (06-verify checks them in the
+# image): moonraker-timelapse's macros (04-cross-compile-app-stack.sh).
+BUILD_PROVIDED_INCLUDES = {"timelapse.cfg"}
+
+
 def resolve_printer_cfg_closure(entry, overlay_root, visited=None):
     """Concatenates entry's own content followed by each of its includes'
     resolved content, in include order - deliberately the same simple
@@ -322,6 +328,8 @@ def resolve_printer_cfg_closure(entry, overlay_root, visited=None):
             )
         else:
             target = entry.parent / inc
+        if not target.is_file() and inc in BUILD_PROVIDED_INCLUDES:
+            continue
         if not target.is_file():
             raise ValueError(f"include target does not exist: {inc} -> {target}")
         chunks.append(resolve_printer_cfg_closure(target, overlay_root, visited))
