@@ -1,6 +1,6 @@
 # NebulaOS firmware - generated developer reference
 
-Generated technical reference for `NebulaOS-firmware`, at commit `c377230`.
+Generated technical reference for `NebulaOS-firmware`, at commit `832314d`.
 
 This sits alongside the repository's existing `docs/` - roughly seventy design and analysis
 documents, which remain the place to read *why* things are the way they are. These pages answer
@@ -57,7 +57,7 @@ firmware coverage against all 194 discovered items rather than against these two
 
 | | |
 |---|---|
-| Source commit | `c377230` |
+| Source commit | `832314d` |
 | Hardware verification | **none** |
 
 Nothing in this reference was observed on a printer. It is established from the source: that
@@ -79,6 +79,10 @@ python3 documentation/agent/tools/gen_firmware_services_reference.py \
     <path-to-NebulaOS-firmware> <path-to>/docs/reference/BOOT-SERVICES.md
 ```
 
-Regenerate whenever this repository's tip moves. The endpoint count has already changed once
-during this work: `47e07af` added the two `machine.nebulaos.cleanup.nebulaos*` endpoints behind
-the Storage **Free up space** button, taking the total from 56 to 58.
+Regenerate whenever this repository's tip moves - which during a single day of this work meant
+`82e1320`, `c377230` and `832314d`. The endpoint count changed once in that span: `47e07af`
+added the two `machine.nebulaos.cleanup.nebulaos*` endpoints behind the Storage **Free up
+space** button, taking the total from 56 to 58.
+
+`832314d` advanced the manifest to extensions `ed99372` and screen `dee0f6f`, so at this commit
+the pins match those repositories' tips exactly.

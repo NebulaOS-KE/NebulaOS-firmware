@@ -5,7 +5,7 @@
 # Boot, slots, updates and recovery
 
 How a NebulaOS printer starts, how it updates itself, and what happens when that goes wrong.
-Written against `NebulaOS-firmware` at `c377230`.
+Written against `NebulaOS-firmware` at `832314d`.
 
 For the exhaustive lists see [BOOT-SERVICES.md](BOOT-SERVICES.md) and
 [MOONRAKER-API.md](MOONRAKER-API.md). This page is the part those cannot give you: the
