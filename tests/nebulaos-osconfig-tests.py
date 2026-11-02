@@ -2600,8 +2600,11 @@ class StatisticsBaselineTests(unittest.TestCase):
         self.e.cleanup()
 
     def _creality(self, plain):
-        enc = subprocess.run(["openssl", "enc", "-aes-128-cbc", "-K", self.KEY, "-iv", self.IV,
-                              "-base64", "-A"], input=plain.encode(), capture_output=True, check=True)
+        data = plain.encode()
+        data += b"\0" * (-len(data) % 16)          # master-server's zero padding
+        enc = subprocess.run(["openssl", "enc", "-aes-128-cbc", "-nopad", "-K", self.KEY,
+                              "-iv", self.IV, "-base64", "-A"], input=data, capture_output=True,
+                             check=True)
         path = os.path.join(self.d, self.s.CREALITY_COUNTER)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "wb") as h:
@@ -2643,6 +2646,26 @@ class StatisticsBaselineTests(unittest.TestCase):
         src = self.s.baseline()["sources"]["creality"]
         self.assertEqual(src["status"], "imported")
         self.assertEqual(src["print_time"], 123456.0)
+
+    def test_real_stock_counter_and_history(self):
+        # ke-dev's own counter, stock 1.1.0.12 (Run 23): 468971 s = 130 h 16 min
+        self.s.CREALITY_KEY, self.s.CREALITY_IV = self.saved
+        path = os.path.join(self.d, self.s.CREALITY_COUNTER)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as h:
+            h.write("C+AzFjGsrgcN2Uqu4znkTNEw+SZwe9LlJeOVdnxP9SPIKt3pNzOIoSys/EwyCufS")
+        hist = os.path.join(self.d, self.s.CREALITY_HISTORY)
+        os.makedirs(os.path.dirname(hist), exist_ok=True)
+        with open(hist, "w") as h:     # the shape of ke-dev's print_history_record.json
+            json.dump({"list": [
+                {"id": 1779704178, "filename": "/usr/data/printer_data/gcodes/Handle_PETG_1h39m.gcode",
+                 "usagetime": 5742, "usagematerial": 6941.7009199978193, "printfinish": 1},
+                {"id": 1779649134, "usagetime": 526, "usagematerial": 289.76, "printfinish": 0}]}, h)
+        src = self.s.baseline()["sources"]["creality"]
+        self.assertEqual(src["status"], "imported")
+        self.assertEqual(src["print_time"], 468971.0)
+        self.assertEqual((src["jobs"], src["completed"]), (2, 1))
+        self.assertAlmostEqual(src["filament_mm"], 7231.46, places=1)
 
     def test_creality_counter_wrong_key_or_content(self):
         self._creality('{"something":"else"}')

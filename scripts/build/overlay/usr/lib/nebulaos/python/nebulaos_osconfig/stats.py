@@ -11,7 +11,12 @@
 #              config/user_data_not_deleted.json, kept by Creality's
 #              master-server (stock 1.1.0.12: "total_time" in seconds, the
 #              sum of Klipper's print_stats.print_duration per print). The
-#              file is base64 of AES-128-CBC; key and IV are master-server's.
+#              file is base64 of AES-128-CBC, zero-padded; key and IV are
+#              two 16-character strings in master-server (stock 1.1.0.12,
+#              offsets 0xc85e8 and 0xc862c), found against ke-dev's own
+#              counter (Run 23): '{ "total_time": 468971, "creality_num": 1 }'.
+#              With it userdata/history/print_history_record.json (plain
+#              JSON, the prints Creality still lists): count and filament.
 #   moonraker  an earlier Moonraker's history (OpenKE, helper script):
 #              /usr/data/printer_data/database/moonraker-sql.db, tables
 #              job_totals and job_history (Moonraker's own schema).
@@ -33,13 +38,15 @@ from . import common
 DATA = os.environ.get("NEBULAOS_DATA_MOUNT", "/usr/data")
 BASELINE = os.path.join(common.NEBULAOS_ROOT, "system", "stats-baseline.json")
 CREALITY_COUNTER = "creality/userdata/config/user_data_not_deleted.json"
+CREALITY_HISTORY = "creality/userdata/history/print_history_record.json"
 OLD_MOONRAKER_DB = "printer_data/database/moonraker-sql.db"
 OPENSSL = os.environ.get("NEBULAOS_OPENSSL", "openssl")
-# AES-128-CBC key and IV of Creality's master-server (stock 1.1.0.12), hex.
-# None: not known for this build - the counter is reported unreadable.
-CREALITY_KEY = None
-CREALITY_IV = None
+# AES-128-CBC key and IV of Creality's master-server (stock 1.1.0.12), hex:
+# "hEPPNBcEBm5Crc4V" and "rk7tbGWMEkxyz6Gm".
+CREALITY_KEY = "684550504e426345426d354372633456"
+CREALITY_IV = "726b37746247574d456b78797a36476d"
 MAX_FILE = 64 * 1024
+MAX_HISTORY = 4 * 1024 * 1024
 STATUSES = ("completed", "cancelled", "error", "klippy_shutdown", "klippy_disconnect",
             "interrupted", "server_exit")
 
@@ -49,8 +56,8 @@ def _path(rel):
 
 
 def decrypt_creality(blob, key_hex, iv_hex):
-    """Plain text of a Creality-encrypted file (base64 of AES-128-CBC,
-    PKCS#7), or None."""
+    """Plain text of a Creality-encrypted file (base64 of AES-128-CBC, zero
+    padding - master-server pads with NULs, not PKCS#7), or None."""
     try:
         raw = base64.b64decode(blob.strip(), validate=True)
     except ValueError:
@@ -58,11 +65,11 @@ def decrypt_creality(blob, key_hex, iv_hex):
     if not raw or len(raw) % 16:
         return None
     try:
-        out = subprocess.run([OPENSSL, "enc", "-d", "-aes-128-cbc", "-K", key_hex,
+        out = subprocess.run([OPENSSL, "enc", "-d", "-aes-128-cbc", "-nopad", "-K", key_hex,
                               "-iv", iv_hex], input=raw, capture_output=True, timeout=10)
     except (OSError, subprocess.SubprocessError):
         return None
-    return out.stdout if out.returncode == 0 else None
+    return out.stdout.rstrip(b"\0") if out.returncode == 0 else None
 
 
 def read_creality_counter():
@@ -84,7 +91,29 @@ def read_creality_counter():
     seconds = obj.get("total_time") if isinstance(obj, dict) else None
     if not isinstance(seconds, int) or isinstance(seconds, bool) or seconds < 0:
         return {"status": "unreadable", "reason": "not a Creality print counter"}
-    return {"status": "imported", "print_time": float(seconds)}
+    out = {"status": "imported", "print_time": float(seconds)}
+    out.update(read_creality_history())
+    return out
+
+
+def read_creality_history():
+    """{jobs, completed, filament_mm} of the prints Creality still lists, or
+    {} - the list is not the whole life of the printer, the counter is."""
+    try:
+        with open(_path(CREALITY_HISTORY), "rb") as handle:
+            obj = json.loads(handle.read(MAX_HISTORY).decode("utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError):
+        return {}
+    prints = obj.get("list") if isinstance(obj, dict) else None
+    if not isinstance(prints, list):
+        return {}
+    prints = [p for p in prints if isinstance(p, dict)]
+
+    def num(v):
+        return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else 0.
+    return {"jobs": len(prints),
+            "completed": sum(1 for p in prints if p.get("printfinish") == 1),
+            "filament_mm": sum(num(p.get("usagematerial")) for p in prints)}
 
 
 def read_old_moonraker():
