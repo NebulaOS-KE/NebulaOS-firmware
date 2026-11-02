@@ -358,6 +358,18 @@ CAPTURE_PROFILES = {
         "echo '== processes (start times)'; ps -o pid,etime,args 2>/dev/null | grep -E '[k]lippy|[m]oonraker|[n]ebulascreen' "
         "|| ps | grep -E '[k]lippy|[m]oonraker|[n]ebulascreen'",
         False, None, 60),
+    # Print statistics sources left by stock Creality and an earlier Moonraker
+    # (Run 23, Tim 2026-11-02: Statistics page + import): the stock lifetime
+    # counter and print history, and the old Moonraker database. Read-only.
+    "stats-sources": ("C=/usr/data/creality/userdata; "
+        "echo '== creality userdata'; ls -la $C $C/config $C/history 2>&1 | head -n 40; "
+        "for f in $C/config/user_data_not_deleted.json $C/history/print_history_record.json; do "
+        "echo \"== $f\"; [ -f $f ] || { echo absent; continue; }; wc -c < $f; head -c 600 $f | od -A d -c | head -n 40; "
+        "echo '-- as text'; head -c 1500 $f; echo; done; "
+        "echo '== old printer_data'; ls -la /usr/data/printer_data /usr/data/printer_data/database 2>&1 | head -n 30; "
+        "for d in /usr/data/printer_data/database/*; do echo \"-- $d\"; wc -c < $d 2>/dev/null; head -c 16 $d 2>/dev/null | od -A d -c | head -n 2; done; "
+        "echo '== NebulaOS moonraker history totals'; wget -q -T 5 -O - 'http://127.0.0.1:7125/server/history/totals' 2>&1 | head -c 1500; echo",
+        False, None, 60),
     # Did a print make a timelapse (Run 23, Tim 2026-11-01): the rendered
     # videos, the frame directory, the timelapse settings and Moonraker's
     # timelapse lines. Read-only.
