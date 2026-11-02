@@ -2526,6 +2526,29 @@ class CrealityCleanupTests(unittest.TestCase):
         self.c.clean_creality(include_videos=True)
         self.assertFalse(self.exists("creality"))
 
+    def test_print_statistics_are_kept(self):
+        # Run 23 (Tim): the stock print counter and history and the old
+        # Moonraker database stay for the Statistics page's import.
+        stats = ["creality/userdata/config/user_data_not_deleted.json",
+                 "creality/userdata/history/print_history_record.json",
+                 "printer_data/database/moonraker-sql.db"]
+        for rel in stats:
+            path = os.path.join(self.d, rel)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as h:
+                h.write("s" * 3000)
+        before = self.c.plan(include_videos=True)["bytes"]
+        self.c.clean_creality(include_videos=True)
+        for rel in stats:
+            self.assertTrue(self.exists(rel), rel)
+        for gone in ("creality/userdata/config/system_config.json",
+                     "creality/userdata/delay_image", "creality/upgrade",
+                     "printer_data/config", "printer_data/logs"):
+            self.assertFalse(self.exists(gone), gone)
+        self.assertEqual(sorted(os.listdir(os.path.join(self.d, "creality/userdata"))),
+                         ["config", "history"])
+        self.assertGreater(before, 0)
+
     def test_busy_swap_and_mount_are_kept(self):
         with open(self.c.PROC_SWAPS, "a") as h:
             h.write("%s file 1000 0 -2\n" % os.path.join(self.d, "swap"))

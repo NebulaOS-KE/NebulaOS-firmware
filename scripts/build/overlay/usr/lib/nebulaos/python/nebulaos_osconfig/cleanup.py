@@ -14,6 +14,9 @@
 #   - the swap file only when it is not in use
 #   - Creality's timelapse videos only when asked for
 #   - refused while printing (the Moonraker component checks first)
+#   - the print statistics a later import reads (Run 23, Tim 2026-11-02):
+#     Creality's lifetime print counter and print history, and the old
+#     Moonraker database (printer_data/database) - see STATISTICS_KEEP
 # Everything not on the list stays: macaddr.txt, wpa_supplicant.conf,
 # factory_test_result, .nebulaos-clean-reset*, .keep, nebulaos*, ...
 # Whatever the other slot runs is allowed; when it is Creality the screen
@@ -51,8 +54,22 @@ CREALITY = [
     ("swap", "Swap file of the Creality system"),
 ]
 PRINTER_DATA = "printer_data"          # only its entries other than KEEP_IN_PRINTER_DATA
-KEEP_IN_PRINTER_DATA = ("gcodes",)
+KEEP_IN_PRINTER_DATA = ("gcodes", "database")
 VIDEOS = "creality/userdata/delay_image"
+# Kept inside "creality": the stock lifetime print time and print history,
+# for the Statistics page's one-time import.
+STATISTICS_KEEP = ("creality/userdata/config/user_data_not_deleted.json",
+                   "creality/userdata/history/print_history_record.json")
+
+
+def _kept(path, keep):
+    """path is, or is inside, a kept path."""
+    return any(path == k or path.startswith(k + os.sep) for k in keep)
+
+
+def _holds(path, keep):
+    """path is a directory above a kept path."""
+    return any(k.startswith(path + os.sep) for k in keep)
 
 
 def _mounts():
@@ -76,9 +93,9 @@ def _swaps():
         return []
 
 
-def _size(path, skip=None):
+def _size(path, keep=()):
     """Bytes on disk below path - no symlinks followed, never into another
-    filesystem (a USB stick under gcodes), `skip` subtree left out."""
+    filesystem (a USB stick under gcodes), the `keep` paths left out."""
     total = 0
     try:
         st = os.lstat(path)
@@ -93,9 +110,11 @@ def _size(path, skip=None):
         except OSError:
             return False
     for root, dirs, files in os.walk(path, followlinks=False):
-        dirs[:] = [d for d in dirs if os.path.join(root, d) != skip
+        dirs[:] = [d for d in dirs if not _kept(os.path.join(root, d), keep)
                    and same_fs(os.path.join(root, d))]
         for name in dirs + files:
+            if _kept(os.path.join(root, name), keep):
+                continue
             try:
                 total += os.lstat(os.path.join(root, name)).st_blocks * 512
             except OSError:
@@ -123,20 +142,23 @@ def _blocked(path, mounts, swaps):
 
 
 def _candidates(include_videos):
-    """[(absolute path, label, skip subtree or None)] that exist."""
+    """[(absolute path, label, paths kept inside it)] that exist."""
     out = []
     for rel, label in CREALITY:
         path = os.path.join(DATA, rel)
         if os.path.lexists(path):
-            skip = None
-            if rel == "creality" and not include_videos:
-                skip = os.path.join(DATA, VIDEOS)
-            out.append((path, label, skip))
+            keep = ()
+            if rel == "creality":
+                keep = tuple(os.path.join(DATA, k) for k in STATISTICS_KEEP)
+                if not include_videos:
+                    keep += (os.path.join(DATA, VIDEOS),)
+                keep = tuple(k for k in keep if os.path.lexists(k))
+            out.append((path, label, keep))
     pd = os.path.join(DATA, PRINTER_DATA)
     if os.path.isdir(pd) and not os.path.islink(pd):
         for name in sorted(os.listdir(pd)):
             if name not in KEEP_IN_PRINTER_DATA:
-                out.append((os.path.join(pd, name), "Creality's Klipper files (printer_data/%s)" % name, None))
+                out.append((os.path.join(pd, name), "Creality's Klipper files (printer_data/%s)" % name, ()))
     return out
 
 
@@ -153,9 +175,9 @@ def other_slot_system():
 def plan(include_videos=False):
     mounts, swaps = _mounts(), _swaps()
     items, total = [], 0
-    for path, label, skip in _candidates(include_videos):
+    for path, label, keep in _candidates(include_videos):
         why = _blocked(path, mounts, swaps)
-        size = _size(path, skip) if not why else 0
+        size = _size(path, keep) if not why else 0
         items.append({"path": path, "label": label, "bytes": size, "kept": why})
         if not why:
             total += size
@@ -165,26 +187,28 @@ def plan(include_videos=False):
             "include_videos": bool(include_videos), "other_slot": other_slot_system()}
 
 
-def _remove(path, skip):
-    """Delete without following links, never into another filesystem."""
+def _remove(path, keep):
+    """Delete without following links, never into another filesystem; the
+    `keep` paths and the directories above them stay."""
     if os.path.islink(path) or not os.path.isdir(path):
         os.unlink(path)
         return
     dev = os.lstat(path).st_dev
     for root, dirs, files in os.walk(path, topdown=False, followlinks=False):
-        if skip and (root == skip or root.startswith(skip + os.sep)):
+        if _kept(root, keep):
             continue
         for name in files:
-            os.unlink(os.path.join(root, name))
+            if not _kept(os.path.join(root, name), keep):
+                os.unlink(os.path.join(root, name))
         for name in dirs:
             full = os.path.join(root, name)
-            if skip and (full == skip or skip.startswith(full + os.sep)):
+            if _kept(full, keep) or _holds(full, keep):
                 continue
             if os.path.islink(full):
                 os.unlink(full)
             elif os.lstat(full).st_dev == dev:
                 os.rmdir(full)
-    if not skip or not skip.startswith(path + os.sep):
+    if not _holds(path, keep):
         os.rmdir(path)
 
 
@@ -192,13 +216,13 @@ def _remove(path, skip):
 def clean_creality(include_videos=False, log=None):
     mounts, swaps = _mounts(), _swaps()
     removed, kept, freed_before = [], [], _free()
-    for path, label, skip in _candidates(include_videos):
+    for path, label, keep in _candidates(include_videos):
         why = _blocked(path, mounts, swaps)
         if why:
             kept.append({"path": path, "why": why})
             continue
         try:
-            _remove(path, skip)
+            _remove(path, keep)
             removed.append(path)
             if log:
                 log("removed %s" % path)
