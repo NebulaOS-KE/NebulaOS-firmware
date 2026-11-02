@@ -71,9 +71,32 @@ BUSY_ENDPOINT_PROFILES = ("restart", "request")
 # The Python check's own timeouts are 3 s per request; a hung Klippy costs
 # one of them. Bounded here so a stuck helper never holds the screen.
 BUSY_TIMEOUT = 15.
+# Run 23 (Tim): Settings > Printer > Statistics - the most recent prints shown.
+STATS_RECENT = 5
 # G98: a refusal relayed by a NebulaOS process outside Moonraker (the
 # supervisorctl shim): one line, printable, bounded.
 NOTIFY_MAX = 200
+
+
+def combine_stats(baseline: Dict[str, Any], totals: Dict[str, Any],
+                  by_status: Dict[str, int],
+                  recent: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Lifetime print time = before NebulaOS + since. Before is the larger of
+    Creality's counter and an earlier Moonraker's history, never their sum:
+    with OpenKE both ran side by side and counted the same prints."""
+    def num(v: Any) -> float:
+        return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else 0.
+    since = {"print_time": num(totals.get("total_print_time")),
+             "job_time": num(totals.get("total_time")),
+             "filament_mm": num(totals.get("total_filament_used")),
+             "longest_print": num(totals.get("longest_print")),
+             "jobs": int(num(totals.get("total_jobs"))),
+             "by_status": by_status, "recent": recent}
+    imported = {name: src for name, src in baseline.items()
+                if isinstance(src, dict) and src.get("status") == "imported"}
+    before = max([num(src.get("print_time")) for src in imported.values()] + [0.])
+    return {"lifetime": {"print_time": before + since["print_time"]},
+            "nebulaos": since, "before": baseline}
 
 
 class NebulaOS:
@@ -113,6 +136,8 @@ class NebulaOS:
             ("/machine/nebulaos/cleanup/creality", RequestType.POST, self._cleanup_creality),
             ("/machine/nebulaos/cleanup/nebulaos/plan", RequestType.GET, self._cleanup_nebulaos_plan),
             ("/machine/nebulaos/cleanup/nebulaos", RequestType.POST, self._cleanup_nebulaos),
+            # Run 23 (Tim): print statistics, before and since NebulaOS.
+            ("/machine/nebulaos/stats", RequestType.GET, self._stats),
             ("/machine/nebulaos/boot_display/preview", RequestType.POST, self._bd_preview),
             ("/machine/nebulaos/boot_display/import_usb", RequestType.POST, self._bd_import_usb),
             ("/machine/nebulaos/boot_display/delete_image", RequestType.POST,
@@ -311,6 +336,35 @@ class NebulaOS:
     async def _cleanup_nebulaos(self, web_request: WebRequest) -> Dict[str, Any]:
         await self._refuse_if_busy()
         return await self._write("system", "cleanup-nebulaos", timeout=CLEANUP_TIMEOUT)
+
+    async def _stats(self, web_request: WebRequest) -> Dict[str, Any]:
+        """Statistics: NebulaOS's own prints from Moonraker's history (the
+        same database Mainsail's History page reads), and what came before,
+        imported once by nebulaos-osconfig stats baseline."""
+        try:
+            baseline = (await self._read("stats", "baseline")).get("sources") or {}
+        except Exception as exc:
+            logging.info(f"nebulaos: stats baseline: {exc}")
+            baseline = {}
+        totals: Dict[str, Any] = {}
+        by_status: Dict[str, int] = {}
+        recent: List[Dict[str, Any]] = []
+        history = self.server.lookup_component("history", None)
+        if history is not None:
+            totals = dict(getattr(history, "job_totals", {}) or {})
+            table = history.history_table
+            cursor = await table.execute(
+                "SELECT status, COUNT(*) FROM job_history WHERE instance_id = 'default' "
+                "GROUP BY status")
+            by_status = {row[0]: row[1] for row in await cursor.fetchall()}
+            cursor = await table.execute(
+                "SELECT filename, status, end_time, print_duration, filament_used "
+                "FROM job_history WHERE instance_id = 'default' ORDER BY job_id DESC LIMIT ?",
+                (STATS_RECENT,))
+            recent = [{"filename": r[0], "status": r[1], "end_time": r[2],
+                       "print_time": r[3], "filament_mm": r[4]}
+                      for r in await cursor.fetchall()]
+        return combine_stats(baseline, totals, by_status, recent)
 
     async def _disp_status(self, web_request: WebRequest) -> Dict[str, Any]:
         return await self._read("display", "status")

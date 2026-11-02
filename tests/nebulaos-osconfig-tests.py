@@ -20,6 +20,7 @@ import io
 import json
 import os
 import shutil
+import sqlite3
 import stat
 import struct
 import sys
@@ -2578,6 +2579,109 @@ class CrealityCleanupTests(unittest.TestCase):
         self.assertGreater(out["parts"][-1]["bytes"], 0)
 
 
+class StatisticsBaselineTests(unittest.TestCase):
+    """Run 23 (Tim): Settings > Printer > Statistics - what the printer
+    printed before NebulaOS, imported once from Creality's counter and an
+    earlier Moonraker's database, read-only."""
+    KEY = "000102030405060708090a0b0c0d0e0f"
+    IV = "0f0e0d0c0b0a09080706050403020100"
+
+    def setUp(self):
+        self.e = Env()
+        self.s = importlib.import_module("nebulaos_osconfig.stats")
+        self.d = os.path.join(self.e.tmp, "usrdata")
+        self.s.DATA = self.d
+        self.s.BASELINE = os.path.join(self.d, "nebulaos/system/stats-baseline.json")
+        self.saved = (self.s.CREALITY_KEY, self.s.CREALITY_IV)
+        self.s.CREALITY_KEY, self.s.CREALITY_IV = self.KEY, self.IV
+
+    def tearDown(self):
+        self.s.CREALITY_KEY, self.s.CREALITY_IV = self.saved
+        self.e.cleanup()
+
+    def _creality(self, plain):
+        enc = subprocess.run(["openssl", "enc", "-aes-128-cbc", "-K", self.KEY, "-iv", self.IV,
+                              "-base64", "-A"], input=plain.encode(), capture_output=True, check=True)
+        path = os.path.join(self.d, self.s.CREALITY_COUNTER)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as h:
+            h.write(enc.stdout)
+
+    def _moonraker(self):
+        path = os.path.join(self.d, self.s.OLD_MOONRAKER_DB)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        conn = sqlite3.connect(path)
+        # Moonraker's own schema (components/history.py, pin d5ee171)
+        conn.execute("CREATE TABLE job_totals (provider TEXT NOT NULL, field TEXT NOT NULL, "
+                     "maximum REAL, total REAL, instance_id TEXT NOT NULL, "
+                     "PRIMARY KEY (provider, field, instance_id))")
+        conn.execute("CREATE TABLE job_history (job_id INTEGER PRIMARY KEY ASC, user TEXT NOT NULL, "
+                     "filename TEXT, status TEXT NOT NULL, start_time REAL NOT NULL, end_time REAL, "
+                     "print_duration REAL NOT NULL, total_duration REAL NOT NULL, "
+                     "filament_used REAL NOT NULL, metadata pyjson, auxiliary_data pyjson NOT NULL, "
+                     "instance_id TEXT NOT NULL)")
+        for field, mx, tot in (("total_jobs", None, 3), ("total_time", None, 7200.0),
+                               ("total_print_time", None, 6000.0),
+                               ("total_filament_used", None, 12345.0),
+                               ("longest_job", 4000.0, None), ("longest_print", 3600.0, None)):
+            conn.execute("INSERT INTO job_totals VALUES ('history', ?, ?, ?, 'default')", (field, mx, tot))
+        for i, st in enumerate(("completed", "completed", "cancelled")):
+            conn.execute("INSERT INTO job_history VALUES (?, 'u', 'f.gcode', ?, ?, ?, 1, 1, 1, '{}', '[]', "
+                         "'default')", (i + 1, st, 1700000000.0 + i, 1700000100.0 + i))
+        conn.commit()
+        conn.close()
+        return path
+
+    def test_nothing_before_nebulaos(self):
+        out = self.s.baseline()
+        self.assertEqual(out["sources"]["creality"]["status"], "absent")
+        self.assertEqual(out["sources"]["moonraker"]["status"], "absent")
+        self.assertFalse(os.path.exists(self.s.BASELINE))
+
+    def test_creality_counter(self):
+        self._creality('{"total_time":123456,"creality_num":7}')
+        src = self.s.baseline()["sources"]["creality"]
+        self.assertEqual(src["status"], "imported")
+        self.assertEqual(src["print_time"], 123456.0)
+
+    def test_creality_counter_wrong_key_or_content(self):
+        self._creality('{"something":"else"}')
+        self.assertEqual(self.s.baseline()["sources"]["creality"]["status"], "unreadable")
+        self.s.CREALITY_KEY = "ff" * 16
+        self.assertEqual(self.s.baseline()["sources"]["creality"]["status"], "unreadable")
+        self.s.CREALITY_KEY = None   # format not known for this build
+        self.assertEqual(self.s.baseline()["sources"]["creality"]["reason"], "unknown file format")
+
+    def test_old_moonraker_history(self):
+        db = self._moonraker()
+        with open(db, "rb") as h:
+            before = h.read()
+        src = self.s.baseline()["sources"]["moonraker"]
+        self.assertEqual(src["status"], "imported")
+        self.assertEqual((src["print_time"], src["filament_mm"], src["jobs"], src["longest_print"]),
+                         (6000.0, 12345.0, 3, 3600.0))
+        self.assertEqual(src["by_status"], {"completed": 2, "cancelled": 1})
+        with open(db, "rb") as h:
+            self.assertEqual(h.read(), before)      # read-only
+
+    def test_imported_once_and_kept(self):
+        self._creality('{"total_time":3600,"creality_num":1}')
+        self._moonraker()
+        self.s.baseline()
+        # "Clean up Creality files" without the keep list, or a reinstall
+        shutil.rmtree(os.path.join(self.d, "creality"))
+        shutil.rmtree(os.path.join(self.d, "printer_data"))
+        out = self.s.baseline()["sources"]
+        self.assertEqual(out["creality"]["print_time"], 3600.0)
+        self.assertEqual(out["moonraker"]["print_time"], 6000.0)
+        self._creality('{"total_time":99999,"creality_num":1}')   # later stock use not re-counted
+        self.assertEqual(self.s.baseline()["sources"]["creality"]["print_time"], 3600.0)
+
+    def test_cli_verb_is_read_only(self):
+        cli = importlib.import_module("nebulaos_osconfig.cli")
+        self.assertIn(("stats", "baseline"), cli.READ_ONLY)
+
+
 class FreeUpSpaceTests(unittest.TestCase):
     """Run 23 (Tim): Storage > "Free up space" - NebulaOS's own leftovers
     through the real /etc/nebulaos-retention.sh --manual, never print files,
@@ -3748,6 +3852,55 @@ class ComponentTests(unittest.TestCase):
 
     def argv(self):
         return open(self.log).read().splitlines()
+
+    # Run 23 (Tim): Settings > Printer > Statistics.
+    def test_stats_combine_never_adds_overlapping_sources(self):
+        c = self.mod.combine_stats(
+            {"creality": {"status": "imported", "print_time": 360000.0},
+             "moonraker": {"status": "imported", "print_time": 200000.0},
+             "other": {"status": "unreadable", "print_time": 999999.0}},
+            {"total_print_time": 3600.0, "total_jobs": 2, "total_filament_used": 1500.0,
+             "longest_print": 2400.0}, {"completed": 1, "cancelled": 1}, [])
+        self.assertEqual(c["lifetime"]["print_time"], 363600.0)   # max(before) + since
+        self.assertEqual(c["nebulaos"]["jobs"], 2)
+        self.assertEqual(c["nebulaos"]["by_status"], {"completed": 1, "cancelled": 1})
+        nothing = self.mod.combine_stats({}, {}, {}, [])
+        self.assertEqual(nothing["lifetime"]["print_time"], 0.)
+
+    def test_stats_endpoint_reads_moonraker_history(self):
+        test = self
+
+        class Cursor(object):
+            def __init__(self, rows):
+                self.rows = rows
+
+            async def fetchall(self):
+                return self.rows
+
+        class Table(object):
+            async def execute(self, sql, params=()):
+                test.sql.append((sql, tuple(params)))
+                if "GROUP BY status" in sql:
+                    return Cursor([("completed", 3), ("error", 1)])
+                return Cursor([("benchy.gcode", "completed", 1793541621.0, 1903.2, 1955.8)])
+
+        class History(object):
+            job_totals = {"total_jobs": 4, "total_print_time": 7200.0, "total_time": 8000.0,
+                          "total_filament_used": 9000.0, "longest_print": 3000.0}
+            history_table = Table()
+
+        self.sql = []
+        lookup = self.server.lookup_component
+        self.server.lookup_component = (
+            lambda name, default=None: History() if name == "history" else lookup(name, default))
+        res = self.call("/machine/nebulaos/stats")
+        self.assertEqual(self.server.endpoints["/machine/nebulaos/stats"][0], 1)  # GET
+        self.assertIn("stats baseline", self.calls())
+        self.assertEqual(res["nebulaos"]["print_time"], 7200.0)
+        self.assertEqual(res["nebulaos"]["by_status"], {"completed": 3, "error": 1})
+        self.assertEqual(res["nebulaos"]["recent"][0]["filename"], "benchy.gcode")
+        self.assertEqual(self.sql[1][1], (self.mod.STATS_RECENT,))
+        self.assertEqual(res["lifetime"]["print_time"], 7200.0)
 
     # G82 stage 3: the screen's version report, read by the update supervisor.
     def test_screen_report_recorded(self):
