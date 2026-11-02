@@ -110,16 +110,20 @@ fi
 
 # --- .img: content identity, with the difference characterised -------------
 echo
+# The .img's top directory is its file name (G115: Creality's updater looks in
+# <file>/), so both runs package under the same name, in their own directory.
+IMG_NAME=NebulaOS-Ender3V3KE-$OTA_VERSION.img
 for R in A B; do
   eval "SRC=\$BUILD_RUN_$R"
+  mkdir -p "$WORK/$R"
   python3 "$SCRIPT_DIR/build-img.py" \
     --ximage "$(art "$SRC")/xImage" --rootfs "$(art "$SRC")/rootfs.squashfs" \
-    --manifest "$(art "$SRC")/build-manifest.txt" --out "$WORK/$R.img" \
+    --manifest "$(art "$SRC")/build-manifest.txt" --out "$WORK/$R/$IMG_NAME" \
     --source-head "$HEAD_A" --source-date-epoch "$EPOCH" --ota-version "$OTA_VERSION" \
     >/dev/null 2>&1 || die ".img packaging run $R failed"
 done
 
-SIZE_A=$(stat -c %s "$WORK/A.img"); SIZE_B=$(stat -c %s "$WORK/B.img")
+SIZE_A=$(stat -c %s "$WORK/A/$IMG_NAME"); SIZE_B=$(stat -c %s "$WORK/B/$IMG_NAME")
 if [ "$SIZE_A" = "$SIZE_B" ]; then
   printf 'PASS  .img archives are the same size (%s bytes) - the compressed stream is deterministic\n' "$SIZE_A"
 else
@@ -129,8 +133,8 @@ fi
 
 for R in A B; do
   mkdir -p "$WORK/x$R"
-  7z x -y -p"$SECRET" -o"$WORK/x$R" "$WORK/$R.img" >/dev/null 2>&1 \
-    || die "cannot extract $WORK/$R.img"
+  7z x -y -p"$SECRET" -o"$WORK/x$R" "$WORK/$R/$IMG_NAME" >/dev/null 2>&1 \
+    || die "cannot extract $WORK/$R/$IMG_NAME"
 done
 TREE_A=$(cd "$WORK/xA" && find . -type f | sort | xargs sha256sum | sha256sum | cut -d' ' -f1)
 TREE_B=$(cd "$WORK/xB" && find . -type f | sort | xargs sha256sum | sha256sum | cut -d' ' -f1)
@@ -143,7 +147,7 @@ else
 fi
 
 # Characterise the byte difference precisely rather than hand-waving at it.
-DIFFPCT=$(python3 - "$WORK/A.img" "$WORK/B.img" <<'PY'
+DIFFPCT=$(python3 - "$WORK/A/$IMG_NAME" "$WORK/B/$IMG_NAME" <<'PY'
 import sys
 a=open(sys.argv[1],'rb').read(); b=open(sys.argv[2],'rb').read()
 n=min(len(a),len(b))
