@@ -370,6 +370,21 @@ CAPTURE_PROFILES = {
         "for d in /usr/data/printer_data/database/*; do echo \"-- $d\"; wc -c < $d 2>/dev/null; head -c 16 $d 2>/dev/null | od -A d -c | head -n 2; done; "
         "echo '== NebulaOS moonraker history totals'; wget -q -T 5 -O - 'http://127.0.0.1:7125/server/history/totals' 2>&1 | head -c 1500; echo",
         False, None, 60),
+    # Are the imported statistics right (Run 23, Tim 2026-11-02): what the
+    # Statistics page gets, the cached import, and the old Moonraker database
+    # itself - its totals next to the sum of its own job rows and their dates.
+    # Read-only (SQLite opened mode=ro).
+    "stats-check": ("echo '== /machine/nebulaos/stats'; wget -q -T 10 -O - 'http://127.0.0.1:7125/machine/nebulaos/stats' 2>&1 | head -c 4000; echo; "
+        "echo '== stats-baseline.json'; cat /usr/data/nebulaos/system/stats-baseline.json 2>&1 | head -c 3000; "
+        "echo '== old moonraker database'; python3 -c \"import sqlite3,time; "
+        "c=sqlite3.connect('file:/usr/data/printer_data/database/moonraker-sql.db?mode=ro',uri=True); "
+        "print('totals', c.execute('SELECT field,maximum,total,instance_id FROM job_totals').fetchall()); "
+        "print('instances', c.execute('SELECT instance_id,COUNT(*) FROM job_history GROUP BY instance_id').fetchall()); "
+        "print('by status', c.execute('SELECT status,COUNT(*),ROUND(SUM(print_duration)/3600.0,2),ROUND(SUM(total_duration)/3600.0,2),ROUND(SUM(filament_used)/1000.0,1) FROM job_history GROUP BY status').fetchall()); "
+        "r=c.execute('SELECT MIN(start_time),MAX(start_time),COUNT(*),SUM(print_duration) FROM job_history').fetchone(); "
+        "print('rows', r[2], 'print h', round((r[3] or 0)/3600.0,2), 'from', time.strftime('%F',time.gmtime(r[0] or 0)), 'to', time.strftime('%F',time.gmtime(r[1] or 0))); "
+        "[print(time.strftime('%F %H:%M',time.gmtime(x[0])),x[1],x[2],round(x[3]/60.0,1),'min') for x in c.execute('SELECT start_time,status,filename,print_duration FROM job_history ORDER BY start_time DESC LIMIT 8')]\" 2>&1",
+        False, None, 60),
     # Did a print make a timelapse (Run 23, Tim 2026-11-01): the rendered
     # videos, the frame directory, the timelapse settings and Moonraker's
     # timelapse lines. Read-only.
