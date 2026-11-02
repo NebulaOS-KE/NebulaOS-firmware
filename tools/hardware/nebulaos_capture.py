@@ -370,6 +370,22 @@ CAPTURE_PROFILES = {
         "for d in /usr/data/printer_data/database/*; do echo \"-- $d\"; wc -c < $d 2>/dev/null; head -c 16 $d 2>/dev/null | od -A d -c | head -n 2; done; "
         "echo '== NebulaOS moonraker history totals'; wget -q -T 5 -O - 'http://127.0.0.1:7125/server/history/totals' 2>&1 | head -c 1500; echo",
         False, None, 60),
+    # Why a system update over the internet failed (G79, Run 23 OTA test, Tim
+    # 2026-11-03): the check cache, the download state, the downloaded files,
+    # free space, osconfig's ota status and the system log's ota lines, and
+    # whether GitHub answers from the printer. Read-only (HEAD requests only).
+    "ota-state": ("echo '== check.json'; cat /usr/data/nebulaos/system/ota/check.json 2>&1 | head -c 3000; echo; "
+        "echo '== download state'; cat /run/nebulaos/ota-download/state.json 2>&1 | head -c 2000; echo; "
+        "echo '== downloads'; ls -la /usr/data/nebulaos/system/ota /usr/data/nebulaos/system/ota/* 2>&1 | head -n 20; "
+        "echo '== df'; df -h /usr/data /run 2>&1; "
+        "echo '== osconfig ota status'; /usr/libexec/nebulaos/nebulaos-osconfig ota status 2>&1 | head -c 3000; echo; "
+        "echo '== system.log: ota'; grep -h -i 'ota' /opt/printer_data/logs/system.log 2>/dev/null | tail -n 30 | cut -c1-300; "
+        "echo '== clock'; date -u; "
+        "echo '== github from the printer'; for u in https://api.github.com/repos/NebulaOS-KE/NebulaOS/releases/latest "
+        "https://github.com/NebulaOS-KE/NebulaOS/releases/download/v1.0.0/nebulaos-release.json; do "
+        "python3 -c \"import sys,urllib.request as u; r=u.Request(sys.argv[1],method='HEAD',headers={'User-Agent':'NebulaOS-ota'}); "
+        "x=u.urlopen(r,timeout=20); print(x.status, x.geturl()[:120])\" $u 2>&1 | tail -n 2; done",
+        False, None, 90),
     # Are the imported statistics right (Run 23, Tim 2026-11-02): what the
     # Statistics page gets, the cached import, and the old Moonraker database
     # itself - its totals next to the sum of its own job rows and their dates.
