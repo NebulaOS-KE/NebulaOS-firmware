@@ -15,6 +15,7 @@ documents, which remain the place to read *why* things are the way they are. The
 | [MOONRAKER-API.md](MOONRAKER-API.md) | **59** `machine.nebulaos.*` endpoints: HTTP method, JSON-RPC name, handler, the request parameters each handler reads with defaults, and - for 46 of them - the `nebulaos-osconfig` call they make and the keys that helper returns |
 | [OSCONFIG.md](OSCONFIG.md) | **18** `nebulaos_osconfig` helper modules - 189 public functions with the `DOMAIN VERB` that reaches each one and the keys it returns. Where the API reference stops |
 | [BOOT-SERVICES.md](BOOT-SERVICES.md) | **35** boot services in boot order, each with its full header and the init verbs it really implements, read from its own `case "$1"` |
+| [TOOLING.md](TOOLING.md) | **21** build scripts and **62** host tools, kept as two lists because the line between them is what `product-inputs.py` enforces: host tooling never invalidates a built image |
 | [RUNTIME-HELPERS.md](RUNTIME-HELPERS.md) | **57** executables the image installs outside `/etc/init.d`, each with what calls it - found by searching, not inferred - and its own header |
 
 `ARCHITECTURE.md` is hand-written: explanation cannot be extracted. Every factual claim in it
