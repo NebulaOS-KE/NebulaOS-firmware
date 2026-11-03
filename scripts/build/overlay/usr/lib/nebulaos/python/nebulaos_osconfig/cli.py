@@ -10,6 +10,8 @@
 #                                 [--holder TOKEN]   (G91 busy check, read-only)
 #   nebulaos-osconfig system cleanup-creality [--videos]
 #   nebulaos-osconfig system cleanup-nebulaos-plan (read-only) | cleanup-nebulaos
+#   nebulaos-osconfig stats baseline   (print statistics from before NebulaOS,
+#                                       imported once; read-only otherwise)
 #   nebulaos-osconfig image list|status|ack
 #   nebulaos-osconfig image check --file ID
 #   nebulaos-osconfig image install --file ID --sha256 HEX   (starts "image worker")
@@ -53,7 +55,7 @@ import json
 import sys
 
 from . import (bootdisplay, camera, cleanup, common, display, image, logs, mcu, network,
-               ota, snapshot, spoolman, system, updates, wifi)
+               ota, snapshot, spoolman, stats, system, updates, wifi)
 
 
 def _opts(args, allowed):
@@ -81,7 +83,7 @@ READ_ONLY = {("system", "info"), ("network", "status"),
              ("settings", "status"), ("system", "storage"), ("system", "cleanup-plan"),
              ("system", "cleanup-nebulaos-plan"),
              ("updates", "readiness"), ("system", "busy"), ("spoolman", "status"),
-             ("camera", "status"), ("ota", "status")}
+             ("camera", "status"), ("ota", "status"), ("stats", "baseline")}
 
 # G27 (2026-10-12): every change is one line in the system log (persistent
 # system.log), success or failure. Read-only verbs are not logged (the screen
@@ -150,6 +152,9 @@ def _dispatch(argv):
     if (domain, verb) == ("system", "cleanup-nebulaos-plan"):
         _opts(rest, {})
         return cleanup.nebulaos_plan()
+    if (domain, verb) == ("stats", "baseline"):
+        _opts(rest, {})
+        return stats.baseline()
     if (domain, verb) == ("image", "trial"):
         _opts(rest, {})
         return image.trial()

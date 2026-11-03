@@ -32,7 +32,8 @@ done
 # printer_data: only its gcodes folder may be used
 r=$(refs printer_data | grep -v "/usr/data/printer_data/gcodes")
 [ -z "$r" ] && pass || fail "printer_data used beyond gcodes: $r"
-grep -q 'KEEP_IN_PRINTER_DATA = ("gcodes",)' "$CLEANUP" && pass || fail "gcodes not kept"
+grep -q 'KEEP_IN_PRINTER_DATA = ("gcodes", "database")' "$CLEANUP" && pass \
+	|| fail "gcodes (print files) and database (statistics import) not kept"
 
 echo "creality-cleanup-list-tests: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]
