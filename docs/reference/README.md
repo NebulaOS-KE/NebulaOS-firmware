@@ -1,6 +1,7 @@
 # NebulaOS firmware - generated developer reference
 
-Generated technical reference for `NebulaOS-firmware`, at commit `832314d`.
+Generated technical reference for `NebulaOS-firmware`, at commit `a53e129`. The NebulaOS
+1.0.0 release is firmware `70ad0b0`, which this is a descendant of.
 
 This sits alongside the repository's existing `docs/` - roughly seventy design and analysis
 documents, which remain the place to read *why* things are the way they are. These pages answer
@@ -11,7 +12,7 @@ documents, which remain the place to read *why* things are the way they are. The
 | Page | What it is |
 |---|---|
 | [ARCHITECTURE.md](ARCHITECTURE.md) | **Start here.** Two slots and the marker that selects them, the boot order, why there is no automatic rollback to stock, the trial after an image install, recovery in order of severity, the build pipeline |
-| [MOONRAKER-API.md](MOONRAKER-API.md) | **58** `machine.nebulaos.*` endpoints: HTTP method, JSON-RPC name, handler, and the request parameters each handler reads, with defaults |
+| [MOONRAKER-API.md](MOONRAKER-API.md) | **59** `machine.nebulaos.*` endpoints: HTTP method, JSON-RPC name, handler, the request parameters each handler reads with defaults, and - for 43 of them - the `nebulaos-osconfig` call they make and the keys that helper returns |
 | [BOOT-SERVICES.md](BOOT-SERVICES.md) | **35** boot services in boot order, with each script's own stated purpose |
 
 `ARCHITECTURE.md` is hand-written: explanation cannot be extracted. Every factual claim in it
@@ -80,9 +81,22 @@ python3 documentation/agent/tools/gen_firmware_services_reference.py \
 ```
 
 Regenerate whenever this repository's tip moves - which during a single day of this work meant
-`82e1320`, `c377230` and `832314d`. The endpoint count changed once in that span: `47e07af`
-added the two `machine.nebulaos.cleanup.nebulaos*` endpoints behind the Storage **Free up
-space** button, taking the total from 56 to 58.
+`82e1320`, `c377230` and `832314d`. The endpoint count has changed twice: `47e07af` added the
+two `machine.nebulaos.cleanup.nebulaos*` endpoints behind the Storage **Free up space** button,
+taking the total from 56 to 58, and the 1.0.0 release added `machine.nebulaos.stats` for the
+Statistics page, making 59.
 
-`832314d` advanced the manifest to extensions `ed99372` and screen `dee0f6f`, so at this commit
-the pins match those repositories' tips exactly.
+At the 1.0.0 release commit `70ad0b0` the manifest pins extensions `f498796` (branch
+`production`) and screen `36490ed`, and both match their repositories' tips.
+
+## Response shapes, and why 16 endpoints do not have them
+
+`MOONRAKER-API.md` now resolves, for each endpoint, which `nebulaos-osconfig` call it makes and
+which keys that helper's own `return` statements carry. It is extracted with `ast` along the
+chain the page already describes, so nothing is transcribed by hand.
+
+Sixteen endpoints are **not** resolved and say so. Some handlers build their answer inside the
+Moonraker component rather than delegating one call; some helpers return a value the extractor
+cannot read. Those carry *Result keys not resolved from source* instead of a plausible list,
+which is the point: to a reader, an invented response example is indistinguishable from a real
+one, so a gap is the safer of the two.
