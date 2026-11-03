@@ -12,7 +12,8 @@ documents, which remain the place to read *why* things are the way they are. The
 | Page | What it is |
 |---|---|
 | [ARCHITECTURE.md](ARCHITECTURE.md) | **Start here.** Two slots and the marker that selects them, the boot order, why there is no automatic rollback to stock, the trial after an image install, recovery in order of severity, the build pipeline |
-| [MOONRAKER-API.md](MOONRAKER-API.md) | **59** `machine.nebulaos.*` endpoints: HTTP method, JSON-RPC name, handler, the request parameters each handler reads with defaults, and - for 43 of them - the `nebulaos-osconfig` call they make and the keys that helper returns |
+| [MOONRAKER-API.md](MOONRAKER-API.md) | **59** `machine.nebulaos.*` endpoints: HTTP method, JSON-RPC name, handler, the request parameters each handler reads with defaults, and - for 46 of them - the `nebulaos-osconfig` call they make and the keys that helper returns |
+| [OSCONFIG.md](OSCONFIG.md) | **18** `nebulaos_osconfig` helper modules - 189 public functions with the `DOMAIN VERB` that reaches each one and the keys it returns. Where the API reference stops |
 | [BOOT-SERVICES.md](BOOT-SERVICES.md) | **35** boot services in boot order, with each script's own stated purpose |
 
 `ARCHITECTURE.md` is hand-written: explanation cannot be extracted. Every factual claim in it
@@ -95,7 +96,7 @@ At the 1.0.0 release commit `70ad0b0` the manifest pins extensions `f498796` (br
 which keys that helper's own `return` statements carry. It is extracted with `ast` along the
 chain the page already describes, so nothing is transcribed by hand.
 
-Sixteen endpoints are **not** resolved and say so. Some handlers build their answer inside the
+Thirteen endpoints are **not** resolved and say so. Some handlers build their answer inside the
 Moonraker component rather than delegating one call; some helpers return a value the extractor
 cannot read. Those carry *Result keys not resolved from source* instead of a plausible list,
 which is the point: to a reader, an invented response example is indistinguishable from a real

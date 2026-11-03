@@ -70,7 +70,7 @@ this reference already describes - endpoint handler to its `_read`/`_write` call
 CLI dispatcher to the helper function, that function's `return` statements to their
 keys. Nothing is transcribed by hand.
 
-**Where it stops, and why that is said out loud.** Sixteen of the 59 endpoints could
+**Where it stops, and why that is said out loud.** 13 of the 59 endpoints could
 not be resolved this way: some handlers build their answer in the component rather
 than delegating a single call, and some helpers return a value this extractor cannot
 read. Those say *Result keys not resolved from source* rather than carrying a
@@ -80,6 +80,19 @@ the reader, which is exactly why guessing here would be worse than a gap.
 A key listed on a branch - added only when some condition holds - is still listed,
 because the response can carry it. The list is what the endpoint *may* return, not
 what it always returns.
+
+### Example values
+
+Three endpoints carry a table of values asserted by the repository's own tests,
+with the test named. That is the whole yield, and the number is the finding rather
+than a shortfall: `tests/nebulaos-osconfig-tests.py` is 4381 lines, but it mostly
+exercises the `nebulaos_osconfig` helper functions **directly** rather than through
+an endpoint, so it is not a source of per-endpoint examples at scale. A value is
+only attributed to an endpoint when the test calls exactly one, so it cannot land on
+the wrong one.
+
+The alternative - composing plausible example responses from the key names - was
+available and was not taken. It would have read better and been unfalsifiable.
 
 ## Endpoints
 
@@ -229,7 +242,9 @@ Result keys: `cache`, `config`, `config_error`, `custom_image_present`, `formats
 
 *No request parameters.*
 
-*Result keys not resolved from source - see [Responses](#responses).*
+Runs `nebulaos-osconfig camera defaults` -> `camera.defaults`.
+
+Result keys: `config`, `reenumerated`, `result`.
 
 ### `machine.nebulaos.camera.reset`
 
@@ -241,7 +256,9 @@ Result keys: `cache`, `config`, `config_error`, `custom_image_present`, `formats
 
 *No request parameters.*
 
-*Result keys not resolved from source - see [Responses](#responses).*
+Runs `nebulaos-osconfig camera reset` -> `camera.reset`.
+
+Result keys: `config`, `reenumerated`, `result`.
 
 ### `machine.nebulaos.camera.settings`
 
@@ -283,7 +300,9 @@ Result keys: `config`, `config_error`, `defaults`, `device`, `firmware`, `ir_mod
 
 *No request parameters.*
 
-*Result keys not resolved from source - see [Responses](#responses).*
+Runs `nebulaos-osconfig camera version` -> `camera.version`.
+
+Result keys: `firmware`, `result`.
 
 ### `machine.nebulaos.cleanup.creality`
 
@@ -694,6 +713,12 @@ Result keys: `channel`, `download`, `downloaded`, `last`, `running_version`.
 
 *Result keys not resolved from source - see [Responses](#responses).*
 
+From the repository's own tests:
+
+| Key | Asserted value | Test |
+|---|---|---|
+| the whole result | `{"result": "RECORDED"}` | `test_screen_report_recorded` |
+
 ### `machine.nebulaos.spoolman.remove`
 
 | | |
@@ -752,6 +777,14 @@ Result keys: `configured`, `host`, `port`, `server`.
 Runs `nebulaos-osconfig stats baseline` -> `stats.baseline`.
 
 Result keys: `sources`.
+
+From the repository's own tests:
+
+| Key | Asserted value | Test |
+|---|---|---|
+| `lifetime.print_time` | `7200.0` | `test_stats_endpoint_reads_moonraker_history` |
+| `nebulaos.by_status` | `{"completed": 3, "error": 1}` | `test_stats_endpoint_reads_moonraker_history` |
+| `nebulaos.print_time` | `7200.0` | `test_stats_endpoint_reads_moonraker_history` |
 
 ### `machine.nebulaos.storage`
 
@@ -836,6 +869,12 @@ Result keys: `applies`, `result`.
 | `message` | string | **required** |
 
 *Result keys not resolved from source - see [Responses](#responses).*
+
+From the repository's own tests:
+
+| Key | Asserted value | Test |
+|---|---|---|
+| the whole result | `{"result": "SENT"}` | `test_g98_notify_refused_console_line` |
 
 ### `machine.nebulaos.system.swap_slot`
 
