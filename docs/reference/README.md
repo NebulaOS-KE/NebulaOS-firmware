@@ -14,7 +14,8 @@ documents, which remain the place to read *why* things are the way they are. The
 | [ARCHITECTURE.md](ARCHITECTURE.md) | **Start here.** Two slots and the marker that selects them, the boot order, why there is no automatic rollback to stock, the trial after an image install, recovery in order of severity, the build pipeline |
 | [MOONRAKER-API.md](MOONRAKER-API.md) | **59** `machine.nebulaos.*` endpoints: HTTP method, JSON-RPC name, handler, the request parameters each handler reads with defaults, and - for 46 of them - the `nebulaos-osconfig` call they make and the keys that helper returns |
 | [OSCONFIG.md](OSCONFIG.md) | **18** `nebulaos_osconfig` helper modules - 189 public functions with the `DOMAIN VERB` that reaches each one and the keys it returns. Where the API reference stops |
-| [BOOT-SERVICES.md](BOOT-SERVICES.md) | **35** boot services in boot order, with each script's own stated purpose |
+| [BOOT-SERVICES.md](BOOT-SERVICES.md) | **35** boot services in boot order, each with its full header and the init verbs it really implements, read from its own `case "$1"` |
+| [RUNTIME-HELPERS.md](RUNTIME-HELPERS.md) | **57** executables the image installs outside `/etc/init.d`, each with what calls it - found by searching, not inferred - and its own header |
 
 `ARCHITECTURE.md` is hand-written: explanation cannot be extracted. Every factual claim in it
 names the file it came from, so any sentence can be re-checked.
