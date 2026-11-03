@@ -95,6 +95,13 @@ def parse_update_in(text):
     return [r for r in records if "img_name" in r]
 
 
+def dictionary_bytes(text):
+    """'192m' / '24' (7z -slt: a bare number is a power of two) -> bytes."""
+    if text[-1] in "kmg":
+        return int(text[:-1]) << {"k": 10, "m": 20, "g": 30}[text[-1]]
+    return 1 << int(text)
+
+
 def report():
     print()
     print("IMG_VALIDATION_PASS=%d" % len(PASS))
@@ -145,6 +152,18 @@ def main(argv):
             bad("the archive extracts with the derived secret", proc.stderr.strip()[:400])
             return report()
         ok("the archive extracts with the derived secret")
+
+        # The printer unpacks this archive in its own 248 MB of RAM (Run 23).
+        proc = subprocess.run(["7z", "l", "-slt", "-p%s" % secret, args.img],
+                              capture_output=True, text=True)
+        dicts = set(re.findall(r"LZMA2?:(\d+[kmg]?)", proc.stdout))
+        sizes = [dictionary_bytes(d) for d in dicts]
+        if proc.returncode == 0 and sizes and max(sizes) <= packer.DICTIONARY_MAX_BYTES:
+            ok("the LZMA dictionary fits the printer's RAM (%d MB)" % (max(sizes) >> 20))
+        else:
+            bad("the LZMA dictionary fits the printer's RAM (<= %d MB)"
+                % (packer.DICTIONARY_MAX_BYTES >> 20),
+                "%d MB" % (max(sizes) >> 20) if sizes else "not listed")
 
         # The stock updater looks in <file name without .img>/ (2026-10-29).
         want_top = os.path.basename(args.img)[:-len(".img")]

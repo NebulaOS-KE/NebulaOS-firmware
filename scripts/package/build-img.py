@@ -94,6 +94,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import rtos_logo  # noqa: E402
 
 CHUNK_BYTES = 1048576
+# LZMA dictionary of the envelope: what the printer must hold in RAM to unpack
+# it (see the 7z call). validate-img.py refuses a larger one.
+DICTIONARY = "16m"
+DICTIONARY_MAX_BYTES = 16 * 1024 * 1024
 BOARD_SHORT_NAME = "F005"
 SECRET_INPUT = "%sC3_7e_bz" % BOARD_SHORT_NAME
 SECRET_SALT = "cxswfile"
@@ -373,8 +377,15 @@ def build(args):
         # -mmt=off: multithreaded LZMA splits the stream differently depending on
         # how many cores the packing host has, which would make the output depend
         # on the machine rather than on the input.
+        # -md: the printer unpacks this archive itself (online update, image
+        # install, Creality's updater), and LZMA needs the whole dictionary in
+        # RAM. -mx=9 alone lets the host's 7-Zip choose it - 7-Zip 26 picked
+        # 192 MB, ~300 MB to unpack on a 248 MB printer, so the 1.0.0 online
+        # update ran the printer out of memory (Run 23). Pinned, it is also
+        # independent of the packing host's 7-Zip version.
         proc = subprocess.run(
-            ["7z", "a", "-t7z", "-mhe=on", "-mx=9", "-mmt=off", "-p%s" % secret, out, top],
+            ["7z", "a", "-t7z", "-mhe=on", "-mx=9", "-md=%s" % DICTIONARY, "-mmt=off",
+             "-p%s" % secret, out, top],
             capture_output=True, text=True, cwd=work,
         )
         if proc.returncode != 0:
