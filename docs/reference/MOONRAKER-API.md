@@ -70,7 +70,7 @@ this reference already describes - endpoint handler to its `_read`/`_write` call
 CLI dispatcher to the helper function, that function's `return` statements to their
 keys. Nothing is transcribed by hand.
 
-**Where it stops, and why that is said out loud.** 13 of the 59 endpoints could
+**Where it stops, and why that is said out loud.** 9 of the 59 endpoints could
 not be resolved this way: some handlers build their answer in the component rather
 than delegating a single call, and some helpers return a value this extractor cannot
 read. Those say *Result keys not resolved from source* rather than carrying a
@@ -342,7 +342,9 @@ Result keys: `freed_bytes`, `result`.
 
 *No request parameters.*
 
-*Result keys not resolved from source - see [Responses](#responses).*
+Runs `nebulaos-osconfig system cleanup-nebulaos-plan` -> `cleanup.nebulaos_plan`, `system.info`.
+
+Result keys: `after_clean_reset`, `build`, `bytes`, `clean_reset_pending`, `hostname`, `items`, `kernel`, `notices`, `sftp`, `slot`, `storage`.
 
 ### `machine.nebulaos.cleanup.plan`
 
@@ -354,7 +356,9 @@ Result keys: `freed_bytes`, `result`.
 
 *No request parameters.*
 
-*Result keys not resolved from source - see [Responses](#responses).*
+Runs `nebulaos-osconfig system cleanup-plan` -> `cleanup.plan`, `system.info`.
+
+Result keys: `after_clean_reset`, `build`, `bytes`, `clean_reset_pending`, `hostname`, `include_videos`, `items`, `kernel`, `notices`, `other_slot`, `sftp`, `slot`, `storage`, `videos_bytes`.
 
 ### `machine.nebulaos.display.brightness`
 
@@ -653,6 +657,8 @@ Result keys: `boot_state`, `config`, `config_error`, `last_known_good`, `live`, 
 |---|---|---|
 | `force` | bool | `false` |
 
+Runs `nebulaos-osconfig ota check` -> `ota.check`.
+
 *Result keys not resolved from source - see [Responses](#responses).*
 
 ### `machine.nebulaos.ota.discard`
@@ -796,7 +802,9 @@ From the repository's own tests:
 
 *No request parameters.*
 
-*Result keys not resolved from source - see [Responses](#responses).*
+Runs `nebulaos-osconfig system storage` -> `cleanup.storage`, `system.info`.
+
+Result keys: `after_clean_reset`, `at`, `build`, `clean_reset_pending`, `free_bytes`, `hostname`, `kernel`, `notices`, `other_slot`, `parts`, `sftp`, `slot`, `storage`, `total_bytes`.
 
 ### `machine.nebulaos.system.ack_clean_reset`
 
@@ -840,7 +848,9 @@ Result keys: `id`, `result`.
 |---|---|---|
 | `profile` | string | `"request"` |
 
-*Result keys not resolved from source - see [Responses](#responses).*
+Runs `nebulaos-osconfig system busy` -> `common.busy_state`, `system.info`.
+
+Result keys: `after_clean_reset`, `build`, `busy`, `clean_reset_pending`, `hostname`, `kernel`, `klippy`, `message`, `notices`, `profile`, `reason`, `sftp`, `slot`, `storage`.
 
 ### `machine.nebulaos.system.clean_reset`
 
