@@ -424,7 +424,7 @@ CAPTURE_PROFILES = {
     "screen-grab": ("S=/sys/class/graphics/fb0; for f in virtual_size bits_per_pixel stride pan name; do "
         "echo \"fb_$f=$(cat $S/$f 2>/dev/null)\"; done; "
         "echo \"display=$(wget -q -T 5 -O - http://127.0.0.1:7125/machine/nebulaos/display/status 2>/dev/null | head -c 600)\"; "
-        "echo '== fb0 gzip base64 begin'; gzip -c /dev/fb0 | base64; echo '== fb0 gzip base64 end'",
+        "echo '== fb0 gzip base64 begin'; gzip -c -f < /dev/fb0 | base64; echo '== fb0 gzip base64 end'",
         False, None, 60),
     # Why Klipper reports "-dirty" (Run 23, the docs agent's Under-the-Hood
     # question): which tracked file git sees as changed, by content or mode.
