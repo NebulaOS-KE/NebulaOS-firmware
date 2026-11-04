@@ -117,6 +117,13 @@ def locate_artifacts(source_head, ximage_sha, rootfs_sha):
         manifest = os.path.join(art, "build-manifest.txt")
         if not all(os.path.isfile(p) for p in (ximage, rootfs, manifest)):
             continue
+        # A run that never wrote its record was interrupted (a power cut,
+        # Run 23): its artifacts can hash right and still never be installed
+        # (nebulaos_evidence refuses them). Skip it so a finished run of the
+        # same commit is found instead of the earlier, dead one.
+        if not os.path.isfile(os.path.join(run_dir, ".nebulaos-build-verified")):
+            problems.append("%s: no build record (the build never finished)" % run)
+            continue
         got_x = sha256_file(ximage)
         got_r = sha256_file(rootfs)
         if got_x != ximage_sha:
