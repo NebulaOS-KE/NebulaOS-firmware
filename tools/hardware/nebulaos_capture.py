@@ -397,6 +397,26 @@ CAPTURE_PROFILES = {
         "echo '== work dir'; ls -la /usr/data/nebulaos/system/image-work 2>&1 | head -n 10; "
         "echo '== system.log: image'; grep -h 'nebulaos-osconfig: image' /opt/printer_data/logs/system.log 2>/dev/null | tail -n 20 | cut -c1-400",
         False, None, 60),
+    # Every read-only (GET) answer the screen and Mainsail use, whole, one
+    # "=== <path>" block each (Run 23, for the wiki: example responses, and
+    # real data behind the simulator's screenshots). GET only: no POST, no
+    # refresh, nothing that changes the printer. Network names and addresses
+    # are in it - redact before publishing.
+    "api-snapshot": ("M=http://127.0.0.1:7125; for p in "
+        "/machine/nebulaos/info /machine/nebulaos/network/status /machine/nebulaos/boot_display/status "
+        "/machine/nebulaos/boot_display/images /machine/nebulaos/logs/status /machine/nebulaos/storage "
+        "/machine/nebulaos/cleanup/plan /machine/nebulaos/cleanup/nebulaos/plan /machine/nebulaos/stats "
+        "/machine/nebulaos/display/status /machine/nebulaos/spoolman/status /machine/nebulaos/camera/status "
+        "/machine/nebulaos/wifi/status '/machine/nebulaos/system/busy?profile=request' "
+        "'/machine/nebulaos/system/busy?profile=restart' /machine/nebulaos/image/list "
+        "/machine/nebulaos/image/status /machine/nebulaos/ota/status /machine/nebulaos/mcu/status "
+        "/machine/nebulaos/mcu/files /machine/nebulaos/updates/readiness "
+        "/server/info /server/config /machine/system_info /machine/proc_stats /machine/update/status "
+        "'/server/history/list?limit=10' '/server/history/totals' '/server/files/list?root=gcodes' "
+        "/printer/info /printer/objects/list "
+        "'/printer/objects/query?webhooks&print_stats&virtual_sdcard&toolhead&extruder&heater_bed&fan&gcode_move&exclude_object&idle_timeout&filament_switch_sensor%20filament_sensor&tmc2209%20stepper_x&tmc2209%20stepper_y&tmc2209%20stepper_z&tmc2209%20extruder&display_status&motion_report&system_stats&bed_mesh' "
+        "; do echo \"=== $p\"; wget -q -T 30 -O - \"$M$p\" 2>&1 | head -c 60000; echo; done",
+        False, None, 240),
     # Are the imported statistics right (Run 23, Tim 2026-11-02): what the
     # Statistics page gets, the cached import, and the old Moonraker database
     # itself - its totals next to the sum of its own job rows and their dates.
