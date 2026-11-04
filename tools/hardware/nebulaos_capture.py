@@ -417,6 +417,22 @@ CAPTURE_PROFILES = {
         "'/printer/objects/query?webhooks&print_stats&virtual_sdcard&toolhead&extruder&heater_bed&fan&gcode_move&exclude_object&idle_timeout&filament_switch_sensor%20filament_sensor&tmc2209%20stepper_x&tmc2209%20stepper_y&tmc2209%20stepper_z&tmc2209%20extruder&display_status&motion_report&system_stats&bed_mesh' "
         "; do echo \"=== $p\"; wget -q -T 30 -O - \"$M$p\" 2>&1 | head -c 60000; echo; done",
         False, None, 240),
+    # Why Klipper reports "-dirty" (Run 23, the docs agent's Under-the-Hood
+    # question): which tracked file git sees as changed, by content or mode.
+    # --no-optional-locks: git does not rewrite the index. Read-only.
+    "klipper-dirty": ("K=$(readlink -f /opt/klipper); echo \"== checkout $K\"; "
+        "G='git --no-optional-locks'; for d in $K /usr/data/nebulaos/apps/nebulaos-klipper-extensions; do "
+        "[ -d $d/.git ] || [ -f $d/.git ] || continue; echo \"=== $d\"; "
+        "$G -C $d describe --always --tags --long --dirty 2>&1; $G -C $d rev-parse HEAD 2>&1; "
+        "echo '-- core.fileMode'; $G -C $d config --get core.fileMode 2>&1; "
+        "echo '-- status --porcelain'; $G -C $d status --porcelain 2>&1 | head -n 40; "
+        "echo '-- diff --stat'; $G -C $d diff --stat 2>&1 | tail -n 20; "
+        "echo '-- diff --summary'; $G -C $d diff --summary 2>&1 | head -n 20; "
+        "echo '-- diff (first 80 lines)'; $G -C $d diff 2>&1 | head -n 80; done; "
+        "echo '== which git'; command -v git; "
+        "echo '== compose log'; grep -h 'nebulaos-klipper-compose' /opt/printer_data/logs/system.log 2>/dev/null | tail -n 25 | cut -c1-300; "
+        "echo '== klippy.log version'; grep -h -m3 'Git version\\|Klipper version' /opt/printer_data/logs/klippy.log 2>/dev/null",
+        False, None, 60),
     # Are the imported statistics right (Run 23, Tim 2026-11-02): what the
     # Statistics page gets, the cached import, and the old Moonraker database
     # itself - its totals next to the sum of its own job rows and their dates.
