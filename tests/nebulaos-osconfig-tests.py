@@ -1549,6 +1549,27 @@ class OtaTests(unittest.TestCase):
         with self.assertRaises(self.e.common.Refused):
             self.o.download(now=1800000000)
 
+    def test_download_just_started_is_running_not_stopped(self):
+        # Run 23 OTA retest: polled before the worker took its lock, a fresh
+        # "running" state was reported as stopped and a second tap refused.
+        self.checked()
+        started, old = [], subprocess.Popen
+        subprocess.Popen = lambda *a, **k: started.append(a[0])
+        try:
+            self.assertEqual(self.o.download(now=1800000000)["result"], "STARTED")
+            self.assertEqual(self.o.status()["download"]["state"], "running")
+            with self.assertRaises(self.e.common.OsConfigError) as cm:
+                self.o.download(now=1800000000)
+            self.assertEqual(cm.exception.code, "BUSY")
+            self.assertEqual(len(started), 1)
+            state = json.load(open(self.o.DOWNLOAD_STATE))
+            state["updated"] -= self.o.WORKER_START_SECONDS + 1     # the worker never came
+            json.dump(state, open(self.o.DOWNLOAD_STATE, "w"))
+            st = self.o.status()["download"]
+            self.assertEqual((st["state"], st["error"]), ("failed", "INTERRUPTED"))
+        finally:
+            subprocess.Popen = old
+
     def test_download_becomes_the_ota_image_source(self):
         self.checked()
         urls = []
@@ -3242,6 +3263,20 @@ class ImageTests(unittest.TestCase):
             lock.release()
         self.assertIsNone(c.lock_holder(c.MAINTENANCE_LOCK))
 
+    def test_low_memory_does_not_stop_the_image_job(self):
+        # Run 23 OTA retest: the job's own unpack + write put memguard in P1
+        # (deny-maintenance); its stop points must not count that, while a
+        # request and the other points of no return still do.
+        c = self.e.common
+        os.makedirs(os.path.join(c.RUN_DIR, "memguard"), exist_ok=True)
+        open(os.path.join(c.RUN_DIR, "memguard", "deny-maintenance"), "w").close()
+        facts = {"klippy": "ready", "status": {}, "update_manager_busy": False}
+        self.assertFalse(c.busy_state("image_switch", "image-1", facts)["busy"])
+        self.assertEqual(c.busy_state("point_of_no_return", "image-1", facts)["reason"], "LOW_MEMORY")
+        self.assertEqual(c.busy_state("request", None, facts)["reason"], "LOW_MEMORY")
+        printing = dict(facts, status={"print_stats": {"state": "printing"}})
+        self.assertEqual(c.busy_state("image_switch", "image-1", printing)["reason"], "PRINTING")
+
     def test_stop_point_1_print_started_during_the_write(self):
         # S3: a print started from Mainsail while the image was written: stop
         # before the marker write, the written slot blanked, no switch, no
@@ -3253,7 +3288,7 @@ class ImageTests(unittest.TestCase):
         self.assertEqual((st["state"], st["phase"], st["error"]), ("failed", "stopped_print", "PRINTING"))
         self.assertTrue(st["stopped"] and st["target_cleared"])
         self.assertIn("Nothing was changed on the running system", st["message"])
-        self.assertEqual(calls, [("point_of_no_return", "image-7")])
+        self.assertEqual(calls, [("image_switch", "image-7")])
         self.assertFalse(os.path.exists(self.calls))                 # no swap, no reboot
         self.assertFalse(os.path.exists(self.i.TRIAL))
         self.assertEqual(open(os.path.join(self.dev, "mmcblk0p5"), "rb").read(64), b"\x00" * 64)

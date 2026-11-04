@@ -186,9 +186,21 @@ def _assets(listing):
 
 # -- the check ----------------------------------------------------------------
 
-def _download_state():
+# download() writes "running" and then starts the worker, a new Python
+# process that takes seconds on this CPU to take the lock. In that gap a
+# "running" state without the lock is a download about to start, not a
+# stopped one: reported as stopped, the screen said "The download stopped"
+# right after Download and the second tap was refused as already running
+# (Run 23 OTA retest, 2026-11-04). The worker refreshes "updated" with
+# every percent, so a worker that died is still reported after this.
+WORKER_START_SECONDS = 30
+
+
+def _download_state(now=None):
+    now = time.time() if now is None else now
     state, _ = common.read_json(DOWNLOAD_STATE)
-    if state and state.get("state") == "running" and not _download_running():
+    if state and state.get("state") == "running" and not _download_running() \
+            and not _starting(state, now):
         state = dict(state, state="failed", error="INTERRUPTED",
                      message="The download stopped; start it again.")
     return state
@@ -254,6 +266,12 @@ def check(force=False, fetch=None, now=None):
 
 # -- the download (background job) ----------------------------------------------
 
+def _starting(state, now):
+    """A "running" state written moments ago: its worker may not hold the lock yet."""
+    updated = state.get("updated")
+    return isinstance(updated, (int, float)) and 0 <= now - updated < WORKER_START_SECONDS
+
+
 def _download_running():
     """True while a download worker holds the lock."""
     os.makedirs(os.path.dirname(DOWNLOAD_LOCK), exist_ok=True)
@@ -286,7 +304,7 @@ def _clear_downloads(keep=None):
 
 def download(now=None):
     now = time.time() if now is None else now
-    if _download_running():
+    if _download_running() or (_download_state() or {}).get("state") == "running":
         raise invalid("BUSY", "a download is already running")
     cache, _ = common.read_json(CHECK_CACHE)
     if not (cache and cache.get("available") and isinstance(cache.get("img"), dict)):
