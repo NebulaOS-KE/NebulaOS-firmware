@@ -386,6 +386,17 @@ CAPTURE_PROFILES = {
         "python3 -c \"import sys,urllib.request as u; r=u.Request(sys.argv[1],method='HEAD',headers={'User-Agent':'NebulaOS-ota'}); "
         "x=u.urlopen(r,timeout=20); print(x.status, x.geturl()[:120])\" $u 2>&1 | tail -n 2; done",
         False, None, 90),
+    # Why a system image install ended as it did (Run 23 OTA retest, Tim
+    # 2026-11-04: "print is running" with no print): the job state with its
+    # busy reason, the last result, a pending trial, osconfig's image status
+    # and the system log's image lines. Read-only.
+    "image-state": ("echo '== job state'; cat /run/nebulaos/image-update/state.json 2>&1 | head -c 3000; echo; "
+        "echo '== last'; cat /usr/data/nebulaos/system/image-update-last.json 2>&1 | head -c 3000; echo; "
+        "echo '== trial'; cat /usr/data/nebulaos/system/image-update-trial.json 2>&1 | head -c 2000; echo; "
+        "echo '== osconfig image status'; /usr/libexec/nebulaos/nebulaos-osconfig image status 2>&1 | head -c 4000; echo; "
+        "echo '== work dir'; ls -la /usr/data/nebulaos/system/image-work 2>&1 | head -n 10; "
+        "echo '== system.log: image'; grep -h 'nebulaos-osconfig: image' /opt/printer_data/logs/system.log 2>/dev/null | tail -n 20 | cut -c1-400",
+        False, None, 60),
     # Are the imported statistics right (Run 23, Tim 2026-11-02): what the
     # Statistics page gets, the cached import, and the old Moonraker database
     # itself - its totals next to the sum of its own job rows and their dates.
