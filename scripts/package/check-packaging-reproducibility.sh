@@ -123,13 +123,25 @@ for R in A B; do
     >/dev/null 2>&1 || die ".img packaging run $R failed"
 done
 
+# The compressed DATA stream must be the same size. The whole archive need not:
+# with -mhe=on the header carries the random AES IV and is itself compressed
+# before it is encrypted, so its length varies in 16-byte steps from run to
+# run (measured, Run 23: headers 4114 vs 4082 bytes over identical data
+# streams). That was the "intermittent" FAIL of this check.
+data_size() { # IMG -> physical size minus header size
+  7z l -slt -p"$SECRET" "$1" 2>/dev/null | awk -F' = ' '
+    /^Physical Size = /{p=$2} /^Headers Size = /{h=$2} END{if (p && h) print p - h}'
+}
 SIZE_A=$(stat -c %s "$WORK/A/$IMG_NAME"); SIZE_B=$(stat -c %s "$WORK/B/$IMG_NAME")
-if [ "$SIZE_A" = "$SIZE_B" ]; then
-  printf 'PASS  .img archives are the same size (%s bytes) - the compressed stream is deterministic\n' "$SIZE_A"
+DATA_A=$(data_size "$WORK/A/$IMG_NAME"); DATA_B=$(data_size "$WORK/B/$IMG_NAME")
+if [ -n "$DATA_A" ] && [ "$DATA_A" = "$DATA_B" ]; then
+  printf 'PASS  .img compressed data streams are the same size (%s bytes) - the compression is deterministic\n' "$DATA_A"
 else
-  printf 'FAIL  .img archives are the same size\n       A=%s B=%s\n' "$SIZE_A" "$SIZE_B"
+  printf 'FAIL  .img compressed data streams are the same size\n       A=%s B=%s\n' "${DATA_A:-unread}" "${DATA_B:-unread}"
   FAIL=$((FAIL+1))
 fi
+[ "$SIZE_A" = "$SIZE_B" ] || printf 'INFO  .img archives differ by %s bytes, all in the encrypted header (random IV)\n' \
+  "$((SIZE_A - SIZE_B))"
 
 for R in A B; do
   mkdir -p "$WORK/x$R"
