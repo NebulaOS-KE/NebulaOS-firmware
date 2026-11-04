@@ -417,6 +417,15 @@ CAPTURE_PROFILES = {
         "'/printer/objects/query?webhooks&print_stats&virtual_sdcard&toolhead&extruder&heater_bed&fan&gcode_move&exclude_object&idle_timeout&filament_switch_sensor%20filament_sensor&tmc2209%20stepper_x&tmc2209%20stepper_y&tmc2209%20stepper_z&tmc2209%20extruder&display_status&motion_report&system_stats&bed_mesh' "
         "; do echo \"=== $p\"; wget -q -T 30 -O - \"$M$p\" 2>&1 | head -c 60000; echo; done",
         False, None, 240),
+    # What the touchscreen shows right now, pixel for pixel (Run 23, wiki
+    # screenshots of pages only a live printer can fill). The whole
+    # framebuffer, gzip+base64 between markers, plus the geometry and pan
+    # offset to decode it. Reading /dev/fb0 changes nothing on screen.
+    "screen-grab": ("S=/sys/class/graphics/fb0; for f in virtual_size bits_per_pixel stride pan name; do "
+        "echo \"fb_$f=$(cat $S/$f 2>/dev/null)\"; done; "
+        "echo \"display=$(wget -q -T 5 -O - http://127.0.0.1:7125/machine/nebulaos/display/status 2>/dev/null | head -c 600)\"; "
+        "echo '== fb0 gzip base64 begin'; gzip -c /dev/fb0 | base64; echo '== fb0 gzip base64 end'",
+        False, None, 60),
     # Why Klipper reports "-dirty" (Run 23, the docs agent's Under-the-Hood
     # question): which tracked file git sees as changed, by content or mode.
     # --no-optional-locks: git does not rewrite the index. Read-only.
