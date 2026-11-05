@@ -440,7 +440,7 @@ CAPTURE_PROFILES = {
         "echo '-- diff (first 80 lines)'; $G -C $d diff 2>&1 | head -n 80; done; "
         "echo '== which git'; command -v git; "
         "echo '== compose log'; grep -h 'nebulaos-klipper-compose' /opt/printer_data/logs/system.log 2>/dev/null | tail -n 25 | cut -c1-300; "
-        "echo '== klippy.log version'; grep -h -m3 'Git version\\|Klipper version' /opt/printer_data/logs/klippy.log 2>/dev/null",
+        "echo '== klippy.log version'; grep -h -A10 'Git version' /opt/printer_data/logs/klippy.log 2>/dev/null | grep -v '^Args\\|^CPU\\|^Python\\|^Start printer' | tail -n 40 | cut -c1-400",
         False, None, 60),
     # Are the imported statistics right (Run 23, Tim 2026-11-02): what the
     # Statistics page gets, the cached import, and the old Moonraker database
