@@ -253,7 +253,7 @@ _UPDATE_LOG = (
 
 # Profiles that may also run on Creality's system (the other slot): read-only
 # and meaningful from there.
-STOCK_CAPTURE_PROFILES = ("nebulaos-postmortem", "datafs-check-readonly")
+STOCK_CAPTURE_PROFILES = ("nebulaos-postmortem", "datafs-check-readonly", "stock-gui-state")
 
 # name -> (body, needs_diag, probe or None, timeout seconds)
 CAPTURE_PROFILES = {
@@ -425,6 +425,21 @@ CAPTURE_PROFILES = {
         "echo \"fb_$f=$(cat $S/$f 2>/dev/null)\"; done; "
         "echo \"display=$(wget -q -T 5 -O - http://127.0.0.1:7125/machine/nebulaos/display/status 2>/dev/null | head -c 600)\"; "
         "echo '== fb0 gzip base64 begin'; gzip -c -f < /dev/fb0 | base64; echo '== fb0 gzip base64 end'",
+        False, None, 60),
+    # Which touchscreen app stock Creality starts, and why (Run 23, Tim
+    # 2026-11-05: after installing Creality's .img, OpenKE's GuppyScreen came
+    # back instead of Creality's GUI). Init scripts, the overlay's changes,
+    # running GUI processes, leftovers on the data drive. Read-only; works on
+    # stock and NebulaOS.
+    "stock-gui-state": ("echo '== os'; cat /etc/ota_info 2>/dev/null | head -5; uname -r; "
+        "echo '== mounts'; grep -E ' / | /overlay| /usr/data' /proc/mounts; "
+        "echo '== init.d'; ls -la /etc/init.d/ 2>&1; "
+        "echo '== overlay upper etc/init.d'; for d in /overlay/upper /overlay/root /overlay; do [ -d $d/etc/init.d ] && { echo \"-- $d\"; ls -la $d/etc/init.d; }; done; "
+        "echo '== overlay upper (top)'; for d in /overlay/upper /overlay/root; do [ -d $d ] && find $d -maxdepth 3 2>/dev/null | head -n 80; done; "
+        "echo '== gui processes'; ps w 2>/dev/null | grep -i -E 'guppy|display|lvgl|Monitor|web-server|ks_|creality' | grep -v grep; "
+        "echo '== data leftovers'; ls -la /usr/data/ 2>&1 | head -n 40; ls -la /usr/data/guppyscreen 2>&1 | head -n 15; "
+        "echo '== init scripts mentioning guppy or display'; grep -l -i -E 'guppy|display-server|Monitor' /etc/init.d/* 2>/dev/null; "
+        "for f in $(grep -l -i -E 'guppy' /etc/init.d/* 2>/dev/null); do echo \"--- $f\"; head -n 40 $f; done",
         False, None, 60),
     # Why Klipper reports "-dirty" (Run 23, the docs agent's Under-the-Hood
     # question): which tracked file git sees as changed, by content or mode.
