@@ -34,6 +34,7 @@ one byte:
 
     Creality's stock ota_utils.sh  mmc_write_str: `echo $str > $dev`  -> "ota:kernel\\n"
     NebulaOS's /etc/ota_marker.sh  printf '%s\\n\\n'                    -> "ota:kernel\\n\\n"
+    stock's echo over a NebulaOS "ota:kernel2\\n\\n" (no truncation)  -> "ota:kernel\\n\\n\\n"
 
 and ballaswag/ingenic-usbboot checks `strncmp(ota, "ota:kernel\\n", 11)`, which
 accepts either. A parser that demanded "\\n\\n" would call a perfectly
@@ -67,7 +68,12 @@ TOKEN_KERNEL2 = b"ota:kernel2"
 
 # The accepted terminators, as an explicit set. Longest token first when
 # matching, so "ota:kernel2" can never be read as "ota:kernel" + junk.
-_ACCEPTED_TERMINATORS = (b"\n\n", b"\n")
+# Longest first. "\n\n\n" (Run 23, ke-dev 2026-11-05): stock's 11-byte
+# `echo ota:kernel > $dev` over a NebulaOS-written "ota:kernel2\n\n" (13 bytes)
+# does not truncate a block device, so it leaves "ota:kernel\n" + the old
+# "\n\n". usbboot's strncmp(.., "ota:kernel\n", 11) reads it as kernel, and
+# the printer booted slot 1 from it. Still enumerated: NUL must follow.
+_ACCEPTED_TERMINATORS = (b"\n\n\n", b"\n\n", b"\n")
 
 KERNEL = "ota:kernel"
 KERNEL2 = "ota:kernel2"
