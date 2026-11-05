@@ -14,6 +14,9 @@
 #     NebulaOS-Ender3V3KE-<ver>.img      Creality F005 OTA package
 #     NebulaOS-Ender3V3KE-<ver>.img.sha256
 #     NebulaOS-Ender3V3KE-<ver>.img.manifest.txt
+#     NebulaOS-Ender3V3KE-F005_ota_img_V9.<ver>.img  the same payloads, named for
+#                                        stock Creality's touchscreen USB updater
+#     (+ .sha256, .manifest.txt)
 #     NebulaOS-Ender3V3KE-<ver>.ingenic  Ingenic Cloner recovery package
 #     NebulaOS-Ender3V3KE-<ver>.ingenic.sha256
 #     NebulaOS-Ender3V3KE-<ver>.ingenic.manifest.txt
@@ -106,6 +109,20 @@ mkdir -p "$OUT" || die "cannot create $OUT"
 
 BASE="NebulaOS-Ender3V3KE-$OTA_VERSION"
 IMG="$OUT/$BASE.img"
+# Run 23 (ke-dev, 2026-11-05): stock Creality's touchscreen USB updater
+# (master-server UpgradeManager) only offers a file whose name contains
+# "ota_img_V<version>" with a version above the installed one (1.1.0.15 on
+# current stock), and local_ota_update.sh needs the archive's top folder to be
+# the file name without .img. So every release also ships the same payloads
+# as "...F005_ota_img_V9.<ver>.img": 9.x is above any Creality 1.x version.
+# Measured: a V9.0.9.9 file was offered and installed by stock 1.1.0.15.
+STOCK_VERSION=""
+STOCK_BASE=""
+if printf '%s' "$OTA_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+  STOCK_VERSION="9.$OTA_VERSION"
+  STOCK_BASE="NebulaOS-Ender3V3KE-F005_ota_img_V$STOCK_VERSION"
+fi
+STOCK_IMG=${STOCK_BASE:+$OUT/$STOCK_BASE.img}
 ING="$OUT/$BASE.ingenic"
 
 printf 'PACKAGE_RELEASE=STARTING\nSOURCE_HEAD=%s\nBUILD_MODE=%s\nBUILD_RUN=%s\nOUT=%s\n\n' \
@@ -161,6 +178,23 @@ python3 "$SCRIPT_DIR/validate-img.py" --img "$IMG" --ximage "$XIMAGE" --rootfs "
   > "$OUT/$BASE.img.validation.txt" 2>&1 \
   || { tail -20 "$OUT/$BASE.img.validation.txt" >&2; die ".img validation failed - see $OUT/$BASE.img.validation.txt"; }
 echo "  validation: $(grep '^IMG_VALIDATED=' "$OUT/$BASE.img.validation.txt")"
+
+# --- B2. the same .img, named for stock's touchscreen USB updater ----------
+echo
+if [ -n "$STOCK_BASE" ]; then
+  echo "== .img for the stock touchscreen ($STOCK_BASE.img) =="
+  python3 "$SCRIPT_DIR/build-img.py" \
+    --ximage "$XIMAGE" --rootfs "$ROOTFS" --manifest "$MANIFEST" --rtos "$RTOS" \
+    --out "$STOCK_IMG" --source-head "$SOURCE_HEAD" \
+    --source-date-epoch "$SOURCE_DATE_EPOCH" --ota-version "$STOCK_VERSION" \
+    || die "stock-touchscreen .img packaging failed"
+  python3 "$SCRIPT_DIR/validate-img.py" --img "$STOCK_IMG" --ximage "$XIMAGE" --rootfs "$ROOTFS" --rtos "$RTOS" \
+    > "$OUT/$STOCK_BASE.img.validation.txt" 2>&1 \
+    || { tail -20 "$OUT/$STOCK_BASE.img.validation.txt" >&2; die "stock-touchscreen .img validation failed - see $OUT/$STOCK_BASE.img.validation.txt"; }
+  echo "  validation: $(grep '^IMG_VALIDATED=' "$OUT/$STOCK_BASE.img.validation.txt")"
+else
+  echo "== no stock-touchscreen .img: '$OTA_VERSION' is not a plain x.y.z version =="
+fi
 
 # --- C. Ingenic Cloner .ingenic -------------------------------------------
 echo
@@ -229,6 +263,18 @@ PKG_COMMIT=$(git -C "$FW" rev-parse HEAD 2>/dev/null || echo unknown)
   echo "IMG_RTOS_PROVENANCE=$(grep -m1 '^RTOS_PROVENANCE=' "$IMG.manifest.txt" | cut -d= -f2-)"
   echo "RTOS_STOCK_SHA256=$(sha256sum "$STOCK_RTOS" | cut -d' ' -f1)"
   echo
+  echo "# --- B2. the same payloads, named for stock's touchscreen USB updater ---"
+  if [ -n "$STOCK_BASE" ]; then
+    echo "STOCK_IMG_ARTIFACT=$STOCK_BASE.img"
+    echo "STOCK_IMG_OTA_VERSION=$STOCK_VERSION"
+    echo "STOCK_IMG_SHA256=$(sha256sum "$STOCK_IMG" | cut -d' ' -f1)"
+    echo "STOCK_IMG_SIZE=$(stat -c %s "$STOCK_IMG")"
+    echo "STOCK_IMG_VALIDATED=$(grep -m1 '^IMG_VALIDATED=' "$OUT/$STOCK_BASE.img.validation.txt" | cut -d= -f2)"
+    echo "STOCK_IMG_CONSUMER=stock Creality touchscreen USB updater (needs ota_img_V<above stock> in the name)"
+  else
+    echo "STOCK_IMG_ARTIFACT=none"
+  fi
+  echo
   echo "# --- C. Ingenic Cloner recovery package ---"
   echo "INGENIC_ARTIFACT=$BASE.ingenic"
   echo "INGENIC_SHA256=$ING_SHA"
@@ -249,9 +295,9 @@ PKG_COMMIT=$(git -C "$FW" rev-parse HEAD 2>/dev/null || echo unknown)
 
 rm -f "$STOCK_RTOS" "$OUT/.zero2.bin"
 
-( cd "$OUT" && sha256sum "$BASE.img" "$BASE.ingenic" xImage rootfs.squashfs build-manifest.txt \
-    > SHA256SUMS ) || die "cannot write SHA256SUMS"
+( cd "$OUT" && sha256sum "$BASE.img" ${STOCK_BASE:+"$STOCK_BASE.img"} "$BASE.ingenic" \
+    xImage rootfs.squashfs build-manifest.txt > SHA256SUMS ) || die "cannot write SHA256SUMS"
 
 echo
-printf 'PACKAGE_RELEASE=COMPLETE\nRELEASE_DIR=%s\nSOURCE_HEAD=%s\nXIMAGE_SHA256=%s\nROOTFS_SQUASHFS_SHA256=%s\nIMG_SHA256=%s\nINGENIC_SHA256=%s\nALL_FORMATS_SAME_CANONICAL_CORE=YES\n' \
-  "$OUT" "$SOURCE_HEAD" "$X_SHA" "$R_SHA" "$IMG_SHA" "$ING_SHA"
+printf 'PACKAGE_RELEASE=COMPLETE\nRELEASE_DIR=%s\nSOURCE_HEAD=%s\nXIMAGE_SHA256=%s\nROOTFS_SQUASHFS_SHA256=%s\nIMG_SHA256=%s\nINGENIC_SHA256=%s\nSTOCK_IMG=%s\nALL_FORMATS_SAME_CANONICAL_CORE=YES\n' \
+  "$OUT" "$SOURCE_HEAD" "$X_SHA" "$R_SHA" "$IMG_SHA" "$ING_SHA" "${STOCK_BASE:+$STOCK_BASE.img}"
