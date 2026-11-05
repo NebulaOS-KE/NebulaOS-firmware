@@ -526,6 +526,37 @@ class _CountingFactory:
         return t
 
 
+class RestorePortReleaseTests(unittest.TestCase):
+    """Run 23 (ke-dev, 2026-11-05): after a successful flash restore() still
+    held the bootloader transport, and the post-flash identify (which refuses
+    a port any process holds) failed - a good flash reported FLASH_FAILED."""
+
+    def _restore(self, factory, cf):
+        def identify(port, baud):
+            still_open = [t for t in factory.transports if t.closed == 0]
+            if still_open:
+                raise RuntimeError("port_in_use_by_pid")
+            return NATIVE_VERSION, "build"
+        return restore_mod.restore(
+            creality_flash_module=cf, transport_factory=factory,
+            application_identify_fn=identify, restart_fn=lambda port, baud: "reset",
+            file_exists_fn=lambda path: True,
+            hash_fn=lambda path: known.NATIVE_CANDIDATE_001_SHA256,
+            read_bytes_fn=lambda path: b"fake-image-bytes", sleep_fn=lambda s: None)
+
+    def test_port_released_before_post_flash_identify(self):
+        f = _CountingFactory()
+        r = self._restore(f, FakeCrealityFlash(flash_should_succeed=True))
+        self.assertEqual(r.state, restore_mod.RESTORED_AND_VERIFIED, r.detail)
+        self.assertTrue(f.transports and all(t.closed == 1 for t in f.transports))
+
+    def test_port_released_when_flash_fails(self):
+        f = _CountingFactory()
+        r = self._restore(f, FakeCrealityFlash(flash_should_succeed=False))
+        self.assertEqual(r.state, restore_mod.FLASH_FAILED)
+        self.assertTrue(all(t.closed == 1 for t in f.transports))
+
+
 class HardwareFallbackTests(unittest.TestCase):
     """The pyserial fallback path (_check_hardware_identity), ke-dev
     2026-10-03: primary identify timed out and the fallback crashed on
