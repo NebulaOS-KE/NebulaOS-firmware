@@ -92,6 +92,12 @@ def combine_stats(baseline: Dict[str, Any], totals: Dict[str, Any],
              "longest_print": num(totals.get("longest_print")),
              "jobs": int(num(totals.get("total_jobs"))),
              "by_status": by_status, "recent": recent}
+    # Run 23 (ke-dev: jobs 16, by_status 7+9+4): Moonraker's total_jobs only
+    # grows when a job finishes; a job it relabels "interrupted" at start-up
+    # never reaches it. Count finished jobs from the history rows instead.
+    finished = sum(int(num(n)) for st, n in by_status.items() if st != "in_progress")
+    if by_status:
+        since["jobs"] = finished
     imported = {name: src for name, src in baseline.items()
                 if isinstance(src, dict) and src.get("status") == "imported"}
     before = max([num(src.get("print_time")) for src in imported.values()] + [0.])

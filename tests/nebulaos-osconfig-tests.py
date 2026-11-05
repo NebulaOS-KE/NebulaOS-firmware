@@ -3922,6 +3922,12 @@ class ComponentTests(unittest.TestCase):
         self.assertEqual(c["lifetime"]["print_time"], 363600.0)   # max(before) + since
         self.assertEqual(c["nebulaos"]["jobs"], 2)
         self.assertEqual(c["nebulaos"]["by_status"], {"completed": 1, "cancelled": 1})
+        # ke-dev, Run 23: Moonraker said 16, its history held 7 + 9 + 4 interrupted
+        ke = self.mod.combine_stats({}, {"total_jobs": 16},
+                                    {"completed": 7, "cancelled": 9, "interrupted": 4,
+                                     "in_progress": 1}, [])
+        self.assertEqual(ke["nebulaos"]["jobs"], 20)
+        self.assertEqual(self.mod.combine_stats({}, {"total_jobs": 3}, {}, [])["nebulaos"]["jobs"], 3)
         nothing = self.mod.combine_stats({}, {}, {}, [])
         self.assertEqual(nothing["lifetime"]["print_time"], 0.)
 
