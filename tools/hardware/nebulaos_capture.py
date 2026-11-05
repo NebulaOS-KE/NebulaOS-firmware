@@ -439,7 +439,9 @@ CAPTURE_PROFILES = {
         "echo '== gui processes'; ps w 2>/dev/null | grep -i -E 'guppy|display|lvgl|Monitor|web-server|ks_|creality' | grep -v grep; "
         "echo '== data leftovers'; ls -la /usr/data/ 2>&1 | head -n 40; ls -la /usr/data/guppyscreen 2>&1 | head -n 15; "
         "echo '== init scripts mentioning guppy or display'; grep -l -i -E 'guppy|display-server|Monitor' /etc/init.d/* 2>/dev/null; "
-        "for f in $(grep -l -i -E 'guppy' /etc/init.d/* 2>/dev/null); do echo \"--- $f\"; head -n 40 $f; done",
+        "for f in $(grep -l -i -E 'guppy' /etc/init.d/* 2>/dev/null); do echo \"--- $f\"; head -n 40 $f; done; "
+        "echo '== reinstall-creality.sh'; cat /usr/data/guppyscreen/reinstall-creality.sh 2>&1 | head -n 60; "
+        "echo '== lower S99start_app / S12boot_display'; ls -la /rom/etc/init.d/S99start_app /rom/etc/init.d/S12boot_display 2>&1",
         False, None, 60),
     # Why Klipper reports "-dirty" (Run 23, the docs agent's Under-the-Hood
     # question): which tracked file git sees as changed, by content or mode.
