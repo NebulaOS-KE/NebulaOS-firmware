@@ -661,6 +661,18 @@ else
     fail "Run 23: FLASH_FAILED notice not removed after PASS"
 fi
 
+mock_hwmm="$WORK/mock_hw_mismatch.py"
+sed 's/^print("MCU_RESTORE_DETAIL=.*$/print("MCU_RESTORE_DETAIL=hardware_identity_mismatch: got=x allowed=y")/' "$mock_ff" > "$mock_hwmm"
+chmod +x "$mock_hwmm"
+rm -f "$G76_NOTICE"
+MCU_GUARD_STATE="$WORK/hwmm.state" MCU_IDENTITY_CHECK="$mock_hwmm" MCU_UNREACHABLE_NOTICE="$G76_NOTICE" \
+    sh "$GUARD_SCRIPT" start > /dev/null 2>&1
+if [ ! -e "$G76_NOTICE" ] && grep -q '^MCU_GUARD_RESULT=FAIL' "$WORK/hwmm.state"; then
+    pass "Run 23: no power-cycle notice when a power cycle cannot help (hardware mismatch), still FAIL"
+else
+    fail "Run 23: hardware-mismatch FLASH_FAILED handled wrongly (notice present or not FAIL)"
+fi
+
 # Test with helper that produces empty output - should exit 0 with WARN.
 mock_empty="$WORK/mock_empty.py"
 cat > "$mock_empty" <<'MOCK_EOF'

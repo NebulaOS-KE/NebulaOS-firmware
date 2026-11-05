@@ -287,6 +287,7 @@ def restore(creality_flash_module=None, transport_factory=None,
                 f"restart_command_path_failed ({e}); "
                 f"fallback_magic_sequence_succeeded (hw={version_string})")
         except Exception as fallback_e:
+            _close_quietly(transport)
             return RestoreResult(
                 FLASH_FAILED,
                 f"could_not_enter_bootloader: restart_command_path=({e}) "
@@ -301,7 +302,7 @@ def restore(creality_flash_module=None, transport_factory=None,
         # bootloader from the step above).
         try:
             version_string = creality_flash_module.get_version(transport)
-        except creality_flash_module.FlashError as e:
+        except Exception as e:  # restore() must never raise (serial errors too)
             return RestoreResult(FLASH_FAILED, f"hw_id_query_failed: {e}")
         if not creality_flash_module.check_identity(version_string):
             return RestoreResult(

@@ -103,6 +103,16 @@ write_state() {
 # tells the user what fixes it - one notice (the G65 notice mechanism),
 # removed again as soon as the MCU answers.
 MCU_UNREACHABLE_NOTICE="${MCU_UNREACHABLE_NOTICE:-/usr/data/nebulaos/system/notices/mcu-unreachable.txt}"
+# A power cycle cannot fix a wrong board or a bad built-in firmware file;
+# every other FLASH_FAILED reason (bootloader not answering, transfer or
+# post-flash check failing) is what a power cycle does fix.
+restore_needs_other_fix() {
+    case "${_restore_detail:-}" in
+        hardware_identity_mismatch*|candidate_validation_error*) return 0 ;;
+    esac
+    return 1
+}
+
 mcu_unreachable_notice() {
     _nd=$(dirname "$MCU_UNREACHABLE_NOTICE")
     [ -d "$(dirname "$_nd")" ] || return 0
@@ -110,7 +120,7 @@ mcu_unreachable_notice() {
         mkdir -p "$_nd" 2>/dev/null
         printf '%s\n' "The printer's mainboard is not answering. Switch the printer off, wait 10 seconds and switch it on again." \
             > "$MCU_UNREACHABLE_NOTICE" 2>/dev/null
-    elif [ "${_restore_result:-}" = FLASH_FAILED ]; then
+    elif [ "${_restore_result:-}" = FLASH_FAILED ] && ! restore_needs_other_fix; then
         # Run 23 (ke-dev, 2026-11-05): after Creality's system restarts into
         # NebulaOS by software (its USB updater does), the mainboard will not
         # take new firmware until the power is cut. NebulaOS retries at every

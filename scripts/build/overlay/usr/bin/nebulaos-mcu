@@ -265,6 +265,13 @@ cmd_managed() {
     _restore_result=$(echo "$check_output" | sed -n 's/^MCU_RESTORE_RESULT=//p' | head -1)
     _guard_result=$(echo "$check_output" | sed -n 's/^MCU_GUARD_RESULT=//p' | tail -1)
 
+    if [ "$_restore_result" = "RESTORED_AND_VERIFIED" ]; then
+        set_managed "true"
+        echo "Native firmware restored and verified."
+        echo "Auto-restore enabled."
+        exit 0
+    fi
+
     case "$_application_class" in
         NATIVE_CANDIDATE_001)
             set_managed "true"
