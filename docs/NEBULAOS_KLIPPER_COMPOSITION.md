@@ -234,6 +234,19 @@ adds a step to capture `git -C <checkout> status --porcelain` directly from
 the booted device and confirm the WARNING line is now absent (or, if still
 present, to finally capture the exact dirty path that (1) didn't cover).
 
+### Resolved (Run 23, 2026-11-05): Klipper adds `-dirty` itself
+
+Measured on ke-dev (1.0.0, capture profile `klipper-dirty`): `git describe --dirty` in the
+Klipper checkout is clean, `git status --porcelain` is empty, and klippy.log lists
+"Untracked files: klippy/extras/autotune_tmc.py, ... (+52 files)" with **no** "Modified files"
+line. The `-dirty` comes from upstream `klippy/klippy.py` itself: at startup it appends `-dirty`
+to the version whenever untracked or ignored `.py` files or symlinks exist under
+`klippy/extras/` or `klippy/kinematics/` (it runs `git status --ignored`, so the exclude file
+does not hide them). That is Klipper's deliberate marker for "third-party modules present", and
+the composed extension symlinks are exactly that. The file-mode theory above was wrong; fix (1)
+is harmless and stays. No tracked Klipper file is modified, and nothing needs fixing: the only
+way to lose the suffix would be to stop linking modules into `klippy/extras/`.
+
 ## Recovery and crash safety
 
 Rebuilds always start from a **full teardown** rather than reconciling in
