@@ -484,6 +484,24 @@ CAPTURE_PROFILES = {
         "echo '== settings'; wget -q -T 5 -O - 'http://127.0.0.1:7125/machine/timelapse/settings' 2>&1 | head -c 2500; echo; "
         "echo '== moonraker.log: timelapse'; grep -hi timelapse /opt/printer_data/logs/moonraker.log 2>/dev/null | tail -n 60 | cut -c1-250",
         False, None, 60),
+    # Black box (Run 24, 2026-11-06): why the last boot ended and what was
+    # kept - S02nebulaos-blackbox's verdict, the reset history, the crash
+    # evidence (heads and tails), the SoC reset status, pstore now and the
+    # heartbeat daemon. Read-only.
+    "blackbox": ("echo '== now'; date; uptime; "
+        "echo '== last-reset'; cat /run/nebulaos/last-reset 2>&1; "
+        "N=/usr/data/nebulaos/logs; echo '== reset-history (last 20)'; tail -n 20 $N/reset-history.log 2>&1; "
+        "echo '== reset status'; for f in nebulaos_reset_rsr nebulaos_reset_cppsr; do "
+        "echo \"$f=$(cat /sys/module/ingenic_wdt/parameters/$f 2>&1)\"; done; dmesg | grep -E 'ingenic_wdt|ramoops|pstore' | cut -c1-200; "
+        "echo '== pstore now'; grep pstore /proc/mounts; ls -la /sys/fs/pstore 2>&1; ls -la /dev/pmsg0 2>&1; "
+        "echo '== heartbeat daemon'; ps -o pid,args | grep '[n]ebulaos-blackbox heartbeat'; "
+        "cat /proc/$(cat /var/run/nebulaos-heartbeat.pid 2>/dev/null)/sched 2>/dev/null | grep -E '^policy|^prio'; "
+        "echo '== crash evidence'; ls -la $N/crash 2>&1; for f in $N/crash/*; do [ -f \"$f\" ] || continue; "
+        "echo \"--- $f ($(wc -l < \"$f\") lines)\"; head -n 5 \"$f\" | cut -c1-250; echo '...'; tail -n 25 \"$f\" | cut -c1-250; done; "
+        "echo '== previous-boot-kernel.log (last 30)'; tail -n 30 $N/previous-boot-kernel.log 2>&1 | cut -c1-250; "
+        "echo '== notices'; ls -la /usr/data/nebulaos/system/notices 2>&1; cat /usr/data/nebulaos/system/notices/printer-restarted.txt 2>/dev/null; "
+        "echo '== i2c aborts this boot'; dmesg | grep -c 'I2C txabrt'",
+        False, None, 60),
     # Live print state after a power-loss resume (Run 23, 2026-10-31):
     # what Klipper and Moonraker believe right now, and the screen's view.
     # Read-only.
