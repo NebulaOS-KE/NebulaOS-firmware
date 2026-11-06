@@ -53,6 +53,7 @@ LOG_DIR="${NEBULAOS_BLACKBOX_LOG_DIR:-$NEBULAOS_ROOT/logs}"
 CRASH_DIR="$LOG_DIR/crash"
 HISTORY="$LOG_DIR/reset-history.log"
 PREVIOUS="$LOG_DIR/previous-boot-kernel.log"
+PREVIOUS_HB="$LOG_DIR/previous-boot-heartbeat.log"
 NOTICES_DIR="${NEBULAOS_NOTICES_DIR:-$NEBULAOS_ROOT/system/notices}"
 NOTICE="$NOTICES_DIR/printer-restarted.txt"
 RUN_DIR="${NEBULAOS_BLACKBOX_RUN_DIR:-/run/nebulaos}"
@@ -144,6 +145,13 @@ collect() {
 	else
 		rm -f "$PREVIOUS"
 	fi
+	# ... and its heartbeat, so a partial hang that ended in a restart from
+	# the screen (no FREEZE, no crash copy) still leaves the evidence.
+	if [ -n "$pmsg" ]; then
+		cp "$pmsg" "$PREVIOUS_HB.tmp" 2>/dev/null && mv "$PREVIOUS_HB.tmp" "$PREVIOUS_HB"
+	else
+		rm -f "$PREVIOUS_HB"
+	fi
 
 	# The evidence of a freeze, a crash or an unexplained reset is kept.
 	case "$why" in
@@ -198,6 +206,8 @@ collect() {
 # One heartbeat line: hb <utc> up=<s> load=<1 5 15> run=<n> memavail=<kB>
 #   top=<comm>/<pid>/<policy><rtprio>:<cpu%>,...   (the 4 busiest since the
 #   previous line; policy f = FIFO, r = RR, o = other)
+#   blocked=<n>[:<comm>/<pid>,...]   tasks in uninterruptible sleep (D) now,
+#   up to 4 named - a process stuck on the eMMC or a driver shows here.
 heartbeat_line() {
 	prev="$1"; now="$2"; dt="$3"
 	# cat, not awk on the files: a process that exits mid-read makes awk
@@ -214,6 +224,7 @@ heartbeat_line() {
 		pid = substr(s, 1, o - 2); comm = substr(s, o + 1, c - o - 1)
 		n = split(substr(s, c + 2), r, " ")
 		if (n < 39) next
+		if (r[1] == "D") { nd++; if (nd <= 4) dl = dl (dl == "" ? "" : ",") comm "/" pid }
 		t = r[12] + r[13]
 		print pid, t > now
 		if (pid in p) {
@@ -234,7 +245,7 @@ heartbeat_line() {
 			out = out (out == "" ? "" : ",") nm[best] ":" pct "%"
 			dd[best] = 0
 		}
-		print out
+		print out " blocked=" (nd + 0) (dl == "" ? "" : ":" dl)
 	}'
 }
 

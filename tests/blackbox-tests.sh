@@ -74,6 +74,7 @@ grep -q 'boot after FREEZE reset_status=0x00000002 last_heartbeat=2026-11-06T13:
 	&& pass "freeze: reset-history line with the last heartbeat" || fail "freeze history: $(cat "$L/reset-history.log" 2>&1)"
 [ "$(ls "$L/crash" | grep -c -- '-FREEZE-')" = 2 ] && pass "freeze: kernel log and heartbeat kept in logs/crash" || fail "freeze crash dir: $(ls "$L/crash" 2>&1)"
 cmp -s "$C.freeze" "$L/previous-boot-kernel.log" && pass "freeze: previous-boot-kernel.log written" || fail "previous-boot-kernel.log"
+grep -q '^hb 2026-11-06T13:46:40Z' "$L/previous-boot-heartbeat.log" 2>/dev/null && pass "previous-boot-heartbeat.log written" || fail "previous-boot-heartbeat.log missing"
 [ -s "$N" ] && grep -q 'Report a problem' "$N" && pass "freeze: notice for the screen" || fail "freeze: no notice"
 [ -e "$WORK/ps/console-ramoops-0" ] && pass "freeze: the console record is not erased (that would wipe this boot's log)" || fail "freeze: console record erased"
 [ ! -e "$WORK/ps/pmsg-ramoops-0" ] && pass "freeze: the old heartbeat log is erased after reading" || fail "freeze: pmsg not erased"
@@ -146,7 +147,7 @@ NEBULAOS_PROC="$P" sh "$BB" heartbeat-line /nonexistent "$WORK/hb.prev" 10 >/dev
 stat_line 2063 "python3 klippy" 1200 250 0 0 > "$P/2063/stat"
 stat_line 2056 klipper_mcu 1400 100 49 1 > "$P/2056/stat"
 out=$(NEBULAOS_PROC="$P" sh "$BB" heartbeat-line "$WORK/hb.prev" "$WORK/hb.next" 10)
-check "heartbeat names the busiest first, with policy and RT priority" "$out" "klipper_mcu/2056/f49:90%,python3 klippy/2063/o0:25%"
+check "heartbeat names the busiest first, with policy and RT priority" "$out" "klipper_mcu/2056/f49:90%,python3 klippy/2063/o0:25% blocked=0"
 mkdir -p "$P/3"; stat_line 3 gone 1 1 0 0 > "$P/3/stat"; chmod 000 "$P/3/stat"
 NEBULAOS_PROC="$P" sh "$BB" heartbeat-line /nonexistent "$WORK/hb.p2" 10 >/dev/null
 stat_line 2056 klipper_mcu 1500 100 49 1 > "$P/2056/stat"
@@ -154,6 +155,13 @@ out=$(NEBULAOS_PROC="$P" sh "$BB" heartbeat-line "$WORK/hb.p2" "$WORK/hb.n2" 10)
 chmod 644 "$P/3/stat"
 case "$out" in klipper_mcu/2056/*) pass "an unreadable/vanished process does not empty the heartbeat line" ;; *) fail "unreadable stat broke the line: '$out'" ;; esac
 grep -q '^2056 1500$' "$WORK/hb.next" && pass "heartbeat keeps the new sample" || fail "heartbeat sample: $(cat "$WORK/hb.next" 2>&1)"
+
+# Blocked (D state) tasks are counted and named.
+mkdir -p "$P/77"; echo "77 (dropbear) D 1 1 1 0 -1 0 0 0 0 0 5 5 0 0 20 0 1 $(printf '0 %.0s' $(seq 21 39)) 0 0 0 0 0" > "$P/77/stat"
+out=$(NEBULAOS_PROC="$P" sh "$BB" heartbeat-line /nonexistent "$WORK/hb.p3" 10)
+case "$out" in *" blocked=1:dropbear/77") pass "heartbeat names a task blocked in D state" ;; *) fail "blocked: '$out'" ;; esac
+rm -rf "$P/77"
+grep -q 'previous-boot-heartbeat.log' "$BB" && pass "the previous heartbeat is always kept" || fail "previous heartbeat not kept"
 
 # --- init script ------------------------------------------------------------------
 grep -q 'chrt' "$INIT" && fail "heartbeat uses a real-time priority" || pass "heartbeat is not real-time (never above klipper_mcu/IRQ threads)"
