@@ -34,7 +34,7 @@ USB_DIR = os.environ.get("NEBULAOS_MCU_USB_DIR", "/opt/printer_data/gcodes/USB")
 CONFIG_DIR = os.environ.get("NEBULAOS_CONFIG_DIR", "/opt/printer_data/config")
 EXTRA_LOG_DIRS = [os.path.join(common.NEBULAOS_ROOT, d)
                   for d in ("logs", "logs/crash", "maintenance/logs", "system/diagnostics")]
-# Why the previous boot ended (S02nebulaos-blackbox, Run 24).
+# Why the previous boot ended (S03nebulaos-blackbox, Run 24).
 LAST_RESET_FILE = os.environ.get("NEBULAOS_LAST_RESET_FILE", "/run/nebulaos/last-reset")
 RESET_HISTORY = os.path.join(common.NEBULAOS_ROOT, "logs", "reset-history.log")
 # Single files outside those folders (the retention's own log).

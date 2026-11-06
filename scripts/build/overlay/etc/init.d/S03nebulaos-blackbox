@@ -3,11 +3,13 @@
 # nebulaos-blackbox (Run 24, 2026-11-06): at boot, why the previous boot
 # ended (pstore + SoC reset status -> /run/nebulaos/last-reset, logs/
 # reset-history.log, logs/crash/ after a freeze or crash); then the
-# heartbeat into /dev/pmsg0 for the next boot to read. See
-# /usr/libexec/nebulaos-blackbox.
+# heartbeat into /dev/pmsg0 for the next boot to read. At shutdown (rcK) a
+# "shutdown clean" line, so the next boot knows the restart was orderly.
+# See /usr/libexec/nebulaos-blackbox.
 #
-# S02: /usr/data is mounted (S01persistent-datastore), and this runs before
-# anything that could freeze the printer has started.
+# S03: after S02nebulaos-watchdog has counted this start and armed the
+# watchdog (a hang in collect is then reset like any other), and before
+# Klipper and the rest have started.
 
 BB=/usr/libexec/nebulaos-blackbox
 PIDFILE=/var/run/nebulaos-heartbeat.pid
@@ -16,9 +18,9 @@ start() {
 	"$BB" collect 2>/dev/null || true
 	cd / || true    # no daemon keeps a cwd on /usr/data
 	if [ -c /dev/pmsg0 ]; then
-		# FIFO 90: above klipper_mcu (49) and the IRQ threads, so a runaway
-		# real-time task cannot silence it. It sleeps ~all the time.
-		start-stop-daemon -S -b -m -p "$PIDFILE" -x /usr/bin/chrt -- -f 90 "$BB" heartbeat \
+		# SCHED_OTHER at nice -20, like the watchdog feeder: never above
+		# Klipper's real-time work (klipper_mcu FIFO 49, the IRQ threads).
+		start-stop-daemon -S -b -m -p "$PIDFILE" -N -20 -x "$BB" -- heartbeat \
 			|| echo "nebulaos-blackbox: heartbeat not started"
 	else
 		echo "nebulaos-blackbox: no /dev/pmsg0, heartbeat not started"
@@ -28,6 +30,7 @@ start() {
 stop() {
 	start-stop-daemon -K -q -p "$PIDFILE" 2>/dev/null
 	rm -f "$PIDFILE"
+	[ -c /dev/pmsg0 ] && "$BB" shutdown
 }
 
 case "$1" in

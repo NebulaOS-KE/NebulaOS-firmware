@@ -1,7 +1,7 @@
 #!/bin/sh
 #
 # Run 24 black box: /usr/libexec/nebulaos-blackbox (why the last boot ended,
-# kept evidence, notice, heartbeat line) and S02nebulaos-blackbox. Fake
+# kept evidence, notice, heartbeat line) and S03nebulaos-blackbox. Fake
 # pstore, watchdog parameters, /proc and log folders under a temp dir.
 #
 # Usage: sh tests/blackbox-tests.sh
@@ -11,7 +11,7 @@ SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 REPO_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
 OV="$REPO_ROOT/scripts/build/overlay"
 BB="$OV/usr/libexec/nebulaos-blackbox"
-INIT="$OV/etc/init.d/S02nebulaos-blackbox"
+INIT="$OV/etc/init.d/S03nebulaos-blackbox"
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/blackbox-tests.XXXXXX")
 [ -n "${WORK:-}" ] && [ -e "$WORK" ] || { echo "FATAL: mktemp failed" >&2; exit 1; }
 trap 'rm -rf "$WORK"' EXIT INT TERM
@@ -22,24 +22,31 @@ pass() { echo "PASS: $1"; PASS=$((PASS + 1)); }
 check() { if [ "$2" = "$3" ]; then pass "$1"; else fail "$1: got '$2', want '$3'"; fi; }
 
 [ -x "$BB" ] && pass "nebulaos-blackbox is executable" || fail "nebulaos-blackbox not executable"
-[ -x "$INIT" ] && pass "S02nebulaos-blackbox is executable" || fail "S02nebulaos-blackbox not executable"
+[ -x "$INIT" ] && pass "S03nebulaos-blackbox is executable" || fail "S03nebulaos-blackbox not executable"
 sh -n "$BB" && pass "nebulaos-blackbox parses" || fail "nebulaos-blackbox does not parse"
-sh -n "$INIT" && pass "S02nebulaos-blackbox parses" || fail "S02nebulaos-blackbox does not parse"
+sh -n "$INIT" && pass "S03nebulaos-blackbox parses" || fail "S03nebulaos-blackbox does not parse"
 
 # --- reason <console> <dump> <rsr> -------------------------------------------
 C="$WORK/console"
 printf '[ 100.0] normal line\n[ 101.0] reboot: Restarting system\n' > "$C.restart"
 printf '[ 100.0] normal line\n[ 101.0] reboot: Power down\n' > "$C.off"
 printf '[ 100.0] normal line\n[ 4147.0] still printing\n' > "$C.freeze"
-check "a panic dump is a CRASH" "$(sh "$BB" reason "$C.freeze" 1 2)" CRASH
-check "kernel log ending in 'Restarting system' is a RESTART" "$(sh "$BB" reason "$C.restart" 0 2)" RESTART
-check "kernel log ending in 'Power down' is POWER_OFF" "$(sh "$BB" reason "$C.off" 0 4)" POWER_OFF
-check "kernel log that just stops + watchdog reset is a FREEZE" "$(sh "$BB" reason "$C.freeze" 0 2)" FREEZE
-check "kernel log that just stops, reset status unknown, is a FREEZE" "$(sh "$BB" reason "$C.freeze" 0 "")" FREEZE
-check "kernel log that just stops + reset pin is UNKNOWN" "$(sh "$BB" reason "$C.freeze" 0 1)" UNKNOWN
-check "no pstore + power-on reset is POWER_ON" "$(sh "$BB" reason "" 0 4)" POWER_ON
-check "no pstore + nothing known is POWER_ON" "$(sh "$BB" reason "" 0 "")" POWER_ON
-check "no pstore + watchdog reset is UNKNOWN (RAM lost)" "$(sh "$BB" reason "" 0 2)" UNKNOWN
+M="$WORK/pmsg"
+printf 'hb 2026-11-06T13:46:30Z up=4136\nhb 2026-11-06T13:46:40Z up=4146\n' > "$M.hb"
+printf 'hb 2026-11-06T13:46:30Z up=4136\nshutdown clean 2026-11-06T13:46:41Z up=4147\n' > "$M.clean"
+printf 'shutdown clean 2026-11-06T13:40:00Z up=10\nhb 2026-11-06T13:46:40Z up=4146\n' > "$M.later"
+check "a panic dump is a CRASH, whatever else" "$(sh "$BB" reason "$C.freeze" 1 2 13621 "$M.clean")" CRASH
+check "heartbeat log ending in 'shutdown clean' is a RESTART (rcK)" "$(sh "$BB" reason "$C.freeze" 0 2 0 "$M.clean")" RESTART
+check "the reboot signature 0x3535 is a RESTART (also reboot -f; printk lost)" "$(sh "$BB" reason "$C.freeze" 0 2 13621 "$M.hb")" RESTART
+check "a 'shutdown clean' followed by heartbeats is not a restart" "$(sh "$BB" reason "$C.freeze" 0 2 0 "$M.later")" FREEZE
+check "kernel log ending in 'Restarting system' is a RESTART (secondary)" "$(sh "$BB" reason "$C.restart" 0 2 0 "")" RESTART
+check "kernel log ending in 'Power down' is POWER_OFF" "$(sh "$BB" reason "$C.off" 0 4 0 "")" POWER_OFF
+check "kernel log that just stops + watchdog reset + no signature is a FREEZE" "$(sh "$BB" reason "$C.freeze" 0 2 0 "$M.hb")" FREEZE
+check "no reset status from the kernel (old image) is UNKNOWN, not FREEZE" "$(sh "$BB" reason "$C.freeze" 0 "" "" "")" UNKNOWN
+check "kernel log that just stops + reset pin is UNKNOWN" "$(sh "$BB" reason "$C.freeze" 0 1 0 "")" UNKNOWN
+check "no pstore + power-on reset is POWER_ON" "$(sh "$BB" reason "" 0 4 0 "")" POWER_ON
+check "no pstore + no reset status is UNKNOWN" "$(sh "$BB" reason "" 0 "" "" "")" UNKNOWN
+check "no pstore + watchdog reset is UNKNOWN (RAM lost)" "$(sh "$BB" reason "" 0 2 0 "")" UNKNOWN
 
 # --- collect -------------------------------------------------------------------
 setup() {
@@ -129,7 +136,12 @@ check "heartbeat names the busiest first, with policy and RT priority" "$out" "k
 grep -q '^2056 1500$' "$WORK/hb.next" && pass "heartbeat keeps the new sample" || fail "heartbeat sample: $(cat "$WORK/hb.next" 2>&1)"
 
 # --- init script ------------------------------------------------------------------
-grep -q 'chrt.*-f 90' "$INIT" && pass "heartbeat runs at FIFO 90 (above klipper_mcu and IRQ threads)" || fail "heartbeat priority"
+grep -q 'chrt' "$INIT" && fail "heartbeat uses a real-time priority" || pass "heartbeat is not real-time (never above klipper_mcu/IRQ threads)"
+grep -q -- '-N -20' "$INIT" && pass "heartbeat at nice -20 like the watchdog feeder" || fail "heartbeat nice"
+grep -q 'sleep "$INTERVAL" || exit 1' "$BB" && pass "a failing sleep ends the heartbeat instead of spinning" || fail "heartbeat can spin"
+NEBULAOS_PMSG="$WORK/pm" NEBULAOS_PROC="$WORK/proc" sh "$BB" shutdown
+grep -q '^shutdown clean .* up=123.45$' "$WORK/pm" && pass "shutdown writes 'shutdown clean' into pmsg" || fail "shutdown mark: $(cat "$WORK/pm" 2>&1)"
+grep -q '"$BB" shutdown' "$INIT" && pass "stop (rcK) writes the shutdown mark" || fail "stop does not mark"
 grep -q '/dev/pmsg0' "$INIT" && pass "heartbeat only starts when /dev/pmsg0 exists" || fail "pmsg guard"
 
 echo

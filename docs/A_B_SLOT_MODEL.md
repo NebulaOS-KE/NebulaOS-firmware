@@ -196,6 +196,26 @@ platform reboot is a WDT reset, `soc-x2000/reset.c`), so:
   it never fires; `halt -f` skips rcK and leaves it armed - the printer resets after ~60 s;
 - Creality's stock rootfs never opens `/dev/watchdog`; a stock boot is unaffected.
 
+**Black box (Run 24, 1.0.2).** A watchdog reset alone leaves no evidence: the last minute of
+logs never reaches the eMMC. Kernel `842860a` keeps 1 MB of RAM at 0x0e000000 as pstore/ramoops
+(kernel log, panic dumps, `/dev/pmsg0`), panics after a 20 s soft lockup (dump kept, restart after
+10 s) and reads + clears the CPM reset status and the reboot signature at boot
+(`/sys/module/ingenic_wdt/parameters/nebulaos_reset_rsr`, `_cppsr`). `S03nebulaos-blackbox` runs
+after S02nebulaos-watchdog has counted and armed (a hang in it is reset like any other):
+
+- at boot `nebulaos-blackbox collect` decides why the previous boot ended - CRASH (panic dump),
+  RESTART (a "shutdown clean" pmsg line from rcK, or the 0x3535 reboot signature that every
+  software or panic restart writes and a watchdog fire never does), POWER_OFF, FREEZE (kernel log
+  in pstore, watchdog reset, none of the above), POWER_ON (RAM lost), UNKNOWN - into
+  `/run/nebulaos/last-reset` and `logs/reset-history.log`; after a FREEZE or CRASH it keeps the
+  evidence in `logs/crash/` (newest 5) and writes the `printer-restarted` notice. It never touches
+  the trial record, the slot or the watchdog: the verdict is evidence and a notice, nothing else;
+- the heartbeat writes one line every 10 s into `/dev/pmsg0` (load, memory, the busiest
+  processes with policy/RT priority) at SCHED_OTHER nice -20 like the feeder - never above
+  klipper_mcu or the IRQ threads;
+- a real power cut loses the RAM, so it reads as POWER_ON; the trial and rollback rules above
+  are unchanged.
+
 ## Related docs
 
 - `docs/DEVELOPER_INSTALL_FROM_STOCK.md` — the full first-install walkthrough

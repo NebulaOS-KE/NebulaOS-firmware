@@ -485,7 +485,7 @@ CAPTURE_PROFILES = {
         "echo '== moonraker.log: timelapse'; grep -hi timelapse /opt/printer_data/logs/moonraker.log 2>/dev/null | tail -n 60 | cut -c1-250",
         False, None, 60),
     # Black box (Run 24, 2026-11-06): why the last boot ended and what was
-    # kept - S02nebulaos-blackbox's verdict, the reset history, the crash
+    # kept - S03nebulaos-blackbox's verdict, the reset history, the crash
     # evidence (heads and tails), the SoC reset status, pstore now and the
     # heartbeat daemon. Read-only.
     "blackbox": ("echo '== now'; date; uptime; "

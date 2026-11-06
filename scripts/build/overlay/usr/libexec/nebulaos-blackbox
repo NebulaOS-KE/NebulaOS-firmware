@@ -10,26 +10,39 @@
 # ramoops, kernel halley5_v30.dts): its own log (console-ramoops-0), any
 # panic/oops dump (dmesg-ramoops-N) and the heartbeat below (pmsg-ramoops-0).
 #
-#   collect     once at boot (S02nebulaos-blackbox): read pstore and the SoC
+#   collect     once at boot (S03nebulaos-blackbox): read pstore and the SoC
 #               reset status, decide why the last boot ended, keep the
 #               evidence under logs/, empty pstore, show a notice after a
 #               freeze or crash.
-#   heartbeat   forever, from S02nebulaos-blackbox: every 10 s one line into
+#   heartbeat   forever, from S03nebulaos-blackbox: every 10 s one line into
 #               /dev/pmsg0 (RAM, no eMMC wear) with load, memory and the
-#               processes that used the most CPU since the last line. It runs
-#               at SCHED_FIFO 90, above klipper_mcu (49) and the IRQ threads
-#               (25-60), so a runaway real-time task cannot silence it - its
-#               last lines name that task. In a kernel stall nothing runs;
-#               then the time of the last line is the evidence.
+#               processes that used the most CPU since the last line,
+#               real-time tasks included. SCHED_OTHER at nice -20, like the
+#               watchdog feeder and never above Klipper's real-time work
+#               (klipper_mcu FIFO 49, the IRQ threads): RT throttling keeps
+#               it running beside a runaway real-time task, which its lines
+#               then name. In a kernel stall nothing runs; then the time of
+#               the last line is the evidence.
+#   shutdown    from S03nebulaos-blackbox stop (rcK): one "shutdown clean"
+#               line into /dev/pmsg0 - a synchronous RAM write, so the next
+#               boot knows this was an orderly restart.
 #
-# The reasons (REASON= in /run/nebulaos/last-reset and reset-history.log):
+# The reasons (REASON= in /run/nebulaos/last-reset and reset-history.log),
+# checked in this order:
 #   CRASH        a kernel panic or oops dump is in pstore
-#   FREEZE       the previous boot's kernel log is in pstore, it does not end
-#                in a restart or power-off, and the SoC says watchdog reset
-#   RESTART      the previous kernel log ends in "reboot: Restarting system"
-#   POWER_OFF    ... ends in "reboot: Power down" / "System halted"
-#   POWER_ON     nothing in pstore (RAM lost: switched on, or power cut)
-#   UNKNOWN      anything else (for example a reset-pin reset)
+#   RESTART      the heartbeat log ends in "shutdown clean" (rcK), or the
+#                SoC scratch word holds the kernel's reboot signature 0x3535
+#                (every software restart writes it, also `reboot -f`; a
+#                watchdog fire never does), or the kernel log ends in
+#                "reboot: Restarting system" (secondary: on PREEMPT_RT that
+#                line can miss pstore)
+#   POWER_OFF    the kernel log ends in "reboot: Power down"/"System halted"
+#   UNKNOWN      no reset status from the kernel (an image without the black
+#                box), or no evidence either way
+#   FREEZE       the previous boot's kernel log is in pstore, none of the
+#                above, and the SoC says watchdog reset
+#   POWER_ON     nothing in pstore and a power-on reset (RAM lost: switched
+#                on, or a power cut)
 #
 # Never fails the boot: every step is best effort.
 
@@ -63,25 +76,33 @@ hex() {
 	[ -n "$1" ] && printf '0x%08x' "$1" || echo "unknown"
 }
 
-# reason <console file or empty> <dump present 0/1> <rsr decimal or empty>
+REBOOT_SIGNATURE=13621    # 0x3535, soc-x2000/reset.c jz_wdt_restart
+
+# reason <console file or empty> <dump 0/1> <rsr decimal or empty>
+#        <cppsr decimal or empty> <pmsg file or empty>
 reason() {
-	console="$1"; dump="$2"; rsr="$3"
+	console="$1"; dump="$2"; rsr="$3"; cppsr="${4:-}"; pmsg="${5:-}"
 	if [ "$dump" = 1 ]; then echo CRASH; return; fi
+	if [ -n "$pmsg" ] && [ -s "$pmsg" ] && grep -v '^$' "$pmsg" 2>/dev/null | tail -n 1 | grep -q '^shutdown clean'; then
+		echo RESTART; return
+	fi
+	if [ -n "$cppsr" ] && [ $((cppsr & 65535)) -eq $REBOOT_SIGNATURE ]; then echo RESTART; return; fi
 	if [ -n "$console" ] && [ -s "$console" ]; then
 		tail_txt=$(tail -n 40 "$console" 2>/dev/null)
 		case "$tail_txt" in
 			*"reboot: Restarting system"*) echo RESTART; return ;;
 			*"reboot: Power down"*|*"System halted"*) echo POWER_OFF; return ;;
 		esac
-		if [ -z "$rsr" ] || [ $((rsr & 2)) -ne 0 ]; then echo FREEZE; return; fi
-		echo UNKNOWN; return
 	fi
-	if [ -n "$rsr" ] && [ $((rsr & 2)) -ne 0 ]; then
-		# Watchdog reset with RAM lost or no pstore: we cannot tell a
-		# software restart from a freeze.
-		echo UNKNOWN; return
+	if [ -z "$rsr" ]; then echo UNKNOWN; return; fi
+	if [ $((rsr & 2)) -ne 0 ]; then
+		# Watchdog reset: a freeze if the previous boot left its kernel
+		# log; with RAM lost we cannot tell.
+		if [ -n "$console" ] && [ -s "$console" ]; then echo FREEZE; else echo UNKNOWN; fi
+		return
 	fi
-	echo POWER_ON
+	if [ $((rsr & 4)) -ne 0 ] || [ "$rsr" = 0 ]; then echo POWER_ON; return; fi
+	echo UNKNOWN
 }
 
 keep_newest() {
@@ -106,7 +127,7 @@ collect() {
 	done
 	rsr=$(param nebulaos_reset_rsr)
 	cppsr=$(param nebulaos_reset_cppsr)
-	why=$(reason "$console" "$dump" "$rsr")
+	why=$(reason "$console" "$dump" "$rsr" "$cppsr" "$pmsg")
 	stamp=$(date -u +%Y%m%dT%H%M%SZ)
 	uptime_s=$(cut -d' ' -f1 "$PROC/uptime" 2>/dev/null)
 
@@ -157,7 +178,7 @@ collect() {
 	case "$why" in
 		CRASH|FREEZE)
 			mkdir -p "$NOTICES_DIR" 2>/dev/null
-			printf '%s\n' "The printer restarted by itself because its system stopped responding. A print that was running can be resumed. To help find the cause: Settings > System > Report a problem > Save logs to USB, and send the file to us." \
+			printf '%s\n' "The printer restarted by itself because its system stopped responding. If a print was running, check whether the screen offers to resume it. To help us find the cause: Settings > System > Report a problem > Save logs to USB, and send us the file." \
 				> "$NOTICE" 2>/dev/null ;;
 	esac
 	sync
@@ -212,7 +233,8 @@ heartbeat() {
 	: > "$prev"
 	t0=$(cut -d. -f1 "$PROC/uptime")
 	while :; do
-		sleep "$INTERVAL"
+		# A failing sleep (no memory to fork) must not become a busy loop.
+		sleep "$INTERVAL" || exit 1
 		t1=$(cut -d. -f1 "$PROC/uptime")
 		top=$(heartbeat_line "$prev" "$next" $((t1 - t0)))
 		mv -f "$next" "$prev" 2>/dev/null
@@ -224,9 +246,14 @@ heartbeat() {
 	done
 }
 
+shutdown_mark() {
+	echo "shutdown clean $(date -u +%Y-%m-%dT%H:%M:%SZ) up=$(cut -d' ' -f1 "$PROC/uptime")" > "$PMSG" 2>/dev/null
+}
+
 case "$1" in
 	collect) collect ;;
 	heartbeat) heartbeat ;;
+	shutdown) shutdown_mark ;;
 	reason) shift; reason "$@" ;;
 	heartbeat-line) shift; heartbeat_line "$@" ;;
 	*) echo "usage: $0 collect|heartbeat" >&2; exit 2 ;;
