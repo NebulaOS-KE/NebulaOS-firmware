@@ -57,7 +57,7 @@ setup() {
 	echo "0" > "$WORK/wdt/nebulaos_reset_cppsr"
 }
 collect() {
-	NEBULAOS_PSTORE_DIR="$WORK/ps" NEBULAOS_WDT_PARAMS="$WORK/wdt" NEBULAOS_ROOT="$WORK/root" \
+	NEBULAOS_PSTORE_ERASE=1 NEBULAOS_PSTORE_DIR="$WORK/ps" NEBULAOS_WDT_PARAMS="$WORK/wdt" NEBULAOS_ROOT="$WORK/root" \
 		NEBULAOS_BLACKBOX_RUN_DIR="$WORK/run" NEBULAOS_PROC="$WORK/proc" sh "$BB" collect >/dev/null 2>&1
 }
 L="$WORK/root/logs"
@@ -75,6 +75,8 @@ grep -q 'boot after FREEZE reset_status=0x00000002 last_heartbeat=2026-11-06T13:
 [ "$(ls "$L/crash" | grep -c -- '-FREEZE-')" = 2 ] && pass "freeze: kernel log and heartbeat kept in logs/crash" || fail "freeze crash dir: $(ls "$L/crash" 2>&1)"
 cmp -s "$C.freeze" "$L/previous-boot-kernel.log" && pass "freeze: previous-boot-kernel.log written" || fail "previous-boot-kernel.log"
 [ -s "$N" ] && grep -q 'Report a problem' "$N" && pass "freeze: notice for the screen" || fail "freeze: no notice"
+[ -e "$WORK/ps/console-ramoops-0" ] && pass "freeze: the console record is not erased (that would wipe this boot's log)" || fail "freeze: console record erased"
+[ ! -e "$WORK/ps/pmsg-ramoops-0" ] && pass "freeze: the old heartbeat log is erased after reading" || fail "freeze: pmsg not erased"
 
 setup 2
 rm -f "$N"
@@ -145,6 +147,12 @@ stat_line 2063 "python3 klippy" 1200 250 0 0 > "$P/2063/stat"
 stat_line 2056 klipper_mcu 1400 100 49 1 > "$P/2056/stat"
 out=$(NEBULAOS_PROC="$P" sh "$BB" heartbeat-line "$WORK/hb.prev" "$WORK/hb.next" 10)
 check "heartbeat names the busiest first, with policy and RT priority" "$out" "klipper_mcu/2056/f49:90%,python3 klippy/2063/o0:25%"
+mkdir -p "$P/3"; stat_line 3 gone 1 1 0 0 > "$P/3/stat"; chmod 000 "$P/3/stat"
+NEBULAOS_PROC="$P" sh "$BB" heartbeat-line /nonexistent "$WORK/hb.p2" 10 >/dev/null
+stat_line 2056 klipper_mcu 1500 100 49 1 > "$P/2056/stat"
+out=$(NEBULAOS_PROC="$P" sh "$BB" heartbeat-line "$WORK/hb.p2" "$WORK/hb.n2" 10)
+chmod 644 "$P/3/stat"
+case "$out" in klipper_mcu/2056/*) pass "an unreadable/vanished process does not empty the heartbeat line" ;; *) fail "unreadable stat broke the line: '$out'" ;; esac
 grep -q '^2056 1500$' "$WORK/hb.next" && pass "heartbeat keeps the new sample" || fail "heartbeat sample: $(cat "$WORK/hb.next" 2>&1)"
 
 # --- init script ------------------------------------------------------------------

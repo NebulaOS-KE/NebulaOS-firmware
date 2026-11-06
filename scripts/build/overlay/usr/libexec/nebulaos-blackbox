@@ -131,6 +131,9 @@ collect() {
 	rsr=$(param nebulaos_reset_rsr)
 	cppsr=$(param nebulaos_reset_cppsr)
 	why=$(reason "$console" "$dump" "$rsr" "$cppsr" "$pmsg")
+	# Read before pstore is emptied below.
+	last_hb=""
+	[ -n "$pmsg" ] && last_hb=$(grep '^hb ' "$pmsg" 2>/dev/null | tail -n 1 | cut -c1-200)
 	stamp=$(date -u +%Y%m%dT%H%M%SZ)
 	uptime_s=$(cut -d' ' -f1 "$PROC/uptime" 2>/dev/null)
 
@@ -154,8 +157,13 @@ collect() {
 			fi ;;
 	esac
 
-	# Empty pstore so the next boot sees only its own predecessor.
-	[ "$PSTORE_DIR" = /sys/fs/pstore ] && rm -f "$PSTORE_DIR"/* 2>/dev/null
+	# Free the panic dumps and the old heartbeat log, so the next boot sees
+	# only its own predecessor. Not the console record: erasing it also
+	# wipes this boot's kernel log written so far (ramoops zaps the live
+	# zone), and the next boot replaces it anyway.
+	if [ "$PSTORE_DIR" = /sys/fs/pstore ] || [ -n "${NEBULAOS_PSTORE_ERASE:-}" ]; then
+		rm -f "$PSTORE_DIR"/dmesg-* "$PSTORE_DIR"/pmsg-* 2>/dev/null
+	fi
 
 	{
 		echo "REASON=$why"
@@ -164,15 +172,13 @@ collect() {
 		echo "PSTORE_CONSOLE=$([ -n "$console" ] && echo yes || echo no)"
 		echo "PSTORE_DUMP=$([ "$dump" = 1 ] && echo yes || echo no)"
 		echo "PSTORE_HEARTBEAT=$([ -n "$pmsg" ] && echo yes || echo no)"
-		[ -n "$pmsg" ] && echo "LAST_HEARTBEAT=$(grep '^hb ' "$pmsg" 2>/dev/null | tail -n 1 | cut -c1-200)"
+		[ -n "$pmsg" ] && echo "LAST_HEARTBEAT=$last_hb"
 		echo "CHECKED_AT=$stamp UPTIME=$uptime_s"
 	} > "$STATE.tmp" 2>/dev/null && mv "$STATE.tmp" "$STATE"
 
 	line="$stamp boot after $why reset_status=$(hex "$rsr")"
-	if [ -n "$pmsg" ]; then
-		last=$(grep '^hb ' "$pmsg" 2>/dev/null | tail -n 1 | cut -d' ' -f2)
-		[ -n "$last" ] && line="$line last_heartbeat=$last"
-	fi
+	last=$(echo "$last_hb" | cut -d' ' -f2)
+	[ -n "$last" ] && line="$line last_heartbeat=$last"
 	echo "$line" >> "$HISTORY" 2>/dev/null
 	if [ "$(wc -l < "$HISTORY" 2>/dev/null)" -gt "$KEEP_HISTORY" ] 2>/dev/null; then
 		tail -n "$KEEP_HISTORY" "$HISTORY" > "$HISTORY.tmp" && mv "$HISTORY.tmp" "$HISTORY"
@@ -194,12 +200,14 @@ collect() {
 #   previous line; policy f = FIFO, r = RR, o = other)
 heartbeat_line() {
 	prev="$1"; now="$2"; dt="$3"
-	awk -v prev="$prev" -v now="$now" -v dt="$dt" -v hz=100 '
+	# cat, not awk on the files: a process that exits mid-read makes awk
+	# stop at the missing file; cat skips it and goes on (one line each).
+	cat "$PROC"/[0-9]*/stat 2>/dev/null | awk -v prev="$prev" -v now="$now" -v dt="$dt" -v hz=100 '
 	BEGIN {
 		while ((getline l < prev) > 0) { split(l, a, " "); p[a[1]] = a[2] }
 		close(prev)
 	}
-	FNR == 1 {
+	{
 		s = $0; o = index(s, "("); c = 0
 		for (i = length(s); i > 0; i--) if (substr(s, i, 1) == ")") { c = i; break }
 		if (o == 0 || c == 0) next
@@ -227,7 +235,7 @@ heartbeat_line() {
 			dd[best] = 0
 		}
 		print out
-	}' "$PROC"/[0-9]*/stat 2>/dev/null
+	}'
 }
 
 heartbeat() {
