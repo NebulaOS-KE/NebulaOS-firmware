@@ -1232,7 +1232,7 @@ EXERCISE_PROFILES["pid-wrap"] = (
     "s=$(cut -d' ' -f3 \"$f\" 2>/dev/null); [ \"$s\" = D ] && cat \"$f\" | cut -d' ' -f1-3; done; "
     "echo '== dropbear / memguard'; ps -o pid,stat,args | grep -E '[d]ropbear|[m]emguard'; "
     "echo PID_WRAP_RESULT=DONE",
-    None,
+    "true",
     300)
 
 EXERCISE_PROFILES["watchdog-fire"] = (
