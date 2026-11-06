@@ -292,7 +292,7 @@ CAPTURE_PROFILES = {
         "echo; echo '== old boot uploads'; ls -la /usr/data/nebulaos/boot/uploads 2>/dev/null",
         False, None, 180),
     "versions": (_VERSIONS, False, None, 90),
-    # G125 follow-up (Tim 2026-10-29: the Spoolman page opens empty although the
+    # G125 follow-up (2026-10-29: the Spoolman page opens empty although the
     # server works), read-only: the file, the helper, Moonraker's endpoint and
     # what the screen logged about it.
     "spoolman": ("C=/opt/printer_data/config/moonraker.conf; echo \"== $C\"; ls -la $C; "
@@ -359,7 +359,7 @@ CAPTURE_PROFILES = {
         "|| ps | grep -E '[k]lippy|[m]oonraker|[n]ebulascreen'",
         False, None, 60),
     # Print statistics sources left by stock Creality and an earlier Moonraker
-    # (Run 23, Tim 2026-11-02: Statistics page + import): the stock lifetime
+    # (Run 23, 2026-11-02: Statistics page + import): the stock lifetime
     # counter and print history, and the old Moonraker database. Read-only.
     "stats-sources": ("C=/usr/data/creality/userdata; "
         "echo '== creality userdata'; ls -la $C $C/config $C/history 2>&1 | head -n 40; "
@@ -370,7 +370,7 @@ CAPTURE_PROFILES = {
         "for d in /usr/data/printer_data/database/*; do echo \"-- $d\"; wc -c < $d 2>/dev/null; head -c 16 $d 2>/dev/null | od -A d -c | head -n 2; done; "
         "echo '== NebulaOS moonraker history totals'; wget -q -T 5 -O - 'http://127.0.0.1:7125/server/history/totals' 2>&1 | head -c 1500; echo",
         False, None, 60),
-    # Why a system update over the internet failed (G79, Run 23 OTA test, Tim
+    # Why a system update over the internet failed (G79, Run 23 OTA test,
     # 2026-11-03): the check cache, the download state, the downloaded files,
     # free space, osconfig's ota status and the system log's ota lines, and
     # whether GitHub answers from the printer. Read-only (HEAD requests only).
@@ -386,7 +386,7 @@ CAPTURE_PROFILES = {
         "python3 -c \"import sys,urllib.request as u; r=u.Request(sys.argv[1],method='HEAD',headers={'User-Agent':'NebulaOS-ota'}); "
         "x=u.urlopen(r,timeout=20); print(x.status, x.geturl()[:120])\" $u 2>&1 | tail -n 2; done",
         False, None, 90),
-    # Why a system image install ended as it did (Run 23 OTA retest, Tim
+    # Why a system image install ended as it did (Run 23 OTA retest,
     # 2026-11-04: "print is running" with no print): the job state with its
     # busy reason, the last result, a pending trial, osconfig's image status
     # and the system log's image lines. Read-only.
@@ -426,7 +426,7 @@ CAPTURE_PROFILES = {
         "echo \"display=$(wget -q -T 5 -O - http://127.0.0.1:7125/machine/nebulaos/display/status 2>/dev/null | head -c 600)\"; "
         "echo '== fb0 gzip base64 begin'; gzip -c -f < /dev/fb0 | base64; echo '== fb0 gzip base64 end'",
         False, None, 60),
-    # Which touchscreen app stock Creality starts, and why (Run 23, Tim
+    # Which touchscreen app stock Creality starts, and why (Run 23,
     # 2026-11-05: after installing Creality's .img, OpenKE's GuppyScreen came
     # back instead of Creality's GUI). Init scripts, the overlay's changes,
     # running GUI processes, leftovers on the data drive. Read-only; works on
@@ -459,7 +459,7 @@ CAPTURE_PROFILES = {
         "echo '== compose log'; grep -h 'nebulaos-klipper-compose' /opt/printer_data/logs/system.log 2>/dev/null | tail -n 25 | cut -c1-300; "
         "echo '== klippy.log version'; grep -h -A10 'Git version' /opt/printer_data/logs/klippy.log 2>/dev/null | grep -v '^Args\\|^CPU\\|^Python\\|^Start printer' | tail -n 40 | cut -c1-400",
         False, None, 60),
-    # Are the imported statistics right (Run 23, Tim 2026-11-02): what the
+    # Are the imported statistics right (Run 23, 2026-11-02): what the
     # Statistics page gets, the cached import, and the old Moonraker database
     # itself - its totals next to the sum of its own job rows and their dates.
     # Read-only (SQLite opened mode=ro).
@@ -474,7 +474,7 @@ CAPTURE_PROFILES = {
         "print('rows', r[2], 'print h', round((r[3] or 0)/3600.0,2), 'from', time.strftime('%F',time.gmtime(r[0] or 0)), 'to', time.strftime('%F',time.gmtime(r[1] or 0))); "
         "[print(time.strftime('%F %H:%M',time.gmtime(x[0])),x[1],x[2],round(x[3]/60.0,1),'min') for x in c.execute('SELECT start_time,status,filename,print_duration FROM job_history ORDER BY start_time DESC LIMIT 8')]\" 2>&1",
         False, None, 60),
-    # Did a print make a timelapse (Run 23, Tim 2026-11-01): the rendered
+    # Did a print make a timelapse (Run 23, 2026-11-01): the rendered
     # videos, the frame directory, the timelapse settings and Moonraker's
     # timelapse lines. Read-only.
     "timelapse": ("echo '== now'; date; "
@@ -484,7 +484,7 @@ CAPTURE_PROFILES = {
         "echo '== settings'; wget -q -T 5 -O - 'http://127.0.0.1:7125/machine/timelapse/settings' 2>&1 | head -c 2500; echo; "
         "echo '== moonraker.log: timelapse'; grep -hi timelapse /opt/printer_data/logs/moonraker.log 2>/dev/null | tail -n 60 | cut -c1-250",
         False, None, 60),
-    # Live print state after a power-loss resume (Run 23, Tim 2026-10-31):
+    # Live print state after a power-loss resume (Run 23, 2026-10-31):
     # what Klipper and Moonraker believe right now, and the screen's view.
     # Read-only.
     "plr-state": ("echo '== now'; date; uptime; "
@@ -515,7 +515,7 @@ CAPTURE_PROFILES = {
         "d=json.load(u.urlopen(\"http://127.0.0.1:7125/server/gcode_store?count=300\",timeout=10))[\"result\"][\"gcode_store\"]; "
         "[print(time.strftime(\"%H:%M:%S\",time.localtime(e[\"time\"])),e[\"type\"],e[\"message\"][:200]) for e in d]' 2>&1 | tail -n 300",
         False, None, 60),
-    # Why Klippy crashed or shut down (Run 21 Q1 test, Tim 2026-10-26): the
+    # Why Klippy crashed or shut down (Run 21 Q1 test, 2026-10-26): the
     # live state, the last traceback / shutdown with context, the last
     # non-Stats lines, kernel OOM lines, memguard, the shaper CSVs in /tmp.
     # Read-only.
@@ -1187,7 +1187,7 @@ _KLIPPY_RESTORE = (
     "echo \"klippy_state_after=${s:-unknown} waited_s=$i\"; " + _QM + " snap klippy-restarted; fi")
 _APP_IDENTIFY = "/usr/bin/python3 /etc/nebulaos/mcu_application_identify.py; " + _QM + " snap"
 
-# G117(b) step 2 (Run 21, Tim 2026-10-28): the watchdog really resets a
+# G117(b) step 2 (Run 21, 2026-10-28): the watchdog really resets a
 # printer that stops feeding it. Idle printer only (no print, no heater
 # target). Uses S02nebulaos-watchdog's feeder when it runs (on by default
 # since Run 22), else arms BusyBox watchdog -F -T 60 -t 10 like S02;

@@ -88,7 +88,7 @@ KLIPPER:                       HEALTHY (state: ready)
 MOONRAKER:                     HEALTHY (REST API + websocket both responding correctly)
 GUPPYSCREEN:                   HEALTHY (connected, no "can't connect" errors)
 CAMERA:                        HEALTHY (/dev/video0+1, ustreamer + camera-idle-controller running)
-WIFI:                          HEALTHY (power save off, CID-derived MAC 16:3b:5d:14:20:90)
+WIFI:                          HEALTHY (power save off, CID-derived MAC 16:3b:5d:00:00:01)
 PINCTRL_WARNINGS:               ZERO (confirmed after the full compact-qualification exercise —
                                5 brightness transitions, 5 sleep/wake cycles, 3 touch-wake cycles,
                                one warm reboot — far more GPIO<->PWM transitions than the 4 that

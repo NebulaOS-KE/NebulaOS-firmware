@@ -24,7 +24,7 @@
 # uses up a start; after 3 unconfirmed starts this boot is not armed and S99
 # goes back to the previous slot (G122, docs/A_B_SLOT_MODEL.md).
 #
-# ON by default (Run 22, Tim 2026-10-28) after watchdog-arm and watchdog-fire
+# ON by default (Run 22, 2026-10-28) after watchdog-arm and watchdog-fire
 # passed on ke-dev (2026-10-28): it arms unless
 # $NEBULAOS_SYSTEM_DIR/watchdog.disable exists (the opt-out). The kernel fix
 # that makes arming safe (start() programs the timeout and clears the counter

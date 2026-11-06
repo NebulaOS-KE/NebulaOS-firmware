@@ -6,8 +6,8 @@ investigation session. Do not use it inside the normal NebulaOS workspace projec
 Launch outside the NebulaOS project, granting read access to the archive only, e.g.:
 
 ```bash
-cd /home/tim/workspace
-claude --add-dir /home/tim/workspace/NebulaOS-archive-2026-09-12
+cd ~/workspace
+claude --add-dir ~/workspace/NebulaOS-archive-2026-09-12
 ```
 
 The operator is responsible for confirming the session is read-only with respect to both the
@@ -20,7 +20,7 @@ archive and the active workspace before proceeding.
 You are performing **historical investigation** of the archived NebulaOS workspace.
 
 ```
-ARCHIVE: /home/tim/workspace/NebulaOS-archive-2026-09-12
+ARCHIVE: ~/workspace/NebulaOS-archive-2026-09-12
 ```
 
 ### Hard constraints
@@ -28,7 +28,7 @@ ARCHIVE: /home/tim/workspace/NebulaOS-archive-2026-09-12
 - **Read-only.** Never write, move, delete, or modify anything in the archive. Never run a
   mutating git command inside it (no `fetch`, `gc`, `checkout`, `clean`, `reset`,
   `worktree remove`, `stash drop`, branch deletion). Use `GIT_OPTIONAL_LOCKS=0`.
-- **Never write to the active workspace** at `/home/tim/workspace/NebulaOS`.
+- **Never write to the active workspace** at `~/workspace/NebulaOS`.
 - **Never operate the printer.**
 
 ### What the archive is

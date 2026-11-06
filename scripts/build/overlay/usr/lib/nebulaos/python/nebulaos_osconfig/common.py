@@ -205,7 +205,7 @@ def parse_kv(text):
 #   git                 the git wrapper inside a Moonraker update: not
 #                       update_manager busy
 #   restart             supervisorctl restart/stop of klipper, the screen's
-#                       Restart Klipper / Restart MCU: G95 (Tim 2026-10-22) -
+#                       Restart Klipper / Restart MCU: G95 (2026-10-22) -
 #                       only a POSITIVE answer refuses (print_stats printing/
 #                       paused, a heater target or idle_timeout "Printing" from
 #                       a live reply, or the memguard markers while Klippy

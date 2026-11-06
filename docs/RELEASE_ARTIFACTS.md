@@ -165,7 +165,7 @@ erase_list = "0x0,0x1fffff;0x300000,0xffffffff;"
 which erases `0x0..0x1fffff` and `0x300000..end`, leaving `0x200000..0x2fffff`
 alone. That hole is the `sn_mac` partition, holding your printer's **per-unit
 factory MAC address and serial number** — on the reference unit,
-`26096911004C14;FCEE11004C14;F005;NEBULA V1.0.0.1`. Stock reads its `wlan0` MAC
+`26090000000001;FCEE11000001;F005;NEBULA V1.0.0.1`. Stock reads its `wlan0` MAC
 from there. The value is programmed per unit, exists nowhere else, and cannot be
 regenerated.
 

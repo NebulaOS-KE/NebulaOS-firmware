@@ -115,7 +115,7 @@ Full raw lists: `artifacts/parity/stock/13-platform-devices.txt`,
 
 | Feature | Stock evidence | Custom evidence | Status | Notes |
 |---|---|---|---|---|
-| WiFi association + DHCP | Working (this is the reference stock behavior the whole WiFi investigation targeted) | `wpa_state=COMPLETED`, real DHCP lease `192.168.0.146`, reachable by `ping`/`ssh` - re-verified this session | PARITY_CONFIRMED | |
+| WiFi association + DHCP | Working (this is the reference stock behavior the whole WiFi investigation targeted) | `wpa_state=COMPLETED`, real DHCP lease `192.168.1.146`, reachable by `ping`/`ssh` - re-verified this session | PARITY_CONFIRMED | |
 | Bluetooth | `hci_uart_h5_kernel_4_4_94` loaded, real BT UART pins claimed | `uart3` pin claim fails - `i2c4` (touch) already owns the same two physical pins | **CUSTOM_REGRESSION** (known, documented, not fixed) | Real hardware pin-sharing constraint, not a driver bug - see kernel fork commit `095970ba2`'s `uart3` DTS comment. Fixing this needs stock's own dynamic pin hand-off behavior (`bt_enable_bsa.sh` releases `i2c4` before claiming `uart3`), not a static DT change. Touch is the higher-priority, confirmed-working peripheral; this stays a known limitation pending a real runtime pin-switching implementation. |
 
 ## App stack (custom-only, no stock equivalent)

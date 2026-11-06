@@ -1,12 +1,12 @@
 # NebulaOS / Ender-3 V3 KE: Weight-Free Load-Cell Contact Detection
 
-> Stored 2026-10-18 for gap **G83b** (Tim supplied this brief; decision: split
+> Stored 2026-10-18 for gap **G83b** (the owner supplied this brief; decision: split
 > load-cell work into G83a = guided known-weight calibration + guard, next run,
 > and G83b = this weight-free path, staged; stages A and B in the next run,
-> C/D need Tim at the printer with a scale). Content below is the brief as
+> C/D need the owner at the printer with a scale). Content below is the brief as
 > supplied.
 >
-> **Status 2026-10-22 (G99, Tim's decision - overrides this brief's
+> **Status 2026-10-22 (G99, the owner's decision - overrides this brief's
 > qualification rule; formal qualification deferred):** the raw-count profile
 > **`ke-stock-v1`** (trigger 6400 counts, polarity -1) is the **default for
 > everyone**. The user chooses the load cell mode on the screen's Load Cell

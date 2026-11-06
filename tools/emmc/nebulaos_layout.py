@@ -40,9 +40,9 @@ sn_mac IS THE ONE THAT CANNOT BE UNDONE
 /dev/mmcblk0p2 holds the per-unit factory MAC and serial number. A bounded
 read on the reference unit returned
 
-    26096911004C14;FCEE11004C14;F005;NEBULA V1.0.0.1;;;;;
+    26090000000001;FCEE11000001;F005;NEBULA V1.0.0.1;;;;;
 
-and stock's wlan0 uses exactly fc:ee:11:00:4c:14. The value is programmed per
+and stock's wlan0 uses exactly fc:ee:11:00:00:01. The value is programmed per
 unit, exists nowhere else on the device, and cannot be regenerated. The vendor's
 own erase policy deliberately skips it, and erase_list_preserves_sn_mac() exists
 so that no package this project builds can close that gap.

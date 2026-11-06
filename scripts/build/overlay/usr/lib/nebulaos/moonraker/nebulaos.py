@@ -71,7 +71,7 @@ BUSY_ENDPOINT_PROFILES = ("restart", "request")
 # The Python check's own timeouts are 3 s per request; a hung Klippy costs
 # one of them. Bounded here so a stuck helper never holds the screen.
 BUSY_TIMEOUT = 15.
-# Run 23 (Tim): Settings > Printer > Statistics - the most recent prints shown.
+# Run 23: Settings > Printer > Statistics - the most recent prints shown.
 STATS_RECENT = 5
 # G98: a refusal relayed by a NebulaOS process outside Moonraker (the
 # supervisorctl shim): one line, printable, bounded.
@@ -142,7 +142,7 @@ class NebulaOS:
             ("/machine/nebulaos/cleanup/creality", RequestType.POST, self._cleanup_creality),
             ("/machine/nebulaos/cleanup/nebulaos/plan", RequestType.GET, self._cleanup_nebulaos_plan),
             ("/machine/nebulaos/cleanup/nebulaos", RequestType.POST, self._cleanup_nebulaos),
-            # Run 23 (Tim): print statistics, before and since NebulaOS.
+            # Run 23: print statistics, before and since NebulaOS.
             ("/machine/nebulaos/stats", RequestType.GET, self._stats),
             ("/machine/nebulaos/boot_display/preview", RequestType.POST, self._bd_preview),
             ("/machine/nebulaos/boot_display/import_usb", RequestType.POST, self._bd_import_usb),

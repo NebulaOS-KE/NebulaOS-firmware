@@ -47,7 +47,7 @@ THE ONE UNCONDITIONAL REFUSAL
 
 `sn_mac` is NEVER writable, under any policy, including full-device recovery.
 It holds the per-unit factory MAC and serial number
-(26096911004C14;FCEE11004C14;F005;NEBULA V1.0.0.1 on the reference unit, which
+(26090000000001;FCEE11000001;F005;NEBULA V1.0.0.1 on the reference unit, which
 is the address stock's wlan0 actually uses). It is programmed per unit, exists
 nowhere else on the device, and cannot be regenerated or bought. Every other
 partition can, in principle, be restored from an image; this one cannot, so it

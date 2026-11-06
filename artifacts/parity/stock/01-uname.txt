@@ -1,1 +1,1 @@
-Linux Ender3V3KE-4C14 4.4.94 #7 SMP PREEMPT Tue Aug 6 09:11:30 CST 2024 mips GNU/Linux
+Linux Ender3V3KE-0001 4.4.94 #7 SMP PREEMPT Tue Aug 6 09:11:30 CST 2024 mips GNU/Linux

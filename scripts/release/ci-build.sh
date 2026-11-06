@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# The release build on a GitHub-hosted runner (Run 23, Tim 2026-10-29: the
+# The release build on a GitHub-hosted runner (Run 23, 2026-10-29: the
 # whole build runs on GitHub, free runners only). Called by the NebulaOS
 # repository's release workflow in a fresh clone of this repository checked
 # out at the commit being released:

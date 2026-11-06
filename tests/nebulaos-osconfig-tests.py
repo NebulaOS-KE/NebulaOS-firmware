@@ -545,7 +545,7 @@ class BootDisplayTests(unittest.TestCase):
                 b.resolve_image(bad)
 
     def test_builtin_is_the_blueprint_logo(self):
-        # Run 21 (Tim): "NebulaOS" shows the Blueprint logo on the boot screen
+        # Run 21: "NebulaOS" shows the Blueprint logo on the boot screen
         # as well, not the text card; the render and preview follow the file
         b = self.b
         b.PREVIEW_DIR = os.path.join(self.e.tmp, "preview")
@@ -998,7 +998,7 @@ class WifiTests(unittest.TestCase):
         self.assertEqual(self.w.connect({"ssid": "Mixed", "password": "longpassword"})["ssid"], "Mixed")
 
     def test_chosen_network_survives_the_next_scan(self):
-        # P9 on ke-dev (2026-10-15): connected to fsociety, the screen then
+        # P9 on ke-dev (2026-10-15): connected to OtherNetwork, the screen then
         # scanned, and wpa_supplicant picked the stronger saved network
         # (Office) again - all saved networks had the same priority. The
         # network the user chose last must win every later selection.
@@ -1173,10 +1173,10 @@ class SpoolmanTests(unittest.TestCase):
 
     def test_set_changes_only_the_server_line(self):
         self.conf(self.CONF)
-        out = self.s.set_server("192.168.0.20", "7913")
+        out = self.s.set_server("192.168.1.20", "7913")
         self.assertEqual((out["result"], out["restart"], out["port"]), ("APPLIED", "moonraker", 7913))
-        self.assertEqual(self.conf(), self.CONF.replace("http://10.0.0.5:7912", "http://192.168.0.20:7913"))
-        self.assertEqual(self.s.set_server("192.168.0.20", 7913)["result"], "UNCHANGED")
+        self.assertEqual(self.conf(), self.CONF.replace("http://10.0.0.5:7912", "http://192.168.1.20:7913"))
+        self.assertEqual(self.s.set_server("192.168.1.20", 7913)["result"], "UNCHANGED")
 
     def test_set_adds_the_section_when_missing(self):
         self.conf("[server]\nhost: 0.0.0.0\n\n\n")
@@ -2549,7 +2549,7 @@ class CrealityCleanupTests(unittest.TestCase):
         self.assertFalse(self.exists("creality"))
 
     def test_print_statistics_are_kept(self):
-        # Run 23 (Tim): the stock print counter and history and the old
+        # Run 23: the stock print counter and history and the old
         # Moonraker database stay for the Statistics page's import.
         stats = ["creality/userdata/config/user_data_not_deleted.json",
                  "creality/userdata/history/print_history_record.json",
@@ -2601,7 +2601,7 @@ class CrealityCleanupTests(unittest.TestCase):
 
 
 class StatisticsBaselineTests(unittest.TestCase):
-    """Run 23 (Tim): Settings > Printer > Statistics - what the printer
+    """Run 23: Settings > Printer > Statistics - what the printer
     printed before NebulaOS, imported once from Creality's counter and an
     earlier Moonraker's database, read-only."""
     KEY = "000102030405060708090a0b0c0d0e0f"
@@ -2727,7 +2727,7 @@ class StatisticsBaselineTests(unittest.TestCase):
 
 
 class FreeUpSpaceTests(unittest.TestCase):
-    """Run 23 (Tim): Storage > "Free up space" - NebulaOS's own leftovers
+    """Run 23: Storage > "Free up space" - NebulaOS's own leftovers
     through the real /etc/nebulaos-retention.sh --manual, never print files,
     configuration, calibration or Creality's data."""
 
@@ -3911,7 +3911,7 @@ class ComponentTests(unittest.TestCase):
     def argv(self):
         return open(self.log).read().splitlines()
 
-    # Run 23 (Tim): Settings > Printer > Statistics.
+    # Run 23: Settings > Printer > Statistics.
     def test_stats_combine_never_adds_overlapping_sources(self):
         c = self.mod.combine_stats(
             {"creality": {"status": "imported", "print_time": 360000.0},

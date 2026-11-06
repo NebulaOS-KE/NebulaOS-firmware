@@ -220,7 +220,7 @@ editing it, before spending 10+ minutes re-running a build against it.
 
 - Repo HEAD: `167ae1f` (main), kernel HEAD: `f7ff80a8a` (unchanged since
   the exFAT commit - no further kernel changes since).
-- Currently booted: **custom**, at `192.168.0.146` (stable this session).
+- Currently booted: **custom**, at `192.168.1.146` (stable this session).
 - Flashed image (commit `e4dbd775`, per its own build-manifest.txt) is
   running live and independently verified: USB flash drive (exFAT,
   read/write tested), USB UVC webcam (real MJPEG through ustreamer +
@@ -268,7 +268,7 @@ editing it, before spending 10+ minutes re-running a build against it.
   `mmc_read_str ota` first). Also saved to memory.
 - Stock and custom can be reachable at **different IPs simultaneously**
   after a marker-flip+reboot (found via `nmap -p 22 --open -T4
-  192.168.0.0/24`, hostname pattern `ender3v3ke-<hex>.lan`).
+  192.168.1.0/24`, hostname pattern `ender3v3ke-<hex>.lan`).
 - Post-reflash, Klipper reported `MCU 'mcu' config as it is shutdown` -
   the known, previously-documented one-off pattern after a flash-
   triggering reboot. Recovered with a single `FIRMWARE_RESTART` (not
@@ -314,8 +314,8 @@ unplug/reinsert cycle.
 3. **Final main commit**: `82c91a7`.
 4. **Final kernel commit**: `f7ff80a8a` (same as starting - no kernel
    source changes were needed, only `CONFIG_EXFAT_FS=y`).
-5. **Running custom IP**: `192.168.0.146` (stable across this session;
-   stock was seen at `192.168.0.231` during the two stock-boot windows -
+5. **Running custom IP**: `192.168.1.146` (stable across this session;
+   stock was seen at `192.168.1.231` during the two stock-boot windows -
    both may drift on future reboots, see the device-access memory).
 6. **Custom artifact hashes** (from the final, live-flashed
    `build-manifest.txt`): `xImage_sha256=1559c387d5a7dd0af539fba8af84892b

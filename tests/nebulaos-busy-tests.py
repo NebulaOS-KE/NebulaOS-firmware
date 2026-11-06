@@ -761,7 +761,7 @@ class BusyTests(unittest.TestCase):
         self.assertLess(took, 2.0)
 
     def test_g95_shim_hung_klippy_restart_allowed_within_budget(self):
-        # G95 (Tim 2026-10-22): a hung/unresponsive Klipper must ALWAYS be
+        # G95 (2026-10-22): a hung/unresponsive Klipper must ALWAYS be
         # restartable from Mainsail. A check that gets no answer from a live
         # Klippy allows the restart - even with memguard's print marker set -
         # and the worst case stays inside the budget (Moonraker kills the shim

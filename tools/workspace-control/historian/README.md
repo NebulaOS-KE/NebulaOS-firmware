@@ -39,7 +39,7 @@ transplanted as narrative. See `WORKSPACE_RULES.md` §7 and §16.
 The normal programming environment must never consult history automatically.
 ```
 
-Archive: `/home/tim/workspace/NebulaOS-archive-2026-09-12`
+Archive: `~/workspace/NebulaOS-archive-2026-09-12`
 
 `HISTORIAN_PROMPT.md` in this directory is the starting prompt for such a session. It is a
 template for a human to use deliberately. Nothing in the normal workspace invokes it.

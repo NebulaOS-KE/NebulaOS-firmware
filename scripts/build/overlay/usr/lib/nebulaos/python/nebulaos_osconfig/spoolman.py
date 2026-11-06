@@ -1,5 +1,5 @@
 # nebulaos_osconfig.spoolman - the Spoolman server Moonraker talks to (G125,
-# Run 22, Tim 2026-10-28: Settings > Connections > Spoolman on the screen, the
+# Run 22, 2026-10-28: Settings > Connections > Spoolman on the screen, the
 # same layout as the printer entry).
 #
 #   spoolman status                          {configured, server, host, port}

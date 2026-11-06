@@ -644,7 +644,7 @@ def op_reboot(args):
                        "was written; check it with `diagnose`." % (REBOOT_BACK_TIMEOUT, last))
 
 
-# G115 (Run 22, Tim 2026-10-28): install a packaged Creality-format .img the
+# G115 (Run 22, 2026-10-28): install a packaged Creality-format .img the
 # way a user does - with Creality's OWN updater on the stock slot. This op
 # only prepares it: the .img goes onto the shared data partition, the marker
 # selects slot 1 (Creality), the printer reboots into stock. The update itself

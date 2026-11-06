@@ -191,7 +191,7 @@ read-back — not in an allowlist.
 
 **One exception.** `sn_mac` is refused at the *capability* layer, under every
 policy including full-device recovery. It holds the per-unit factory MAC and
-serial (`26096911004C14;FCEE11004C14;F005;NEBULA V1.0.0.1` on the reference
+serial (`26090000000001;FCEE11000001;F005;NEBULA V1.0.0.1` on the reference
 unit — the address stock's `wlan0` actually uses). Every other partition can be
 restored from an image; this one cannot.
 
@@ -355,8 +355,8 @@ remaining risk.
 ## Enrolment is a human act
 
 ```sh
-tools/hardware/enroll-device.sh --device printer-01 --address 192.168.0.98 --os nebulaos
-tools/hardware/enroll-device.sh --device printer-01 --address 192.168.0.138 --os stock
+tools/hardware/enroll-device.sh --device printer-01 --address 192.168.1.98 --os nebulaos
+tools/hardware/enroll-device.sh --device printer-01 --address 192.168.1.138 --os stock
 ```
 
 Both OSes, before any install. Enrolment is the moment someone asserts *this

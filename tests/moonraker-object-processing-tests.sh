@@ -1,5 +1,5 @@
 #!/bin/sh
-# G110 (Run 20, Tim 2026-10-25): exclude objects stays on. Moonraker's
+# G110 (Run 20, 2026-10-25): exclude objects stays on. Moonraker's
 # [file_manager] enable_object_processing: True gives Klipper the object
 # outlines of every print - Exclude Object, START_PRINT's adaptive mesh and
 # the purge line next to the print depend on it. This checks the shipped

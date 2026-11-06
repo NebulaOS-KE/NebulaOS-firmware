@@ -4,13 +4,13 @@ Companion to [NEBULAOS_DISPLAY_OS_HARDWARE_ANALYSIS.md](NEBULAOS_DISPLAY_OS_HARD
 First powered-on phase of the display investigation mission (2026-08-01) - strictly read-only
 (SSH reads, procfs/sysfs/debugfs reads, kernel logs, live device-tree reads; no writes, no
 flashing, no reboots, no register writes, no ioctls). Raw captured output is preserved at
-`build-work/display-live-investigation/{identity-check,capture-192.168.0.243}/` (gitignored
+`build-work/display-live-investigation/{identity-check,capture-192.168.1.243}/` (gitignored
 scratch, matching this project's established convention).
 
 ## Discovery and identity confirmation
 
-Printer found at `192.168.0.243` (unchanged from last known - verified independently, not
-assumed). A full `/24` scan surfaced two other SSH-open hosts (`192.168.0.20`, `192.168.0.235`);
+Printer found at `192.168.1.243` (unchanged from last known - verified independently, not
+assumed). A full `/24` scan surfaced two other SSH-open hosts (`192.168.1.20`, `192.168.1.235`);
 neither gave the expected `SSH-2.0-dropbear_2022.83` banner on repeated attempts, ruling them out
 before any credentials were used.
 
@@ -18,7 +18,7 @@ Identity confirmed via 5 independent signals, 4 of which line up and one real di
 
 | Signal | Result | Verdict |
 |---|---|---|
-| wlan0 MAC | `16:3b:5d:14:20:90` | Exact match to the expected CID-derived MAC |
+| wlan0 MAC | `16:3b:5d:00:00:01` | Exact match to the expected CID-derived MAC |
 | Moonraker `/printer/info` | NebulaOS-specific paths (`/usr/data/nebulaos/envs/klipper/...`, `/opt/printer_data/config/printer.cfg`) | Matches this repo's overlay tree |
 | Root slot | `root=/dev/mmcblk0p8` -> `rootfs2` partlabel | Booted from the custom slot, not stock |
 | `/etc/ota_marker*` content | Contains this project's own `write_ota_marker()` shell function, citing `S00revert-safety`/`S99confirm-good`, `FIRMWARE.md sec 21/23` | Matches internal build documentation almost verbatim |

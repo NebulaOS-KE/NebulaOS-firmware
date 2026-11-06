@@ -1,4 +1,4 @@
-# Interactive shell prompt (Run 23, Tim): user, host name and directory, so an
+# Interactive shell prompt (Run 23): user, host name and directory, so an
 # SSH session says which printer it is on - "root@nebulaos-9e4f:~# " instead
 # of Buildroot's bare "# ". \h follows a live host name change. BusyBox ash,
 # FEATURE_EDITING_FANCY_PROMPT.

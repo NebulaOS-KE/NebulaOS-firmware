@@ -66,7 +66,7 @@ case "$INPUT" in
   *NebulaOS-archive*)
     deny "NebulaOS guardrail: the archived workspace is out of bounds.
 
-/home/tim/workspace/NebulaOS-archive-* is preserved evidence, not
+~/workspace/NebulaOS-archive-* is preserved evidence, not
 authority, and normal sessions must not read it. Historical investigation is a
 separate, explicitly user-requested session - see
 NebulaOS-firmware/tools/workspace-control/historian/README.md."

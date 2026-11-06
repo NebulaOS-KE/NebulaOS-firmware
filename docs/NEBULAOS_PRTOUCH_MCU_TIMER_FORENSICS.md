@@ -460,7 +460,7 @@ cadence that drives repeated clamp events on Creality's real firmware.
 Real deployment target correction first: this document's own §1–§6 were written against
 `ke-mainline-klipper`'s `klippy_extras/`, but the live device's actual running
 `prtouch_probe.py`/`z_compensate.py` (verified by line count and distinctive symbol/config-key
-match over SSH) matches `/home/tim/Documents/NebulaOS-klipper-loadcell`
+match over SSH) matches `~/Documents/NebulaOS-klipper-loadcell`
 (`coreflake1/NebulaOS-klipper`, `master`, commit `4510ee65`) — a separately-cloned, more advanced
 checkout with an already-shipped safety-hardening layer (`PrtouchProbeSafetyError`,
 `max_probe_travel_mm`, `max_probe_duration_s`, baseline sanity guards) that `ke-mainline-klipper`

@@ -1,5 +1,5 @@
 # nebulaos_osconfig.ota - NebulaOS system updates over the internet (G79).
-# Design: _scratch/run15/G79-ota-design.md; Tim 2026-10-29 (Run 23): NO signing
+# Design: _scratch/run15/G79-ota-design.md; 2026-10-29 (Run 23): NO signing
 # key - the printer downloads only over HTTPS from github.com and checks the
 # size and sha256 listed in the release record.
 #
@@ -39,7 +39,7 @@ DOWNLOAD_STATE = os.path.join(common.RUN_DIR, "ota-download", "state.json")
 DOWNLOAD_LOCK = os.path.join(common.RUN_DIR, "ota-download", "lock")
 VERSION_FILE = os.environ.get("NEBULAOS_VERSION_FILE", "/opt/nebulaos-version.json")
 OSCONFIG = os.environ.get("NEBULAOS_OSCONFIG", "/usr/libexec/nebulaos/nebulaos-osconfig")
-# Tim 2026-10-29: complete releases are published on NebulaOS-KE/NebulaOS; the
+# 2026-10-29: complete releases are published on NebulaOS-KE/NebulaOS; the
 # stable channel is its latest GitHub release.
 CHANNEL_URL = os.environ.get("NEBULAOS_OTA_CHANNEL",
                              "https://api.github.com/repos/NebulaOS-KE/NebulaOS/releases/latest")

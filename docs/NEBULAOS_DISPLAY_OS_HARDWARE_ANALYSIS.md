@@ -366,7 +366,7 @@ detail: `docs/NEBULAOS_DISPLAY_LIVE_READ_ONLY_REPORT.md`,
 `docs/NEBULAOS_DISPLAY_OFFLINE_IMPLEMENTATION_PLAN.md`.
 
 **Live confirmation of every key §6/§7/§8 finding**: identity confirmed on the real printer
-(`192.168.0.243`, CID-derived MAC exact match, custom `rootfs2` slot). No backlight DT node or
+(`192.168.1.243`, CID-derived MAC exact match, custom `rootfs2` slot). No backlight DT node or
 class device exists live (`/sys/class/backlight/` empty), independently corroborated by a boot-
 log line neither prior pass had quoted: `openke_panel: invalid gpio vdd_en: -2`. Touch has zero
 IRQ lines anywhere in the live `/proc/interrupts` table (poll-only, confirmed system-wide, not

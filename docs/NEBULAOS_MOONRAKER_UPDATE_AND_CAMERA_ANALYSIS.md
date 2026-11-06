@@ -54,7 +54,7 @@ No source, runtime, or config files were modified during this investigation. No 
 
 ## 3. Exact live versions
 
-**VERIFIED FACT**, all captured live via read-only SSH/API on 2026-07-27, device at `192.168.0.146` (custom slot):
+**VERIFIED FACT**, all captured live via read-only SSH/API on 2026-07-27, device at `192.168.1.146` (custom slot):
 
 | Component | Value |
 |---|---|
@@ -668,7 +668,7 @@ Plus, on the live development device only (not a repo change): removal of the st
 
 ## 27. Evidence appendix
 
-All commands, commits, hashes, and API responses cited above were captured live during this investigation (2026-07-27) via read-only SSH/API access to `192.168.0.146` (custom slot) and read-only inspection of this repository's `vendor/moonraker` checkout and git history, plus live WebFetch of `github.com/pellcorp/creality` and `github.com/Guilouz/Creality-Helper-Script` (both `main` branch, fetched 2026-07-27). Key raw values, for cross-reference:
+All commands, commits, hashes, and API responses cited above were captured live during this investigation (2026-07-27) via read-only SSH/API access to `192.168.1.146` (custom slot) and read-only inspection of this repository's `vendor/moonraker` checkout and git history, plus live WebFetch of `github.com/pellcorp/creality` and `github.com/Guilouz/Creality-Helper-Script` (both `main` branch, fetched 2026-07-27). Key raw values, for cross-reference:
 
 - Deployed Moonraker commit: `70e251ecb77a291f9b2c9789f6e0aef4af2b8420` (synthetic wrapper, content-identical to `d5ee17128bb88434aacdab90c2e9e990e2b64e4a`)
 - Deployed Klipper commit: `2d75015d7c76dd31e4b0f49e1ae3fe6ad86cad24`
@@ -766,7 +766,7 @@ Phase S (controlled rollback): called the real POST /machine/update/rollback
 
 **Qualification gate closed.** A full rebuild (commit `ece4c26`, a clean tree) was performed and verified before flashing - both fixes confirmed present in the actual `rootfs.squashfs` itself (not just the tracked source or the `.ext2` staging image): `unsquashfs`'d directly, the four historically-obsolete init.d filenames were absent and `ensure_moonraker_alive()` was present in the packaged `/etc/nebulaos-update-supervisor.sh`. `06-verify.sh` passed with zero `MISS` lines.
 
-The rebuilt image was then flashed to the real device following the full documented safety sequence: booted to stock (`192.168.0.231`) to make the custom slot safely inactive, `--check-only` preflight passed (`result: SAFE TO FLASH`), the real write hit a real interruption on the first attempt (a local SSH client-side timeout dropped the connection mid-write with no `nohup`/background protection - the remote `dd` had no process left after reconnecting) - recovered per the script's own design (a from-the-start sequential write safely overwrites a partial prior write) by re-running the exact same write detached and hash-read-back-verified this time (`xImage write verified OK`, `rootfs.squashfs write verified OK`), then the marker was flipped to `ota:kernel2` and the device rebooted. `S99confirm-good` confirmed the new boot within seconds (`ota:kernel` → `ota:kernel2`), Klipper reached `ready`.
+The rebuilt image was then flashed to the real device following the full documented safety sequence: booted to stock (`192.168.1.231`) to make the custom slot safely inactive, `--check-only` preflight passed (`result: SAFE TO FLASH`), the real write hit a real interruption on the first attempt (a local SSH client-side timeout dropped the connection mid-write with no `nohup`/background protection - the remote `dd` had no process left after reconnecting) - recovered per the script's own design (a from-the-start sequential write safely overwrites a partial prior write) by re-running the exact same write detached and hash-read-back-verified this time (`xImage write verified OK`, `rootfs.squashfs write verified OK`), then the marker was flipped to `ota:kernel2` and the device rebooted. `S99confirm-good` confirmed the new boot within seconds (`ota:kernel` → `ota:kernel2`), Klipper reached `ready`.
 
 Live re-verification against the actual freshly-flashed, freshly-booted device (not the staging archive): all four obsolete init.d filenames confirmed absent via `ls /etc/init.d/`; `ensure_moonraker_alive` confirmed present in the live, running `/etc/nebulaos-update-supervisor.sh`; `is_valid: true` for all three apps with zero commits behind; the camera database persisted through the reflash (only kernel+rootfs partitions are touched, not `/usr/data`) with its correct edited defaults intact. Most importantly, **the exact Bug 7 scenario was re-run with zero manual intervention this time**: dirtied a tracked file in the persistent moonraker checkout, called the real `/machine/update/recover` endpoint, moonraker died (its own self-restart is still broken, as expected - that part of vendor Moonraker's behavior was never the thing being fixed), and the live supervisor's `ensure_moonraker_alive()` brought it back on its own within one 20-second poll cycle - confirmed via `/server/webcams/list` responding again with no human action taken in between. This is the fix working end-to-end on the real shipped artifact, not a manually-reproduced workaround.
 

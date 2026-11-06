@@ -218,7 +218,7 @@ PRE_G87_GROUPS = {
     ], show_in_printing=False, show_in_pause=False),
 }
 
-# Run 21 (Tim 2026-10-28): the Calibration group before AXIS_TWIST_Y was
+# Run 21 (2026-10-28): the Calibration group before AXIS_TWIST_Y was
 # removed (the KE's Y axis is the bed: no gantry twist to compensate) - the
 # G87 default. Same exact-match upgrade.
 PRE_RUN21_GROUPS = {
@@ -252,7 +252,7 @@ PRE_G101_GROUPS = {
     ], show_in_printing=False, show_in_pause=False),
 }
 
-# Run 23 (Tim 2026-10-29): the Camera group before the Nebula Camera macros -
+# Run 23 (2026-10-29): the Camera group before the Nebula Camera macros -
 # the default since RC3. Same exact-match upgrade.
 PRE_NEBULA_CAMERA_GROUPS = {
     "nebulaos-camera": _group("Camera", [

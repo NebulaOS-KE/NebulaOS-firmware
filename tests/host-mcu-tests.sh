@@ -361,7 +361,7 @@ if [ -n "$PLR_CANDIDATE" ] && [ -n "$JOURNAL_CANDIDATE" ]; then
         fail "nebulaos_plr_journal.py's page layout constants do not match the expected stock-compatible layout"
     fi
 
-    # M24 (decided by Tim, Run 12, 2026-10-18): the opt-in physical resume
+    # M24 (decided Run 12, 2026-10-18): the opt-in physical resume
     # may end with M24; nothing else may. Checked at source level: the only
     # emitted M24 is inside build_physical_resume_lines(), physical_resume
     # defaults to False, and the resume command refuses physical resume

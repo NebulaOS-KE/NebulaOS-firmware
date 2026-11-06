@@ -1,5 +1,5 @@
 # nebulaos_osconfig.stats - print statistics from before NebulaOS (Run 23,
-# Tim 2026-11-02: Settings > Printer > Statistics).
+# 2026-11-02: Settings > Printer > Statistics).
 #
 #   stats baseline     what the printer printed before NebulaOS, imported once
 #

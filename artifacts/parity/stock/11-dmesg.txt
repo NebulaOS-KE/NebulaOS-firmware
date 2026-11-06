@@ -198,7 +198,7 @@
 [   10.682244] bcmsdh_oob_intr_register OOB irq=73 flags=4 
 [   10.688197] Disable tdls_auto_op failed. -1
 [   10.692536] wifi_platform_get_mac_addr
-[   10.699640] Firmware up: op_mode=0x0005, MAC=fc:ee:11:00:4c:14
+[   10.699640] Firmware up: op_mode=0x0005, MAC=fc:ee:11:00:00:01
 [   10.711794] dhd_preinit_ioctls Set txbf failed  -23
 [   10.717782] dhd_preinit_ioctls Set ampdu_mpdu to 16 failed  -29
 [   10.725735] dhd_preinit_ioctls pspretend_threshold for HostAPD failed  -23
@@ -213,14 +213,14 @@
 [   11.267617] CFG80211-ERROR) wl_run_escan : LEGACY_SCAN sync ID: 4660, bssidx: 0
 [   11.444408] Adding 131068k swap on /usr/data/swap.  Priority:-1 extents:3 across:141308k SS
 [   11.516948] S99guppyscreen (1233): drop_caches: 3
-[   12.363045] CFG80211-ERROR) wl_cfg80211_connect : Connecting with30:23:03:dc:0b:6b ssid "Office_2.4Ghz", len (13) channel=11
+[   12.363045] CFG80211-ERROR) wl_cfg80211_connect : Connecting with02:00:00:00:00:01 ssid "HomeWiFi", len (13) channel=11
 [   12.363045] 
 [   12.415654] dhd_rx_frame: Got BRCM event packet in a chained packet.
 [   12.422289] dhd_rx_frame: Got BRCM event packet in a chained packet.
-[   12.422304] wl_bss_connect_done succeeded with 30:23:03:dc:0b:6b
+[   12.422304] wl_bss_connect_done succeeded with 02:00:00:00:00:01
 [   12.435314] ETHER_TYPE_802_1X [RX]: ver 1, type 3, replay 1
 [   12.480957] ETHER_TYPE_802_1X [RX]: ver 1, type 3, replay 2
-[   12.519600] wl_bss_connect_done succeeded with 30:23:03:dc:0b:6b
+[   12.519600] wl_bss_connect_done succeeded with 02:00:00:00:00:01
 [   43.508865] helix-venc 13200000.helix: V4L2_CID_JPEG_COMPRESSION_QUALITY = 1
 [   43.516181] helix-venc 13200000.helix: Create instance [0]@890be000 m2m_ctx=8afc6000
 [   43.525617] helix-venc 13200000.helix: 13200000.helix vcodec [0]

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Run 20 (Tim 2026-10-25): START_PRINT's bed warp soak and the end park.
+# Run 20 (2026-10-25): START_PRINT's bed warp soak and the end park.
 #
 #   - G112: the soak is OFF by default. START_PRINT BED_SOAK=1 soaks,
 #     BED_SOAK=0 skips; without BED_SOAK the Mainsail switch

@@ -35,8 +35,8 @@ Stock-mediated flash sequence (never touching the live/active slot):
 1. Safety check on custom (DISPLAY-V1 baseline) confirmed `state:ready`, `standby`, both heater
    targets `0.0`, `rootfs2` active, `PREEMPT_RT` active - before writing the OTA marker.
 2. `write_ota_marker "ota:kernel"`, `sync`, `reboot` (separate invocations) - switched to stock.
-3. Rediscovered on stock (`Ender3V3KE-4C14`, real hardware MAC `fc:ee:11:00:4c:14` - the custom
-   image's stable/derived MAC `16:3b:5d:14:20:90` is a NebulaOS-only override
+3. Rediscovered on stock (`Ender3V3KE-0001`, real hardware MAC `fc:ee:11:00:00:01` - the custom
+   image's stable/derived MAC `16:3b:5d:00:00:01` is a NebulaOS-only override
    (`/etc/nebulaos-stable-mac.sh`), not present under stock, so this MAC difference across the two
    boots is expected, not a mismatch).
 4. Confirmed genuine identity beyond just the model/hostname match by checking for this project's
@@ -62,7 +62,7 @@ All checked directly via SSH, immediately after the flash-and-reboot:
 
 | Check | Result | Status |
 |---|---|---|
-| MAC | `16:3b:5d:14:20:90` | PROVEN_FROM_LIVE_TEST - matches |
+| MAC | `16:3b:5d:00:00:01` | PROVEN_FROM_LIVE_TEST - matches |
 | Active root | `root=/dev/mmcblk0p8` (rootfs2) | PROVEN_FROM_LIVE_TEST |
 | `/sys/kernel/realtime` | `1` | PROVEN_FROM_LIVE_TEST - PREEMPT_RT active |
 | Kernel build timestamp | `Sat Aug 1 17:28:31 UTC 2026` | PROVEN_FROM_LIVE_TEST - distinct from the DISPLAY-V1 build's `11:29:03`, confirms genuinely running the new image |

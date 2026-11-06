@@ -441,7 +441,7 @@ separately-configured `persist_offset` failure afterward.
 The GuppyScreen-side half of this change (subscribing to the new object, removing the old
 text-scan, and extracting testable `ZCompensateStatusTracker`/`ZOffsetConfigPersistence`
 classes) lives entirely in the project-specific `nebulaos-guppyscreen` fork, not in
-`/home/tim/Documents/guppyscreen` or upstream `coreflake1/guppyscreen` - see that repo's own
+`~/Documents/guppyscreen` or upstream `coreflake1/guppyscreen` - see that repo's own
 `docs/z_compensate_status_api.md` copy and `tests/` for the frontend side of the same
 contract. A real, pre-existing latent bug was found (not introduced) while extracting the
 persistence class: `std::ifstream` opening a directory path passes GuppyScreen's original

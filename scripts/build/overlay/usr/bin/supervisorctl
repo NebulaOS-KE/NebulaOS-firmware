@@ -130,7 +130,7 @@ restart() {
 # print: restart/stop of `klipper` - and ONLY klipper; nebulascreen and the
 # rest are never gated - is refused while the shared busy check
 # (/etc/nebulaos-busy.sh, restart profile) POSITIVELY says printing, paused,
-# heating or moving (G95, Tim 2026-10-22: a live Klippy answered so, or the
+# heating or moving (G95, 2026-10-22: a live Klippy answered so, or the
 # memguard print marker is set while Klippy answers). A Klippy that is not
 # running, not ready, or does not answer (hung, timeout, error) can ALWAYS be
 # restarted (S19, G95): the check reads klippy_state and the Klippy pid
