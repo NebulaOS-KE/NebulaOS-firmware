@@ -33,12 +33,16 @@ STATE_FILE = os.path.join(LOGS_DIR, "nebulaos-state.txt")
 USB_DIR = os.environ.get("NEBULAOS_MCU_USB_DIR", "/opt/printer_data/gcodes/USB")
 CONFIG_DIR = os.environ.get("NEBULAOS_CONFIG_DIR", "/opt/printer_data/config")
 EXTRA_LOG_DIRS = [os.path.join(common.NEBULAOS_ROOT, d)
-                  for d in ("logs", "maintenance/logs", "system/diagnostics")]
+                  for d in ("logs", "logs/crash", "maintenance/logs", "system/diagnostics")]
+# Why the previous boot ended (S02nebulaos-blackbox, Run 24).
+LAST_RESET_FILE = os.environ.get("NEBULAOS_LAST_RESET_FILE", "/run/nebulaos/last-reset")
+RESET_HISTORY = os.path.join(common.NEBULAOS_ROOT, "logs", "reset-history.log")
 # Single files outside those folders (the retention's own log).
 EXTRA_FILES = [os.path.join(common.NEBULAOS_ROOT, "maintenance", "retention.log")]
 RUN_FILES = ("/run/nebulaos-boot-scripts.log", "/var/run/nebulaos-boot-timing.log",
              "/run/nebulaos/data-fs.state", "/run/nebulaos/data-fs.e2fsck.log",
-             "/run/nebulaos-mcu-guard.state", "/proc/meminfo", "/proc/cmdline")
+             "/run/nebulaos-mcu-guard.state", "/run/nebulaos/last-reset",
+             "/proc/meminfo", "/proc/cmdline")
 CHUNK = 65536
 DEBUG_HOURS = 24
 _CLOCK_VALID = 1735689600          # 2025-01-01: before this the clock is not set yet
@@ -142,6 +146,7 @@ def state_text():
             parts.append(_section(title, "unavailable: %s" % str(exc)[:200]))
 
     add("system", system.info)
+    add("last restart", last_reset)
     add("slots", lambda: image.slots_info(may_mount=False))
     add("last system image install", lambda: image.status().get("last") or "none")
     add("mcu", mcu.status)
@@ -160,6 +165,25 @@ def state_text():
         if rc == 0:
             parts.append(_section(title, out))
     return redact_text("".join(parts))
+
+
+def last_reset():
+    """Why the previous boot ended, and the last few restarts."""
+    out = {}
+    try:
+        with open(LAST_RESET_FILE) as handle:
+            for line in handle:
+                key, sep, value = line.rstrip("\n").partition("=")
+                if sep:
+                    out[key.lower()] = value
+    except OSError:
+        out["reason"] = "not recorded"
+    try:
+        with open(RESET_HISTORY) as handle:
+            out["history"] = [l.rstrip("\n") for l in handle.readlines()[-10:]]
+    except OSError:
+        pass
+    return out
 
 
 def redact_text(text):

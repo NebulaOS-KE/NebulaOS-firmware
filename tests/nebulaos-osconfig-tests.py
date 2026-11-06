@@ -2312,6 +2312,22 @@ class LogsTests(unittest.TestCase):
             self.l.set_level("trace")
         self.assertEqual(self.l.status()["levels"], ["info", "warning", "debug"])
 
+    def test_last_restart_in_state(self):
+        """Run 24 black box: why the previous boot ended, and the history,
+        are in nebulaos-state.txt."""
+        t = self.e.tmp
+        self.l.LAST_RESET_FILE = os.path.join(t, "last-reset")
+        self.l.RESET_HISTORY = os.path.join(t, "reset-history.log")
+        self.assertEqual(self.l.last_reset(), {"reason": "not recorded"})
+        open(self.l.LAST_RESET_FILE, "w").write(
+            "REASON=FREEZE\nRESET_STATUS=0x00000002\nLAST_HEARTBEAT=hb 2026-11-06T13:46:40Z up=4146\n")
+        open(self.l.RESET_HISTORY, "w").write("".join("line %d\n" % i for i in range(15)))
+        out = self.l.last_reset()
+        self.assertEqual((out["reason"], out["reset_status"]), ("FREEZE", "0x00000002"))
+        self.assertEqual(out["last_heartbeat"], "hb 2026-11-06T13:46:40Z up=4146")
+        self.assertEqual(out["history"], ["line %d" % i for i in range(5, 15)])
+        self.assertIn('"reason": "FREEZE"', self.l.state_text())
+
     def test_debug_expires_after_24_hours(self):
         """G69: a forgotten Debug never stays on; a level set before the
         clock was valid starts its 24 hours once the clock is right."""

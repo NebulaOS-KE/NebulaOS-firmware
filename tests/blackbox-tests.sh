@@ -1,0 +1,137 @@
+#!/bin/sh
+#
+# Run 24 black box: /usr/libexec/nebulaos-blackbox (why the last boot ended,
+# kept evidence, notice, heartbeat line) and S02nebulaos-blackbox. Fake
+# pstore, watchdog parameters, /proc and log folders under a temp dir.
+#
+# Usage: sh tests/blackbox-tests.sh
+
+set -u
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+REPO_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
+OV="$REPO_ROOT/scripts/build/overlay"
+BB="$OV/usr/libexec/nebulaos-blackbox"
+INIT="$OV/etc/init.d/S02nebulaos-blackbox"
+WORK=$(mktemp -d "${TMPDIR:-/tmp}/blackbox-tests.XXXXXX")
+[ -n "${WORK:-}" ] && [ -e "$WORK" ] || { echo "FATAL: mktemp failed" >&2; exit 1; }
+trap 'rm -rf "$WORK"' EXIT INT TERM
+PASS=0
+FAIL=0
+fail() { echo "FAIL: $1"; FAIL=$((FAIL + 1)); }
+pass() { echo "PASS: $1"; PASS=$((PASS + 1)); }
+check() { if [ "$2" = "$3" ]; then pass "$1"; else fail "$1: got '$2', want '$3'"; fi; }
+
+[ -x "$BB" ] && pass "nebulaos-blackbox is executable" || fail "nebulaos-blackbox not executable"
+[ -x "$INIT" ] && pass "S02nebulaos-blackbox is executable" || fail "S02nebulaos-blackbox not executable"
+sh -n "$BB" && pass "nebulaos-blackbox parses" || fail "nebulaos-blackbox does not parse"
+sh -n "$INIT" && pass "S02nebulaos-blackbox parses" || fail "S02nebulaos-blackbox does not parse"
+
+# --- reason <console> <dump> <rsr> -------------------------------------------
+C="$WORK/console"
+printf '[ 100.0] normal line\n[ 101.0] reboot: Restarting system\n' > "$C.restart"
+printf '[ 100.0] normal line\n[ 101.0] reboot: Power down\n' > "$C.off"
+printf '[ 100.0] normal line\n[ 4147.0] still printing\n' > "$C.freeze"
+check "a panic dump is a CRASH" "$(sh "$BB" reason "$C.freeze" 1 2)" CRASH
+check "kernel log ending in 'Restarting system' is a RESTART" "$(sh "$BB" reason "$C.restart" 0 2)" RESTART
+check "kernel log ending in 'Power down' is POWER_OFF" "$(sh "$BB" reason "$C.off" 0 4)" POWER_OFF
+check "kernel log that just stops + watchdog reset is a FREEZE" "$(sh "$BB" reason "$C.freeze" 0 2)" FREEZE
+check "kernel log that just stops, reset status unknown, is a FREEZE" "$(sh "$BB" reason "$C.freeze" 0 "")" FREEZE
+check "kernel log that just stops + reset pin is UNKNOWN" "$(sh "$BB" reason "$C.freeze" 0 1)" UNKNOWN
+check "no pstore + power-on reset is POWER_ON" "$(sh "$BB" reason "" 0 4)" POWER_ON
+check "no pstore + nothing known is POWER_ON" "$(sh "$BB" reason "" 0 "")" POWER_ON
+check "no pstore + watchdog reset is UNKNOWN (RAM lost)" "$(sh "$BB" reason "" 0 2)" UNKNOWN
+
+# --- collect -------------------------------------------------------------------
+setup() {
+	rm -rf "$WORK/ps" "$WORK/wdt" "$WORK/root" "$WORK/run" "$WORK/proc"
+	mkdir -p "$WORK/ps" "$WORK/wdt" "$WORK/root" "$WORK/run" "$WORK/proc"
+	echo "123.45 100.00" > "$WORK/proc/uptime"
+	echo "$1" > "$WORK/wdt/nebulaos_reset_rsr"
+	echo "0" > "$WORK/wdt/nebulaos_reset_cppsr"
+}
+collect() {
+	NEBULAOS_PSTORE_DIR="$WORK/ps" NEBULAOS_WDT_PARAMS="$WORK/wdt" NEBULAOS_ROOT="$WORK/root" \
+		NEBULAOS_BLACKBOX_RUN_DIR="$WORK/run" NEBULAOS_PROC="$WORK/proc" sh "$BB" collect >/dev/null 2>&1
+}
+L="$WORK/root/logs"
+N="$WORK/root/system/notices/printer-restarted.txt"
+
+setup 2
+cp "$C.freeze" "$WORK/ps/console-ramoops-0"
+printf 'hb 2026-11-06T13:46:30Z up=4136 load=2.1 2.0 1.9 run=2 memavail=130000 top=klippy/2063/o0:31%%\nhb 2026-11-06T13:46:40Z up=4146 load=2.1 2.0 1.9 run=2 memavail=130000 top=klippy/2063/o0:30%%\n' > "$WORK/ps/pmsg-ramoops-0"
+collect
+grep -q '^REASON=FREEZE$' "$WORK/run/last-reset" && pass "freeze: REASON=FREEZE in last-reset" || fail "freeze: $(cat "$WORK/run/last-reset" 2>&1)"
+grep -q '^RESET_STATUS=0x00000002$' "$WORK/run/last-reset" && pass "freeze: reset status written as hex" || fail "freeze: no RESET_STATUS"
+grep -q '^LAST_HEARTBEAT=hb 2026-11-06T13:46:40Z' "$WORK/run/last-reset" && pass "freeze: the last heartbeat is named" || fail "freeze: LAST_HEARTBEAT missing"
+grep -q 'boot after FREEZE reset_status=0x00000002 last_heartbeat=2026-11-06T13:46:40Z' "$L/reset-history.log" \
+	&& pass "freeze: reset-history line with the last heartbeat" || fail "freeze history: $(cat "$L/reset-history.log" 2>&1)"
+[ "$(ls "$L/crash" | grep -c -- '-FREEZE-')" = 2 ] && pass "freeze: kernel log and heartbeat kept in logs/crash" || fail "freeze crash dir: $(ls "$L/crash" 2>&1)"
+cmp -s "$C.freeze" "$L/previous-boot-kernel.log" && pass "freeze: previous-boot-kernel.log written" || fail "previous-boot-kernel.log"
+[ -s "$N" ] && grep -q 'Report a problem' "$N" && pass "freeze: notice for the screen" || fail "freeze: no notice"
+
+setup 2
+rm -f "$N"
+cp "$C.restart" "$WORK/ps/console-ramoops-0"
+collect
+grep -q '^REASON=RESTART$' "$WORK/run/last-reset" && pass "restart: REASON=RESTART" || fail "restart: $(cat "$WORK/run/last-reset" 2>&1)"
+[ ! -e "$N" ] && pass "restart: no notice" || fail "restart: notice written"
+[ "$(ls "$L/crash" | grep -c -- '-RESTART-')" = 0 ] && pass "restart: nothing kept as a crash" || fail "restart kept a crash"
+cmp -s "$C.restart" "$L/previous-boot-kernel.log" && pass "restart: previous-boot-kernel.log replaced" || fail "restart previous-boot"
+
+setup 4
+collect
+grep -q '^REASON=POWER_ON$' "$WORK/run/last-reset" && pass "power on: REASON=POWER_ON" || fail "power on: $(cat "$WORK/run/last-reset" 2>&1)"
+[ ! -e "$L/previous-boot-kernel.log" ] && pass "power on: no stale previous-boot-kernel.log" || fail "stale previous-boot log kept"
+grep -q '^PSTORE_CONSOLE=no$' "$WORK/run/last-reset" && pass "power on: PSTORE_CONSOLE=no" || fail "power on pstore flag"
+
+setup 2
+cp "$C.freeze" "$WORK/ps/console-ramoops-0"
+printf 'Panic#1 Part1\nKernel panic - not syncing: softlockup: hung tasks\n' > "$WORK/ps/dmesg-ramoops-0"
+collect
+grep -q '^REASON=CRASH$' "$WORK/run/last-reset" && pass "crash: REASON=CRASH" || fail "crash: $(cat "$WORK/run/last-reset" 2>&1)"
+ls "$L/crash" | grep -q -- '-CRASH-dmesg-ramoops-0.txt$' && pass "crash: the panic dump is kept" || fail "crash dump not kept"
+
+# Only the newest 5 crashes are kept (one crash = several files, one stamp).
+setup 2
+mkdir -p "$L/crash"
+for i in 1 2 3 4 5 6 7; do
+	: > "$L/crash/2026110${i}T000000Z-FREEZE-console-ramoops-0.txt"
+	: > "$L/crash/2026110${i}T000000Z-FREEZE-pmsg-ramoops-0.txt"
+done
+cp "$C.freeze" "$WORK/ps/console-ramoops-0"
+collect
+n=$(ls "$L/crash" | sed 's/-FREEZE-.*//' | sort -u | wc -l)
+check "only the newest 5 crashes are kept" "$n" 5
+ls "$L/crash" | grep -q '^20261101T' && fail "the oldest crash was not removed" || pass "the oldest crashes go first"
+
+# History is bounded.
+setup 4
+mkdir -p "$L"
+for i in $(seq 1 150); do echo "old $i"; done > "$L/reset-history.log"
+collect
+check "reset-history keeps 100 lines" "$(wc -l < "$L/reset-history.log")" 100
+
+# --- heartbeat line --------------------------------------------------------------
+P="$WORK/fproc"; rm -rf "$P"; mkdir -p "$P/1" "$P/2063" "$P/2056"
+stat_line() { # pid comm utime stime rtprio policy - proc(5) fields 1..44
+	f="S 0 0 0 0 -1 0 0 0 0 0 $3 $4 0 0 20 0 1"          # fields 3..20
+	i=21; while [ $i -le 39 ]; do f="$f 0"; i=$((i + 1)); done   # 21..39
+	echo "$1 ($2) $f $5 $6 0 0 0"                          # 40 rt_priority, 41 policy
+}
+stat_line 1 init 10 10 0 0 > "$P/1/stat"
+stat_line 2063 "python3 klippy" 1000 200 0 0 > "$P/2063/stat"
+stat_line 2056 klipper_mcu 500 100 49 1 > "$P/2056/stat"
+NEBULAOS_PROC="$P" sh "$BB" heartbeat-line /nonexistent "$WORK/hb.prev" 10 >/dev/null
+stat_line 2063 "python3 klippy" 1200 250 0 0 > "$P/2063/stat"
+stat_line 2056 klipper_mcu 1400 100 49 1 > "$P/2056/stat"
+out=$(NEBULAOS_PROC="$P" sh "$BB" heartbeat-line "$WORK/hb.prev" "$WORK/hb.next" 10)
+check "heartbeat names the busiest first, with policy and RT priority" "$out" "klipper_mcu/2056/f49:90%,python3 klippy/2063/o0:25%"
+grep -q '^2056 1500$' "$WORK/hb.next" && pass "heartbeat keeps the new sample" || fail "heartbeat sample: $(cat "$WORK/hb.next" 2>&1)"
+
+# --- init script ------------------------------------------------------------------
+grep -q 'chrt.*-f 90' "$INIT" && pass "heartbeat runs at FIFO 90 (above klipper_mcu and IRQ threads)" || fail "heartbeat priority"
+grep -q '/dev/pmsg0' "$INIT" && pass "heartbeat only starts when /dev/pmsg0 exists" || fail "pmsg guard"
+
+echo
+echo "blackbox-tests: $PASS passed, $FAIL failed"
+[ "$FAIL" = 0 ]

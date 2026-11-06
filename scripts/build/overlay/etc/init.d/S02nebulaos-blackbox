@@ -1,0 +1,39 @@
+#!/bin/sh
+#
+# nebulaos-blackbox (Run 24, 2026-11-06): at boot, why the previous boot
+# ended (pstore + SoC reset status -> /run/nebulaos/last-reset, logs/
+# reset-history.log, logs/crash/ after a freeze or crash); then the
+# heartbeat into /dev/pmsg0 for the next boot to read. See
+# /usr/libexec/nebulaos-blackbox.
+#
+# S02: /usr/data is mounted (S01persistent-datastore), and this runs before
+# anything that could freeze the printer has started.
+
+BB=/usr/libexec/nebulaos-blackbox
+PIDFILE=/var/run/nebulaos-heartbeat.pid
+
+start() {
+	"$BB" collect 2>/dev/null || true
+	cd / || true    # no daemon keeps a cwd on /usr/data
+	if [ -c /dev/pmsg0 ]; then
+		# FIFO 90: above klipper_mcu (49) and the IRQ threads, so a runaway
+		# real-time task cannot silence it. It sleeps ~all the time.
+		start-stop-daemon -S -b -m -p "$PIDFILE" -x /usr/bin/chrt -- -f 90 "$BB" heartbeat \
+			|| echo "nebulaos-blackbox: heartbeat not started"
+	else
+		echo "nebulaos-blackbox: no /dev/pmsg0, heartbeat not started"
+	fi
+}
+
+stop() {
+	start-stop-daemon -K -q -p "$PIDFILE" 2>/dev/null
+	rm -f "$PIDFILE"
+}
+
+case "$1" in
+	start) start ;;
+	stop) stop ;;
+	restart) stop; start ;;
+	*) echo "Usage: $0 {start|stop|restart}"; exit 1 ;;
+esac
+exit 0

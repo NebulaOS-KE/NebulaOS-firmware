@@ -1,0 +1,234 @@
+#!/bin/sh
+#
+# nebulaos-blackbox (Run 24, 2026-11-06): why did the printer last restart,
+# and what was it doing just before.
+#
+# The 2026-10-26 and 2026-11-06 freezes left nothing behind: the system
+# stopped dead, the hardware watchdog reset it ~60 s later and the last
+# minute of every log never reached the eMMC. The kernel now keeps three
+# things in 1 MB of RAM that survives a watchdog or panic reset (pstore/
+# ramoops, kernel halley5_v30.dts): its own log (console-ramoops-0), any
+# panic/oops dump (dmesg-ramoops-N) and the heartbeat below (pmsg-ramoops-0).
+#
+#   collect     once at boot (S02nebulaos-blackbox): read pstore and the SoC
+#               reset status, decide why the last boot ended, keep the
+#               evidence under logs/, empty pstore, show a notice after a
+#               freeze or crash.
+#   heartbeat   forever, from S02nebulaos-blackbox: every 10 s one line into
+#               /dev/pmsg0 (RAM, no eMMC wear) with load, memory and the
+#               processes that used the most CPU since the last line. It runs
+#               at SCHED_FIFO 90, above klipper_mcu (49) and the IRQ threads
+#               (25-60), so a runaway real-time task cannot silence it - its
+#               last lines name that task. In a kernel stall nothing runs;
+#               then the time of the last line is the evidence.
+#
+# The reasons (REASON= in /run/nebulaos/last-reset and reset-history.log):
+#   CRASH        a kernel panic or oops dump is in pstore
+#   FREEZE       the previous boot's kernel log is in pstore, it does not end
+#                in a restart or power-off, and the SoC says watchdog reset
+#   RESTART      the previous kernel log ends in "reboot: Restarting system"
+#   POWER_OFF    ... ends in "reboot: Power down" / "System halted"
+#   POWER_ON     nothing in pstore (RAM lost: switched on, or power cut)
+#   UNKNOWN      anything else (for example a reset-pin reset)
+#
+# Never fails the boot: every step is best effort.
+
+PSTORE_DIR="${NEBULAOS_PSTORE_DIR:-/sys/fs/pstore}"
+WDT_PARAMS="${NEBULAOS_WDT_PARAMS:-/sys/module/ingenic_wdt/parameters}"
+NEBULAOS_ROOT="${NEBULAOS_ROOT:-/usr/data/nebulaos}"
+LOG_DIR="${NEBULAOS_BLACKBOX_LOG_DIR:-$NEBULAOS_ROOT/logs}"
+CRASH_DIR="$LOG_DIR/crash"
+HISTORY="$LOG_DIR/reset-history.log"
+PREVIOUS="$LOG_DIR/previous-boot-kernel.log"
+NOTICES_DIR="${NEBULAOS_NOTICES_DIR:-$NEBULAOS_ROOT/system/notices}"
+NOTICE="$NOTICES_DIR/printer-restarted.txt"
+RUN_DIR="${NEBULAOS_BLACKBOX_RUN_DIR:-/run/nebulaos}"
+STATE="$RUN_DIR/last-reset"
+PMSG="${NEBULAOS_PMSG:-/dev/pmsg0}"
+PROC="${NEBULAOS_PROC:-/proc}"
+KEEP_CRASHES=5
+KEEP_HISTORY=100
+INTERVAL="${NEBULAOS_HEARTBEAT_INTERVAL:-10}"
+
+kmsg() {
+	echo "nebulaos-blackbox: $*" > /dev/kmsg 2>/dev/null || true
+}
+
+param() {
+	v=$(cat "$WDT_PARAMS/$1" 2>/dev/null)
+	case "$v" in ''|*[!0-9]*) echo "" ;; *) echo "$v" ;; esac
+}
+
+hex() {
+	[ -n "$1" ] && printf '0x%08x' "$1" || echo "unknown"
+}
+
+# reason <console file or empty> <dump present 0/1> <rsr decimal or empty>
+reason() {
+	console="$1"; dump="$2"; rsr="$3"
+	if [ "$dump" = 1 ]; then echo CRASH; return; fi
+	if [ -n "$console" ] && [ -s "$console" ]; then
+		tail_txt=$(tail -n 40 "$console" 2>/dev/null)
+		case "$tail_txt" in
+			*"reboot: Restarting system"*) echo RESTART; return ;;
+			*"reboot: Power down"*|*"System halted"*) echo POWER_OFF; return ;;
+		esac
+		if [ -z "$rsr" ] || [ $((rsr & 2)) -ne 0 ]; then echo FREEZE; return; fi
+		echo UNKNOWN; return
+	fi
+	if [ -n "$rsr" ] && [ $((rsr & 2)) -ne 0 ]; then
+		# Watchdog reset with RAM lost or no pstore: we cannot tell a
+		# software restart from a freeze.
+		echo UNKNOWN; return
+	fi
+	echo POWER_ON
+}
+
+keep_newest() {
+	# keep_newest <dir> <n>: one stamp = several files with the same prefix
+	ls "$1" 2>/dev/null | sed -n 's/^\([0-9TZ]*-[A-Z_]*\)-.*/\1/p' | sort -u | sort -r \
+		| tail -n +$(($2 + 1)) | while read -r old; do rm -f "$1/$old"-*; done
+}
+
+collect() {
+	mkdir -p "$RUN_DIR" "$LOG_DIR" 2>/dev/null
+	if [ "$PSTORE_DIR" = /sys/fs/pstore ] && ! grep -q " /sys/fs/pstore " /proc/mounts 2>/dev/null; then
+		mount -t pstore pstore /sys/fs/pstore 2>/dev/null
+	fi
+	console=""; dump=0; pmsg=""
+	for f in "$PSTORE_DIR"/*; do
+		[ -f "$f" ] || continue
+		case "${f##*/}" in
+			console-ramoops*) console="$f" ;;
+			dmesg-ramoops*) dump=1 ;;
+			pmsg-ramoops*) pmsg="$f" ;;
+		esac
+	done
+	rsr=$(param nebulaos_reset_rsr)
+	cppsr=$(param nebulaos_reset_cppsr)
+	why=$(reason "$console" "$dump" "$rsr")
+	stamp=$(date -u +%Y%m%dT%H%M%SZ)
+	uptime_s=$(cut -d' ' -f1 "$PROC/uptime" 2>/dev/null)
+
+	# The previous boot's kernel log, whatever the reason (one file,
+	# replaced every boot).
+	if [ -n "$console" ]; then
+		cp "$console" "$PREVIOUS.tmp" 2>/dev/null && mv "$PREVIOUS.tmp" "$PREVIOUS"
+	else
+		rm -f "$PREVIOUS"
+	fi
+
+	# The evidence of a freeze, a crash or an unexplained reset is kept.
+	case "$why" in
+		CRASH|FREEZE|UNKNOWN)
+			if ls "$PSTORE_DIR"/* >/dev/null 2>&1; then
+				mkdir -p "$CRASH_DIR"
+				for f in "$PSTORE_DIR"/*; do
+					[ -f "$f" ] && cp "$f" "$CRASH_DIR/$stamp-$why-${f##*/}.txt" 2>/dev/null
+				done
+				keep_newest "$CRASH_DIR" "$KEEP_CRASHES"
+			fi ;;
+	esac
+
+	# Empty pstore so the next boot sees only its own predecessor.
+	[ "$PSTORE_DIR" = /sys/fs/pstore ] && rm -f "$PSTORE_DIR"/* 2>/dev/null
+
+	{
+		echo "REASON=$why"
+		echo "RESET_STATUS=$(hex "$rsr")"
+		echo "CPPSR=$(hex "$cppsr")"
+		echo "PSTORE_CONSOLE=$([ -n "$console" ] && echo yes || echo no)"
+		echo "PSTORE_DUMP=$([ "$dump" = 1 ] && echo yes || echo no)"
+		echo "PSTORE_HEARTBEAT=$([ -n "$pmsg" ] && echo yes || echo no)"
+		[ -n "$pmsg" ] && echo "LAST_HEARTBEAT=$(grep '^hb ' "$pmsg" 2>/dev/null | tail -n 1 | cut -c1-200)"
+		echo "CHECKED_AT=$stamp UPTIME=$uptime_s"
+	} > "$STATE.tmp" 2>/dev/null && mv "$STATE.tmp" "$STATE"
+
+	line="$stamp boot after $why reset_status=$(hex "$rsr")"
+	if [ -n "$pmsg" ]; then
+		last=$(grep '^hb ' "$pmsg" 2>/dev/null | tail -n 1 | cut -d' ' -f2)
+		[ -n "$last" ] && line="$line last_heartbeat=$last"
+	fi
+	echo "$line" >> "$HISTORY" 2>/dev/null
+	if [ "$(wc -l < "$HISTORY" 2>/dev/null)" -gt "$KEEP_HISTORY" ] 2>/dev/null; then
+		tail -n "$KEEP_HISTORY" "$HISTORY" > "$HISTORY.tmp" && mv "$HISTORY.tmp" "$HISTORY"
+	fi
+
+	case "$why" in
+		CRASH|FREEZE)
+			mkdir -p "$NOTICES_DIR" 2>/dev/null
+			printf '%s\n' "The printer restarted by itself because its system stopped responding. A print that was running can be resumed. To help find the cause: Settings > System > Report a problem > Save logs to USB, and send the file to us." \
+				> "$NOTICE" 2>/dev/null ;;
+	esac
+	sync
+	kmsg "$line"
+	echo "nebulaos-blackbox: last boot ended: $why (reset status $(hex "$rsr"))"
+}
+
+# One heartbeat line: hb <utc> up=<s> load=<1 5 15> run=<n> memavail=<kB>
+#   top=<comm>/<pid>/<policy><rtprio>:<cpu%>,...   (the 4 busiest since the
+#   previous line; policy f = FIFO, r = RR, o = other)
+heartbeat_line() {
+	prev="$1"; now="$2"; dt="$3"
+	awk -v prev="$prev" -v now="$now" -v dt="$dt" -v hz=100 '
+	BEGIN {
+		while ((getline l < prev) > 0) { split(l, a, " "); p[a[1]] = a[2] }
+		close(prev)
+	}
+	FNR == 1 {
+		s = $0; o = index(s, "("); c = 0
+		for (i = length(s); i > 0; i--) if (substr(s, i, 1) == ")") { c = i; break }
+		if (o == 0 || c == 0) next
+		pid = substr(s, 1, o - 2); comm = substr(s, o + 1, c - o - 1)
+		n = split(substr(s, c + 2), r, " ")
+		if (n < 39) next
+		t = r[12] + r[13]
+		print pid, t > now
+		if (pid in p) {
+			d = t - p[pid]
+			if (d > 0) {
+				pol = (r[39] == 1) ? "f" : (r[39] == 2) ? "r" : "o"
+				k++; dd[k] = d; nm[k] = comm "/" pid "/" pol r[38]
+			}
+		}
+	}
+	END {
+		out = ""
+		for (j = 1; j <= 4; j++) {
+			best = 0
+			for (i = 1; i <= k; i++) if (dd[i] > 0 && (best == 0 || dd[i] > dd[best])) best = i
+			if (best == 0) break
+			pct = (dt > 0) ? int(dd[best] * 100 / (dt * hz) + 0.5) : 0
+			out = out (out == "" ? "" : ",") nm[best] ":" pct "%"
+			dd[best] = 0
+		}
+		print out
+	}' "$PROC"/[0-9]*/stat 2>/dev/null
+}
+
+heartbeat() {
+	mkdir -p "$RUN_DIR" 2>/dev/null
+	prev="$RUN_DIR/heartbeat.prev"; next="$RUN_DIR/heartbeat.next"
+	: > "$prev"
+	t0=$(cut -d. -f1 "$PROC/uptime")
+	while :; do
+		sleep "$INTERVAL"
+		t1=$(cut -d. -f1 "$PROC/uptime")
+		top=$(heartbeat_line "$prev" "$next" $((t1 - t0)))
+		mv -f "$next" "$prev" 2>/dev/null
+		t0=$t1
+		load=$(cut -d' ' -f1-3 "$PROC/loadavg")
+		run=$(cut -d' ' -f4 "$PROC/loadavg" | cut -d/ -f1)
+		mem=$(awk '/^MemAvailable:/ {print $2}' "$PROC/meminfo")
+		echo "hb $(date -u +%Y-%m-%dT%H:%M:%SZ) up=$t1 load=$load run=$run memavail=$mem top=$top" > "$PMSG" 2>/dev/null
+	done
+}
+
+case "$1" in
+	collect) collect ;;
+	heartbeat) heartbeat ;;
+	reason) shift; reason "$@" ;;
+	heartbeat-line) shift; heartbeat_line "$@" ;;
+	*) echo "usage: $0 collect|heartbeat" >&2; exit 2 ;;
+esac
+exit 0
