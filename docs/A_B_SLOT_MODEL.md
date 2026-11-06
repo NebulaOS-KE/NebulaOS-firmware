@@ -214,7 +214,10 @@ after S02nebulaos-watchdog has counted and armed (a hang in it is reset like any
   processes with policy/RT priority) at SCHED_OTHER nice -20 like the feeder - never above
   klipper_mcu or the IRQ threads;
 - a real power cut loses the RAM, so it reads as POWER_ON; the trial and rollback rules above
-  are unchanged.
+  are unchanged. An orderly poweroff also reads as POWER_ON (jz_hibernate cuts the RAM); a hang
+  late in shutdown, after rcK's "shutdown clean", reads as RESTART; a stale 0x3535 from a kernel
+  without the probe clear (the other slot, stock) can make a freeze right after a slot switch
+  read as RESTART. `collect` runs once per boot; `restart` touches only the heartbeat.
 
 ## Related docs
 

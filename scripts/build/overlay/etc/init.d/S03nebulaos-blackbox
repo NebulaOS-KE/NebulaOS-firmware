@@ -14,10 +14,16 @@
 BB=/usr/libexec/nebulaos-blackbox
 PIDFILE=/var/run/nebulaos-heartbeat.pid
 
-start() {
-	"$BB" collect 2>/dev/null || true
+heartbeat_running() {
+	p=$(cat "$PIDFILE" 2>/dev/null)
+	[ -n "$p" ] && grep -q 'nebulaos-blackbox.heartbeat' "/proc/$p/cmdline" 2>/dev/null
+}
+
+start_heartbeat() {
 	cd / || true    # no daemon keeps a cwd on /usr/data
-	if [ -c /dev/pmsg0 ]; then
+	if heartbeat_running; then
+		echo "nebulaos-blackbox: heartbeat already running"
+	elif [ -c /dev/pmsg0 ]; then
 		# SCHED_OTHER at nice -20, like the watchdog feeder: never above
 		# Klipper's real-time work (klipper_mcu FIFO 49, the IRQ threads).
 		start-stop-daemon -S -b -m -p "$PIDFILE" -N -20 -x "$BB" -- heartbeat \
@@ -27,16 +33,17 @@ start() {
 	fi
 }
 
-stop() {
+stop_heartbeat() {
 	start-stop-daemon -K -q -p "$PIDFILE" 2>/dev/null
 	rm -f "$PIDFILE"
-	[ -c /dev/pmsg0 ] && "$BB" shutdown
 }
 
+# collect itself runs once per boot (it skips when /run/nebulaos/last-reset
+# exists); restart touches only the heartbeat - no shutdown mark mid-boot.
 case "$1" in
-	start) start ;;
-	stop) stop ;;
-	restart) stop; start ;;
+	start) "$BB" collect 2>/dev/null || true; start_heartbeat ;;
+	stop) stop_heartbeat; [ -c /dev/pmsg0 ] && "$BB" shutdown ;;
+	restart) stop_heartbeat; start_heartbeat ;;
 	*) echo "Usage: $0 {start|stop|restart}"; exit 1 ;;
 esac
 exit 0

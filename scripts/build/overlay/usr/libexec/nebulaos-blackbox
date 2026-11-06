@@ -112,6 +112,9 @@ keep_newest() {
 }
 
 collect() {
+	# Once per boot: /run is a tmpfs, so last-reset exists only if this
+	# boot already decided (a second run would see an emptied pstore).
+	if [ -e "$STATE" ]; then echo "nebulaos-blackbox: already collected this boot"; return 0; fi
 	mkdir -p "$RUN_DIR" "$LOG_DIR" 2>/dev/null
 	if [ "$PSTORE_DIR" = /sys/fs/pstore ] && ! grep -q " /sys/fs/pstore " /proc/mounts 2>/dev/null; then
 		mount -t pstore pstore /sys/fs/pstore 2>/dev/null

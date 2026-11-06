@@ -98,6 +98,18 @@ collect
 grep -q '^REASON=CRASH$' "$WORK/run/last-reset" && pass "crash: REASON=CRASH" || fail "crash: $(cat "$WORK/run/last-reset" 2>&1)"
 ls "$L/crash" | grep -q -- '-CRASH-dmesg-ramoops-0.txt$' && pass "crash: the panic dump is kept" || fail "crash dump not kept"
 
+# collect runs once per boot: a second run keeps this boot's verdict.
+setup 2
+cp "$C.freeze" "$WORK/ps/console-ramoops-0"
+collect
+rm -f "$WORK/ps/console-ramoops-0"
+h=$(wc -l < "$L/reset-history.log")
+collect
+grep -q '^REASON=FREEZE$' "$WORK/run/last-reset" && pass "second collect keeps the verdict" || fail "second collect changed it: $(cat "$WORK/run/last-reset")"
+check "second collect adds no history line" "$(wc -l < "$L/reset-history.log")" "$h"
+[ -s "$L/previous-boot-kernel.log" ] && pass "second collect keeps previous-boot-kernel.log" || fail "second collect removed previous-boot-kernel.log"
+awk '/^\trestart\)/' "$INIT" | grep -q 'collect\|shutdown' && fail "restart re-runs collect or marks a shutdown" || pass "restart touches only the heartbeat"
+
 # Only the newest 5 crashes are kept (one crash = several files, one stamp).
 setup 2
 mkdir -p "$L/crash"
