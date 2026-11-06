@@ -1214,6 +1214,27 @@ _APP_IDENTIFY = "/usr/bin/python3 /etc/nebulaos/mcu_application_identify.py; " +
 # then returns; the SoC resets itself ~60 s after the last feed. Check
 # afterwards with inspect (new boot_id) and capture boot-history. The undo
 # stops a feeder that was not killed yet (TERM = magic close).
+# Run 24 (2026-11-06): PID wrap. The kernel is BASE_SMALL (pid_max 4096);
+# SSH logins hung at ~80 min uptime twice, each time right as PIDs reached
+# ~4020 and wrapped. Forks short-lived `sh -c :` children until the PID
+# wraps (at most 9000), then reports the state around the wrap: pid_max,
+# blocked (D) tasks, the dropbear and memguard processes. Idle printer
+# only; no motion, no heater; nothing is written. The next connection after
+# it tells whether SSH survives a PID wrap.
+EXERCISE_PROFILES["pid-wrap"] = (
+    _IDLE_GUARD +
+    "echo \"pid_max=$(cat /proc/sys/kernel/pid_max) uptime=$(cut -d' ' -f1 /proc/uptime)\"; "
+    "last=$(sh -c 'echo $$'); echo start_pid=$last; i=0; w=; "
+    "while [ $i -lt 9000 ]; do p=$(sh -c 'echo $$'); "
+    "if [ \"$p\" -lt \"$last\" ]; then w=1; echo \"wrapped after $i forks: $last -> $p\"; break; fi; "
+    "last=$p; i=$((i + 1)); done; [ -n \"$w\" ] || echo NO_WRAP; "
+    "sleep 3; echo '== D-state tasks'; for f in /proc/[0-9]*/stat; do "
+    "s=$(cut -d' ' -f3 \"$f\" 2>/dev/null); [ \"$s\" = D ] && cat \"$f\" | cut -d' ' -f1-3; done; "
+    "echo '== dropbear / memguard'; ps -o pid,stat,args | grep -E '[d]ropbear|[m]emguard'; "
+    "echo PID_WRAP_RESULT=DONE",
+    None,
+    300)
+
 EXERCISE_PROFILES["watchdog-fire"] = (
     _IDLE_GUARD +
     "[ -c /dev/watchdog ] || { echo NO_WATCHDOG_DEVICE; exit 3; }; "
