@@ -102,7 +102,14 @@ reason() {
 		if [ -n "$console" ] && [ -s "$console" ]; then echo FREEZE; else echo UNKNOWN; fi
 		return
 	fi
-	if [ $((rsr & 4)) -ne 0 ] || [ "$rsr" = 0 ]; then echo POWER_ON; return; fi
+	# RSR_PR (bit 0) is the power-on reset - seen on ke-dev as 0x1 after
+	# switching on. RSR_P0R (bit 2) and 0 (no bit set) count as well. Only
+	# with RAM lost: a previous kernel log that survived means the power
+	# never went, so that stays UNKNOWN (and its evidence is kept).
+	if [ $((rsr & 5)) -ne 0 ] || [ "$rsr" = 0 ]; then
+		if [ -n "$console" ] && [ -s "$console" ]; then echo UNKNOWN; else echo POWER_ON; fi
+		return
+	fi
 	echo UNKNOWN
 }
 

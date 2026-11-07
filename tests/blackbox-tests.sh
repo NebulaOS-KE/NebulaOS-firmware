@@ -45,6 +45,8 @@ check "kernel log that just stops + watchdog reset + no signature is a FREEZE" "
 check "no reset status from the kernel (old image) is UNKNOWN, not FREEZE" "$(sh "$BB" reason "$C.freeze" 0 "" "" "")" UNKNOWN
 check "kernel log that just stops + reset pin is UNKNOWN" "$(sh "$BB" reason "$C.freeze" 0 1 0 "")" UNKNOWN
 check "no pstore + power-on reset is POWER_ON" "$(sh "$BB" reason "" 0 4 0 "")" POWER_ON
+check "no pstore + RSR_PR (0x1, switched on) is POWER_ON" "$(sh "$BB" reason "" 0 1 0 "")" POWER_ON
+check "no pstore + RSR_PR|WR (0x3) is UNKNOWN, not POWER_ON" "$(sh "$BB" reason "" 0 3 0 "")" UNKNOWN
 check "no pstore + no reset status is UNKNOWN" "$(sh "$BB" reason "" 0 "" "" "")" UNKNOWN
 check "no pstore + watchdog reset is UNKNOWN (RAM lost)" "$(sh "$BB" reason "" 0 2 0 "")" UNKNOWN
 
