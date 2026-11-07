@@ -1235,6 +1235,21 @@ EXERCISE_PROFILES["pid-wrap"] = (
     "true",
     300)
 
+# Run 24 (2026-11-06): SSH sessions and a 145 MB transfer stalled for
+# minutes on ke-dev while the printer itself ran normally (memguard kept
+# logging, no kernel errors). The CYW43438 runs the firmware's PM_FAST
+# power save (nebulaos-wifi-power-save.sh P0). Turns power save off on
+# wlan0 for this boot only (nothing persistent; the next boot is back to
+# the default), shows the state before and after and the link quality.
+EXERCISE_PROFILES["wifi-ps-off"] = (
+    "echo \"before: $(iw dev wlan0 get power_save 2>&1)\"; "
+    "iw dev wlan0 link 2>&1 | grep -E 'signal|tx bitrate|rx bitrate'; "
+    "iw dev wlan0 set power_save off 2>&1; "
+    "echo \"after: $(iw dev wlan0 get power_save 2>&1)\"; "
+    "grep wlan0 /proc/net/wireless; echo WIFI_PS_OFF_RESULT=DONE",
+    "true",
+    60)
+
 EXERCISE_PROFILES["watchdog-fire"] = (
     _IDLE_GUARD +
     "[ -c /dev/watchdog ] || { echo NO_WATCHDOG_DEVICE; exit 3; }; "
