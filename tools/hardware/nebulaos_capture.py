@@ -517,6 +517,23 @@ CAPTURE_PROFILES = {
         "echo '== ustreamer'; ps -o pid,stat,args | grep '[u]streamer'; "
         "echo '== dropbear'; ps -o pid,stat,args | grep '[d]ropbear'",
         False, None, 60),
+    # Run 24 (2026-11-07): what a stalled transfer is waiting on - process
+    # states with their wait channel, dirty/writeback memory, the eMMC
+    # request counters over 5 s, and the scp/sh processes' wchan and stack.
+    # Read-only.
+    "io-state": ("echo '== now'; date; uptime; "
+        "echo '== processes not sleeping normally'; ps -o pid,stat,args | awk 'NR==1 || $2 !~ /^S/' | cut -c1-160; "
+        "echo '== wait channels'; for d in /proc/[0-9]*; do s=$(cut -d' ' -f3 $d/stat 2>/dev/null); "
+        "case \"$s\" in D|R) echo \"${d##*/} $s $(cat $d/comm 2>/dev/null) wchan=$(cat $d/wchan 2>/dev/null)\";; esac; done; "
+        "echo '== scp'; for p in $(pidof scp 2>/dev/null); do echo \"scp $p $(cut -d' ' -f3 /proc/$p/stat) wchan=$(cat /proc/$p/wchan)\"; "
+        "cat /proc/$p/stack 2>/dev/null | head -n 20; ls -l /proc/$p/fd 2>/dev/null | tail -n 4; done; "
+        "echo '== memory'; grep -E '^(MemFree|MemAvailable|Cached|Dirty|Writeback|WritebackTmp|SwapFree):' /proc/meminfo; "
+        "grep -E '^(nr_dirty|nr_writeback|nr_dirty_threshold|nr_dirty_background_threshold) ' /proc/vmstat; "
+        "for k in dirty_ratio dirty_background_ratio dirty_bytes dirty_background_bytes dirty_expire_centisecs; do echo \"$k=$(cat /proc/sys/vm/$k)\"; done; "
+        "echo '== mmcblk0 stat (5 s)'; cat /sys/block/mmcblk0/stat; sleep 5; cat /sys/block/mmcblk0/stat; "
+        "echo '== staging'; ls -la /usr/data/nebulaos-hwagent 2>&1 | tail -n 8; df -k /usr/data; "
+        "echo '== kernel (last 20)'; dmesg | tail -n 20 | cut -c1-200",
+        False, None, 60),
     # Live print state after a power-loss resume (Run 23, 2026-10-31):
     # what Klipper and Moonraker believe right now, and the screen's view.
     # Read-only.
