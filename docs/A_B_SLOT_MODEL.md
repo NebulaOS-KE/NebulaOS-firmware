@@ -211,7 +211,7 @@ after S02nebulaos-watchdog has counted and armed (a hang in it is reset like any
   evidence in `logs/crash/` (newest 5) and writes the `printer-restarted` notice. It never touches
   the trial record, the slot or the watchdog: the verdict is evidence and a notice, nothing else;
 - the heartbeat writes one line every 10 s into `/dev/pmsg0` (load, memory, the busiest
-  processes with policy/RT priority) at SCHED_OTHER nice -20 like the feeder - never above
+  processes with policy/RT priority) at SCHED_OTHER nice 19 (lowest; never competes with Klipper) - never above
   klipper_mcu or the IRQ threads;
 - a real power cut loses the RAM, so it reads as POWER_ON; the trial and rollback rules above
   are unchanged. An orderly poweroff also reads as POWER_ON (jz_hibernate cuts the RAM); a hang

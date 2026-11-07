@@ -502,6 +502,18 @@ CAPTURE_PROFILES = {
         "echo '== notices'; ls -la /usr/data/nebulaos/system/notices 2>&1; cat /usr/data/nebulaos/system/notices/printer-restarted.txt 2>/dev/null; "
         "echo '== i2c aborts this boot'; dmesg | grep -c 'I2C txabrt'",
         False, None, 60),
+    # Run 24 (2026-11-07): what one black box heartbeat costs (read-only:
+    # the heartbeat's own line builder into /tmp, 10 rounds, wall time from
+    # /proc/uptime and the CPU time of this shell's children from
+    # /proc/self/stat - suspected in a 'Timer too close' while probing).
+    "blackbox-cost": ("echo '== now'; date; uptime; echo \"processes=$(ls -d /proc/[0-9]* | wc -l)\"; "
+        "B=/usr/libexec/nebulaos-blackbox; D=/tmp/nebulaos-hbcost.$$; mkdir -p $D; : > $D/p; "
+        "for n in 0 19; do c0=$(cut -d' ' -f16,17 /proc/$$/stat); w0=$(cut -d' ' -f1 /proc/uptime); "
+        "i=0; while [ $i -lt 10 ]; do nice -n $n sh $B heartbeat-line $D/p $D/n 10 > /dev/null; mv -f $D/n $D/p; i=$((i+1)); done; "
+        "w1=$(cut -d' ' -f1 /proc/uptime); c1=$(cut -d' ' -f16,17 /proc/$$/stat); "
+        "echo \"nice=$n rounds=10 wall_s=$w0..$w1 children_cpu_ticks=$c0..$c1 (100/s)\"; done; "
+        "echo \"last line: $(sh $B heartbeat-line $D/p $D/n 10)\"; echo \"wifi=$(sh $B wifi-state 2>&1)\"; rm -rf $D",
+        False, None, 120),
     # Run 24 (2026-11-07): why SSH sessions and big transfers stall - the
     # TCP connections (who is streaming the camera, open SSH sessions),
     # wlan0 throughput over 10 s, Wi-Fi station state, socket memory and

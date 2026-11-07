@@ -211,6 +211,7 @@ collect() {
 }
 
 # One heartbeat line: hb <utc> up=<s> load=<1 5 15> run=<n> memavail=<kB>
+#   wifi=<dBm>/b<missed beacons>|none
 #   top=<comm>/<pid>/<policy><rtprio>:<cpu%>,...   (the 4 busiest since the
 #   previous line; policy f = FIFO, r = RR, o = other)
 #   blocked=<n>[:<comm>/<pid>,...]   tasks in uninterruptible sleep (D) now,
@@ -256,6 +257,14 @@ heartbeat_line() {
 	}'
 }
 
+# wifi=<signal dBm>/b<missed beacons since boot>, or "none" without an
+# associated interface (/proc/net/wireless, no fork): a printer that drops
+# off the network shows whether its Wi-Fi went first.
+wifi_state() {
+	awk 'NR > 2 && $1 ~ /:$/ { l = $4; sub(/\.$/, "", l); printf "%s/b%s", l, $NF; f = 1; exit }
+		END { if (!f) printf "none" }' "$PROC/net/wireless" 2>/dev/null || echo none
+}
+
 heartbeat() {
 	mkdir -p "$RUN_DIR" 2>/dev/null
 	prev="$RUN_DIR/heartbeat.prev"; next="$RUN_DIR/heartbeat.next"
@@ -271,7 +280,8 @@ heartbeat() {
 		load=$(cut -d' ' -f1-3 "$PROC/loadavg")
 		run=$(cut -d' ' -f4 "$PROC/loadavg" | cut -d/ -f1)
 		mem=$(awk '/^MemAvailable:/ {print $2}' "$PROC/meminfo")
-		echo "hb $(date -u +%Y-%m-%dT%H:%M:%SZ) up=$t1 load=$load run=$run memavail=$mem top=$top" > "$PMSG" 2>/dev/null
+		wifi=$(wifi_state)
+		echo "hb $(date -u +%Y-%m-%dT%H:%M:%SZ) up=$t1 load=$load run=$run memavail=$mem wifi=$wifi top=$top" > "$PMSG" 2>/dev/null
 	done
 }
 
@@ -285,6 +295,7 @@ case "$1" in
 	shutdown) shutdown_mark ;;
 	reason) shift; reason "$@" ;;
 	heartbeat-line) shift; heartbeat_line "$@" ;;
+	wifi-state) wifi_state ;;
 	*) echo "usage: $0 collect|heartbeat" >&2; exit 2 ;;
 esac
 exit 0

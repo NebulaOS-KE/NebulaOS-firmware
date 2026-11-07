@@ -24,9 +24,12 @@ start_heartbeat() {
 	if heartbeat_running; then
 		echo "nebulaos-blackbox: heartbeat already running"
 	elif [ -c /dev/pmsg0 ]; then
-		# SCHED_OTHER at nice -20, like the watchdog feeder: never above
+		# SCHED_OTHER at nice 19, the lowest: never take CPU from Klipper
+		# (at nice -20 its 10 s burst outranked klippy - suspected in a
+		# "Timer too close" while probing, ke-dev 2026-11-07). Late under
+		# overload is fine: a gap in the heartbeat is evidence too. Never above
 		# Klipper's real-time work (klipper_mcu FIFO 49, the IRQ threads).
-		start-stop-daemon -S -b -m -p "$PIDFILE" -N -20 -x "$BB" -- heartbeat \
+		start-stop-daemon -S -b -m -p "$PIDFILE" -N 19 -x "$BB" -- heartbeat \
 			|| echo "nebulaos-blackbox: heartbeat not started"
 	else
 		echo "nebulaos-blackbox: no /dev/pmsg0, heartbeat not started"

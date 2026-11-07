@@ -167,12 +167,22 @@ grep -q 'previous-boot-heartbeat.log' "$BB" && pass "the previous heartbeat is a
 
 # --- init script ------------------------------------------------------------------
 grep -q 'chrt' "$INIT" && fail "heartbeat uses a real-time priority" || pass "heartbeat is not real-time (never above klipper_mcu/IRQ threads)"
-grep -q -- '-N -20' "$INIT" && pass "heartbeat at nice -20 like the watchdog feeder" || fail "heartbeat nice"
+grep -q -- '-N 19 ' "$INIT" && pass "heartbeat at nice 19, never above Klipper" || fail "heartbeat nice"
 grep -q 'sleep "$INTERVAL" || exit 1' "$BB" && pass "a failing sleep ends the heartbeat instead of spinning" || fail "heartbeat can spin"
 NEBULAOS_PMSG="$WORK/pm" NEBULAOS_PROC="$WORK/proc" sh "$BB" shutdown
 grep -q '^shutdown clean .* up=123.45$' "$WORK/pm" && pass "shutdown writes 'shutdown clean' into pmsg" || fail "shutdown mark: $(cat "$WORK/pm" 2>&1)"
 grep -q '"$BB" shutdown' "$INIT" && pass "stop (rcK) writes the shutdown mark" || fail "stop does not mark"
 grep -q '/dev/pmsg0' "$INIT" && pass "heartbeat only starts when /dev/pmsg0 exists" || fail "pmsg guard"
+
+# --- wifi= in the heartbeat ---------------------------------------------------
+WP="$WORK/wproc"; mkdir -p "$WP/net"
+printf 'Inter-| sta-|   Quality        |   Discarded packets               | Missed | WE\n face | tus | link level noise |  nwid  crypt   frag  retry   misc | beacon | 22\n wlan0: 0000   70.  -30.  -256        0      0      0      0      0        3\n' > "$WP/net/wireless"
+check "wifi state: signal and missed beacons" "$(NEBULAOS_PROC="$WP" sh "$BB" wifi-state)" "-30/b3"
+printf 'Inter-| sta-|   Quality\n face | tus | link level noise\n' > "$WP/net/wireless"
+check "wifi state: no associated interface is none" "$(NEBULAOS_PROC="$WP" sh "$BB" wifi-state)" "none"
+rm -f "$WP/net/wireless"
+check "wifi state: no /proc/net/wireless is none" "$(NEBULAOS_PROC="$WP" sh "$BB" wifi-state)" "none"
+grep -q 'memavail=$mem wifi=$wifi top=' "$BB" && pass "heartbeat line carries wifi=" || fail "heartbeat line without wifi="
 
 echo
 echo "blackbox-tests: $PASS passed, $FAIL failed"
