@@ -133,8 +133,13 @@ pre-build)
 	FRAGMENT="$KERNEL_DIR/kernel/kernel-6.6/arch/mips/configs/nebulaos_halley5_v30_defconfig"
 	[ -f "$FRAGMENT" ] && RC=0 || RC=$?
 	check "kernel-owned production defconfig nebulaos_halley5_v30_defconfig present" "$RC"
-	grep -q "CONFIG_PREEMPT_RT=y" "$FRAGMENT" 2>/dev/null && RC=0 || RC=$?
-	check "CONFIG_PREEMPT_RT=y present in the production defconfig" "$RC"
+	# 2026-11-07 (1.0.2, owner decision): PREEMPT, not PREEMPT_RT. The kernel
+	# stays on linux-stable-rt; switching back is that defconfig line plus
+	# these gates and CONFIG_NEBULAOS_KTIMERS_PRIO.
+	grep -qx "CONFIG_PREEMPT=y" "$FRAGMENT" 2>/dev/null && RC=0 || RC=$?
+	check "CONFIG_PREEMPT=y present in the production defconfig" "$RC"
+	! grep -q "^CONFIG_PREEMPT_RT=y" "$FRAGMENT" 2>/dev/null && RC=0 || RC=$?
+	check "CONFIG_PREEMPT_RT not set in the production defconfig" "$RC"
 
 	# 2026-08-07: wifi-roamoff-disable-variant.sh ROAMOFF1 - not a Kconfig
 	# symbol (see that script's own header), so the only real source-level
@@ -173,8 +178,10 @@ post-build|candidate-post-build)
 	[ -f "$KCONFIG" ] || { echo "FATAL: $KCONFIG not found - run 05-final-build.sh first" >&2; exit 1; }
 	[ -f "$DTS" ] || { echo "FATAL: $DTS not found - run 05-final-build.sh first" >&2; exit 1; }
 
-	grep -q "^CONFIG_PREEMPT_RT=y$" "$KCONFIG" && RC=0 || RC=$?
-	check "CONFIG_PREEMPT_RT=y" "$RC"
+	grep -q "^CONFIG_PREEMPT=y$" "$KCONFIG" && RC=0 || RC=$?
+	check "CONFIG_PREEMPT=y" "$RC"
+	! grep -q "^CONFIG_PREEMPT_RT=y$" "$KCONFIG" && RC=0 || RC=$?
+	check "CONFIG_PREEMPT_RT not set" "$RC"
 
 	grep -q "^CONFIG_HZ=100$" "$KCONFIG" && RC=0 || RC=$?
 	check "CONFIG_HZ=100" "$RC"
@@ -242,9 +249,10 @@ post-build|candidate-post-build)
 	grep -q 'spi_gpio_adxl345 {' "$DTS" && RC=0 || RC=$?
 	check "spi_gpio_adxl345 DT node present in resolved DTS" "$RC"
 
-	# RT priority hierarchy (IRQ-04): the kernel applies these itself.
-	grep -qx 'CONFIG_NEBULAOS_KTIMERS_PRIO=50' "$KCONFIG" && RC=0 || RC=$?
-	check "CONFIG_NEBULAOS_KTIMERS_PRIO=50 (ktimers above klipper_mcu)" "$RC"
+	# RT priority hierarchy (IRQ-04): the kernel applies these itself. The
+	# table covers the explicitly threaded handlers without PREEMPT_RT too
+	# (MIPS selects IRQ_FORCED_THREADING); ktimers/N and its priority exist
+	# only on PREEMPT_RT.
 	grep -qx 'CONFIG_NEBULAOS_IRQ_THREAD_PRIO="uart1=60,mmc0=45,s-mmc0=45,mmc1=30,s-mmc1=30,13500000.otg=25,dwc2_hsotg:\*=25,\*=10"' "$KCONFIG" && RC=0 || RC=$?
 	check "CONFIG_NEBULAOS_IRQ_THREAD_PRIO table (uart1 60, mmc0 45, mmc1 30, DWC2 25, rest 10)" "$RC"
 
