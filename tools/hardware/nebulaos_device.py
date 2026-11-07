@@ -617,7 +617,18 @@ class SshDeviceSession(DeviceSession):
             raise DeviceError("command timed out after %ds against %s" % (timeout, self.address))
         return proc.returncode, proc.stdout, proc.stderr
 
-    def _scp(self, local_path, remote_path, timeout=900):
+    # The slowest link a transfer must survive: ke-dev's Wi-Fi fell to
+    # ~160 KB/s after the CYW43438 firmware's PSM watchdog fired (Run 24,
+    # 2026-11-07) - a 145 MB rootfs took ~15 min and hit the old fixed 900 s.
+    SCP_MIN_RATE = 64 * 1024     # bytes/s
+
+    def _scp(self, local_path, remote_path, timeout=None):
+        if timeout is None:
+            try:
+                size = os.path.getsize(local_path)
+            except OSError:
+                size = 0
+            timeout = max(900, size // self.SCP_MIN_RATE + 120)
         env = dict(os.environ)
         env["SSH_ASKPASS"] = self._ensure_askpass()
         env["SSH_ASKPASS_REQUIRE"] = "force"
@@ -629,7 +640,7 @@ class SshDeviceSession(DeviceSession):
         try:
             proc = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, env=env)
         except subprocess.TimeoutExpired:
-            raise DeviceError("transfer of %s timed out" % local_path)
+            raise DeviceError("transfer of %s timed out after %ds" % (local_path, timeout))
         if proc.returncode != 0:
             raise DeviceError("transfer of %s failed: %s" % (local_path, proc.stderr.strip()[:300]))
 
