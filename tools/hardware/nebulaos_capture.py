@@ -502,6 +502,21 @@ CAPTURE_PROFILES = {
         "echo '== notices'; ls -la /usr/data/nebulaos/system/notices 2>&1; cat /usr/data/nebulaos/system/notices/printer-restarted.txt 2>/dev/null; "
         "echo '== i2c aborts this boot'; dmesg | grep -c 'I2C txabrt'",
         False, None, 60),
+    # Run 24 (2026-11-07): why SSH sessions and big transfers stall - the
+    # TCP connections (who is streaming the camera, open SSH sessions),
+    # wlan0 throughput over 10 s, Wi-Fi station state, socket memory and
+    # the TCP error counters. Read-only.
+    "net-state": ("echo '== now'; date; uptime; "
+        "echo '== tcp connections'; netstat -tn 2>/dev/null | grep -v '127.0.0.1' | head -n 60; "
+        "echo '== listening'; netstat -tln 2>/dev/null; "
+        "echo '== wlan0 throughput (10 s)'; a=$(grep wlan0 /proc/net/dev); sleep 10; b=$(grep wlan0 /proc/net/dev); "
+        "echo \"before: $a\"; echo \"after:  $b\"; "
+        "echo '== station'; iw dev wlan0 station dump 2>&1 | head -n 30; iw dev wlan0 get power_save 2>&1; "
+        "echo '== sockstat'; cat /proc/net/sockstat; "
+        "echo '== tcp counters'; grep -E '^Tcp' /proc/net/snmp; grep -E '^TcpExt' /proc/net/netstat | tr ' ' '\\n' | paste - - 2>/dev/null | head -n 5; "
+        "echo '== ustreamer'; ps -o pid,stat,args | grep '[u]streamer'; "
+        "echo '== dropbear'; ps -o pid,stat,args | grep '[d]ropbear'",
+        False, None, 60),
     # Live print state after a power-loss resume (Run 23, 2026-10-31):
     # what Klipper and Moonraker believe right now, and the screen's view.
     # Read-only.
