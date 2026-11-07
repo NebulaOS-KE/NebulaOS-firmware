@@ -307,6 +307,16 @@ CAPTURE_PROFILES = {
     "update-log": (_UPDATE_LOG, False, None, 60),
     # G82 (Run 15 test): the GuppyScreen -> NebulaScreen settings migration,
     # read-only - the old file must be unchanged, the new one a copy of it.
+    # Input shaper (2026-11-07), read-only: the saved [input_shaper] values
+    # (printer.cfg autosave), the active ones (Klipper status) and every
+    # calibration result in the Klipper logs, oldest log first.
+    "shaper-state": ("echo '== saved (printer.cfg autosave)'; "
+        "sed -n '/^#\\*# \\[input_shaper\\]/,/^#\\*# *$/p' /opt/printer_data/config/printer.cfg 2>&1 | head -n 12; "
+        "echo '== active'; wget -q -O - 'http://127.0.0.1:7125/printer/objects/query?input_shaper' 2>&1 | head -c 1500; echo; "
+        "echo '== calibration results in klippy logs'; L=/opt/printer_data/logs; for f in $(ls -tr $L/klippy.log* 2>/dev/null); do "
+        "grep -hE 'Testing axis|Testing frequency 1[0-9][0-9] Hz$|Fitted shaper|Recommended shaper|shaper_freq_[xy]|Shaper calibration data written' $f "
+        "| grep -v '^#' | sed \"s|^|$(basename $f): |\" | tail -n 40; done",
+        False, None, 60),
     # Result and step order of the last auto-calibrate (Run 18 test 4), read-only.
     "autocal-result": ("echo '== calibration status'; wget -q -O - 'http://127.0.0.1:7125/printer/objects/query?nebulaos_calibration' 2>&1 | head -c 3000; "
         "echo; echo '== journal'; cat /usr/data/nebulaos/printer_data/calibration/*journal*.json 2>&1 | head -c 3000; "
