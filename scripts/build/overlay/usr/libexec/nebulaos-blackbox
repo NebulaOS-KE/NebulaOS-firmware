@@ -17,11 +17,13 @@
 #   heartbeat   forever, from S03nebulaos-blackbox: every 10 s one line into
 #               /dev/pmsg0 (RAM, no eMMC wear) with load, memory and the
 #               processes that used the most CPU since the last line,
-#               real-time tasks included. SCHED_OTHER at nice -20, like the
-#               watchdog feeder and never above Klipper's real-time work
+#               real-time tasks included. SCHED_OTHER at nice 19, the lowest
+#               (never takes CPU from Klippy), and never above Klipper's real-time work
 #               (klipper_mcu FIFO 49, the IRQ threads): RT throttling keeps
 #               it running beside a runaway real-time task, which its lines
-#               then name. In a kernel stall nothing runs; then the time of
+#               then name (without PREEMPT_RT, hard-IRQ and softirq time is
+#               counted to the task they interrupted, not to irq/N threads).
+#               In a kernel stall nothing runs; then the time of
 #               the last line is the evidence.
 #   shutdown    from S03nebulaos-blackbox stop (rcK): one "shutdown clean"
 #               line into /dev/pmsg0 - a synchronous RAM write, so the next
@@ -34,8 +36,8 @@
 #                SoC scratch word holds the kernel's reboot signature 0x3535
 #                (every software restart writes it, also `reboot -f`; a
 #                watchdog fire never does), or the kernel log ends in
-#                "reboot: Restarting system" (secondary: on PREEMPT_RT that
-#                line can miss pstore)
+#                "reboot: Restarting system" (secondary: on PREEMPT_RT,
+#                used before 1.0.2, that line could miss pstore)
 #   POWER_OFF    the kernel log ends in "reboot: Power down"/"System halted"
 #   UNKNOWN      no reset status from the kernel (an image without the black
 #                box), or no evidence either way

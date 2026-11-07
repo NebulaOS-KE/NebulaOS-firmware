@@ -254,5 +254,61 @@ class StartStepTests(unittest.TestCase):
                       macro("_WARP_STABILISE"))
         self.assertEqual(variable("START_PRINT", "step"), '""')
 
+
+class RetractionAndFactorTests(unittest.TestCase):
+    """1.0.2: START_PRINT resets speed/flow and takes the slicer's firmware
+    retraction values."""
+
+    def run_start(self, extra, fr=True):
+        ctx = start_ctx(0)
+        if fr:
+            ctx["firmware_retraction"] = Obj({})
+        params = {"BED_TEMP": "60"}
+        params.update(extra)
+        return render("START_PRINT", params=params,
+                      rawparams=" ".join("%s=%s" % kv for kv in params.items()), printer=ctx)
+
+    def set_retraction(self, lines):
+        s = [l for l in lines if l.startswith("SET_RETRACTION")]
+        self.assertLessEqual(len(s), 1, lines)
+        return s[0] if s else None
+
+    def test_speed_and_flow_reset_before_heating(self):
+        lines = self.run_start({})
+        self.assertIn("M220 S100", lines)
+        self.assertIn("M221 S100", lines)
+        self.assertLess(lines.index("M221 S100"), lines.index("M140 S60.0  # start heating bed dont wait"))
+
+    def test_no_values_no_set_retraction(self):
+        self.assertIsNone(self.set_retraction(self.run_start({})))
+
+    def test_all_values(self):
+        line = self.set_retraction(self.run_start({
+            "RETRACT_LENGTH": "0.8", "RETRACT_SPEED": "40",
+            "UNRETRACT_SPEED": "25", "UNRETRACT_EXTRA_LENGTH": "0.05"}))
+        self.assertEqual(line, "SET_RETRACTION RETRACT_LENGTH=0.8 RETRACT_SPEED=40.0 "
+                               "UNRETRACT_SPEED=25.0 UNRETRACT_EXTRA_LENGTH=0.05")
+
+    def test_unretract_speed_0_takes_retract_speed(self):
+        line = self.set_retraction(self.run_start({
+            "RETRACT_LENGTH": "0.8", "RETRACT_SPEED": "30", "UNRETRACT_SPEED": "0"}))
+        self.assertEqual(line, "SET_RETRACTION RETRACT_LENGTH=0.8 RETRACT_SPEED=30.0 UNRETRACT_SPEED=30.0")
+
+    def test_speed_below_klipper_minimum_is_not_sent(self):
+        line = self.set_retraction(self.run_start({
+            "RETRACT_LENGTH": "0", "RETRACT_SPEED": "0", "UNRETRACT_SPEED": "0"}))
+        self.assertEqual(line, "SET_RETRACTION RETRACT_LENGTH=0.0")
+
+    def test_negative_length_clamped(self):
+        line = self.set_retraction(self.run_start({"RETRACT_LENGTH": "-1"}))
+        self.assertEqual(line, "SET_RETRACTION RETRACT_LENGTH=0.0")
+
+    def test_without_firmware_retraction_section_nothing_sent(self):
+        self.assertIsNone(self.set_retraction(self.run_start({"RETRACT_LENGTH": "0.8"}, fr=False)))
+
+    def test_logged_for_support(self):
+        lines = self.run_start({"RETRACT_LENGTH": "0.8"})
+        self.assertIn('RESPOND MSG="Firmware retraction from the slicer: RETRACT_LENGTH=0.8"', lines)
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

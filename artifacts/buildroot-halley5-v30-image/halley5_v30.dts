@@ -51,11 +51,32 @@
 		       * ROTATE/VCODEC unset); dpu uses dma_alloc_coherent from the
 		       * buddy allocator. A disabled node is skipped by
 		       * fdt_scan_reserved_mem() (drivers/of/fdt.c). Re-enable
-		       * together with any of those drivers. */
+		       * together with any of those drivers - and move ramoops
+		       * below first: on this 256 MB board this pool selects
+		       * reg-256M = 0x0e000000 + 32 MB, which contains it. */
 		      status = "disabled";
 		      reg-64M = <0x03000000 0x1000000>;
 		      reg-128M = <0x06000000 0x2000000>;
 		      reg-256M = <0x0e000000 0x2000000>;
+		};
+
+		/* NebulaOS black box (Run 24, 2026-11-06): pstore/ramoops in 1 MB
+		 * of RAM that survives a watchdog or panic reset, so the kernel log
+		 * leading up to a freeze or crash (console), panic/oops dumps
+		 * (record) and the userspace heartbeat (/dev/pmsg0) can be read
+		 * after the next boot from /sys/fs/pstore. 0x0e000000 lies inside
+		 * the vendor's own 256M ISP pool (disabled above), which the
+		 * bootloader leaves alone. A real power cut loses it, as RAM does;
+		 * ECC lets ramoops discard a corrupted buffer instead of
+		 * presenting garbage. */
+		ramoops@e000000 {
+			compatible = "ramoops";
+			reg = <0x0e000000 0x100000>;
+			record-size = <0x10000>;	/* 64 KB per oops/panic dump */
+			console-size = <0x80000>;	/* 512 KB kernel log */
+			pmsg-size = <0x40000>;		/* 256 KB heartbeat */
+			ecc-size = <16>;
+			mem-type = <1>;			/* unbuffered: no write lost at a hard reset */
 		};
 	};
 
@@ -932,10 +953,21 @@
 	status = "okay";
 };
 
+/* G108 (2026-10-24): GPC3 = the KE buzzer (passive piezo, PWM channel 3).
+ * Muxing it to PWM function 0 here makes channel 3 a normal kernel PWM
+ * output (/sys/class/pwm/pwmchip0/pwm3), owned by Klipper's nebulaos_beeper
+ * extra - replacing the old /dev/mem register poking (nebulabeep).
+ * This is NOT the GPC0 incident pattern (see
+ * nebulaos_backlight_final_controller.c): GPC0 carried a bootloader-set
+ * level the screen depended on; GPC3 carries nothing (stock and NebulaOS
+ * leave it unclaimed) and PWM's inactive output is low = buzzer silent.
+ * pwm1_pc (GPC1) is unchanged; GPC0 stays exclusively the backlight
+ * controller's. No other node in this board's tree claims GPC3 (the
+ * halley5_lcd panels that use it as vdd-en are not built for the KE). */
 &pwm {
 	status = "okay";
 	pinctrl-names = "default";
-	pinctrl-0 = <&pwm1_pc>;
+	pinctrl-0 = <&pwm1_pc>, <&pwm3_pc>;
 };
 
 &otg {

@@ -36,7 +36,7 @@
 			compatible = "ingenic,x2000-felix";
 			interrupt-parent = <0x05>;
 			interrupts = <0x3f>;
-			memory-region = <0x21>;
+			memory-region = <0x22>;
 			reg = <0x13300000 0x100000>;
 			status = "okay";
 		};
@@ -45,7 +45,7 @@
 			compatible = "ingenic,x2000-helix";
 			interrupt-parent = <0x05>;
 			interrupts = <0x3e>;
-			memory-region = <0x21>;
+			memory-region = <0x22>;
 			reg = <0x13200000 0x100000>;
 			status = "okay";
 		};
@@ -54,7 +54,7 @@
 			#address-cells = <0x01>;
 			#size-cells = <0x01>;
 			compatible = "ingenic,x2000-isp-camera";
-			memory-region = <0x21>;
+			memory-region = <0x22>;
 			ranges;
 			status = "okay";
 
@@ -106,7 +106,7 @@
 			#address-cells = <0x01>;
 			#size-cells = <0x01>;
 			compatible = "ingenic,x2000-isp-camera";
-			memory-region = <0x21>;
+			memory-region = <0x22>;
 			ranges;
 			status = "okay";
 
@@ -158,7 +158,7 @@
 			compatible = "ingenic,x2000-rotate";
 			interrupt-parent = <0x05>;
 			interrupts = <0x1d>;
-			memory-region = <0x21>;
+			memory-region = <0x22>;
 			reg = <0x13070000 0x10000>;
 			status = "okay";
 		};
@@ -489,7 +489,7 @@
 			g-np-tx-fifo-size = <0x200>;
 			g-rx-fifo-size = <0x448>;
 			g-tx-fifo-size = <0x10 0x10 0x10 0x80 0x100 0x100 0x200 0x300>;
-			ingenic,usbphy = <0x20>;
+			ingenic,usbphy = <0x21>;
 			interrupt-parent = <0x05>;
 			interrupts = <0x01>;
 			otg-rev = <0x200>;
@@ -502,8 +502,8 @@
 			compatible = "ingenic,x2000-pwm";
 			interrupt-parent = <0x05>;
 			interrupts = <0x06>;
-			phandle = <0x22>;
-			pinctrl-0 = <0x1f>;
+			phandle = <0x23>;
+			pinctrl-0 = <0x1f 0x20>;
 			pinctrl-names = "default";
 			reg = <0x134c0000 0x10000>;
 			status = "okay";
@@ -732,7 +732,7 @@
 			external-vbus-detect;
 			ingenic,drvvbus-gpio = <0x08 0x09 0x00 0x00>;
 			ingenic,vbus-dete-gpio = <0x07 0x11 0x01 0x00>;
-			phandle = <0x20>;
+			phandle = <0x21>;
 			reg = <0x10000000 0x100 0x10078000 0x110>;
 			status = "okay";
 		};
@@ -1245,7 +1245,7 @@
 				pwm0_pc {
 					ingenic,pinmux = <0x08 0x00 0x00>;
 					ingenic,pinmux-funcsel = <0x00>;
-					phandle = <0x23>;
+					phandle = <0x24>;
 				};
 
 				pwm0_pd {
@@ -1297,6 +1297,7 @@
 				pwm3_pc {
 					ingenic,pinmux = <0x08 0x03 0x03>;
 					ingenic,pinmux-funcsel = <0x00>;
+					phandle = <0x20>;
 				};
 
 				pwm4_pc {
@@ -1931,9 +1932,9 @@
 		backlight-gpios = <0x08 0x00 0x00 0x00>;
 		compatible = "nebulaos,backlight-final-controller";
 		enable-gpios = <0x08 0x16 0x00 0x00>;
-		pinctrl-0 = <0x23>;
+		pinctrl-0 = <0x24>;
 		pinctrl-names = "pwm-active";
-		pwms = <0x22 0x00 0x4e20>;
+		pwms = <0x23 0x00 0x4e20>;
 		status = "okay";
 	};
 
@@ -1952,9 +1953,19 @@
 		#size-cells = <0x01>;
 		ranges;
 
+		ramoops@e000000 {
+			compatible = "ramoops";
+			console-size = <0x80000>;
+			ecc-size = <0x10>;
+			mem-type = <0x01>;
+			pmsg-size = <0x40000>;
+			record-size = <0x10000>;
+			reg = <0xe000000 0x100000>;
+		};
+
 		reserved_mem@6000000 {
 			compatible = "shared-dma-pool";
-			phandle = <0x21>;
+			phandle = <0x22>;
 			reg-128M = <0x6000000 0x2000000>;
 			reg-256M = <0xe000000 0x2000000>;
 			reg-64M = <0x3000000 0x1000000>;
