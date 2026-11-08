@@ -1,0 +1,10 @@
+# NebulaOS (2026-11-08, mid-print freeze investigation): no power-saving sleep
+# for the Wi-Fi SDIO bus or for USB. Costs a few tens of mW; removes two
+# low-level sleep/wake paths suspected in the freeze:
+#  - USB: every device and hub stays awake (no runtime suspend), so the dwc2
+#    host controller never clock-gates - also devices plugged in later.
+#  - Wi-Fi: the brcmfmac SDIO bus never sleeps, so the CYW43430 is not put
+#    through a KSO sleep/wake after every 20 ms without traffic (kernel
+#    parameter nebulaos_sdio_idle, 0 = never; kernel 95d0321e+).
+ACTION=="add", SUBSYSTEM=="usb", TEST=="power/control", ATTR{power/control}="on"
+ACTION=="add", SUBSYSTEM=="net", KERNEL=="wlan0", TEST=="/sys/module/brcmfmac/parameters/nebulaos_sdio_idle", RUN+="/bin/sh -c 'echo 0 > /sys/module/brcmfmac/parameters/nebulaos_sdio_idle'"
