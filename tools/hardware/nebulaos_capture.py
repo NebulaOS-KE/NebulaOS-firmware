@@ -512,6 +512,21 @@ CAPTURE_PROFILES = {
         "echo '== notices'; ls -la /usr/data/nebulaos/system/notices 2>&1; cat /usr/data/nebulaos/system/notices/printer-restarted.txt 2>/dev/null; "
         "echo '== i2c aborts this boot'; dmesg | grep -c 'I2C txabrt'",
         False, None, 60),
+    # 2026-11-08: is the freeze-diagnosis kernel armed? Pre-timeout irq,
+    # hard-lockup detector, sysctls, brcmfmac SDIO idle / KSO, i2c errors,
+    # core timer irq counts. Read-only.
+    "freeze-diag": ("echo '== now'; date; uptime; uname -v; "
+        "echo '== watchdog irq'; grep -iE 'watchdog|tcu|ost' /proc/interrupts | tr -s ' '; "
+        "dmesg | grep -iE 'nebulaos-freeze|watchdog-pretimeout|ingenic_wdt|ingenic-wdt' | cut -c1-200; "
+        "echo '== lockup detectors'; for k in watchdog nmi_watchdog watchdog_thresh softlockup_panic hardlockup_panic "
+        "panic_on_rcu_stall softlockup_all_cpu_backtrace hardlockup_all_cpu_backtrace hung_task_timeout_secs panic; do "
+        "echo \"$k=$(cat /proc/sys/kernel/$k 2>&1)\"; done; dmesg | grep -iE 'lockup|NMI watchdog|buddy' | cut -c1-200; "
+        "echo '== brcmfmac'; echo \"nebulaos_sdio_idle=$(cat /sys/module/brcmfmac/parameters/nebulaos_sdio_idle 2>&1)\"; "
+        "dmesg | grep -iE 'brcmf|mmc1' | cut -c1-200 | tail -n 15; iw dev wlan0 get power_save 2>&1; "
+        "echo '== i2c'; dmesg | grep -iE 'i2c' | cut -c1-200 | tail -n 10; "
+        "echo '== feeder'; ps -o pid,args | grep '[w]atchdog'; echo \"last-reset=$(cat /run/nebulaos/last-reset 2>&1)\"; "
+        "N=/usr/data/nebulaos/logs; tail -n 3 $N/reset-history.log 2>&1",
+        False, None, 60),
     # 2026-11-08: the newest FREEZE/CRASH evidence in full (the 'blackbox'
     # profile shows heads and tails only), the previous boot's system.log
     # and the log files kept from it. Read-only.
