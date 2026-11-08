@@ -1372,6 +1372,16 @@ EXERCISE_PROFILES["watchdog-fire"] = (
 # shows how far it got. Idle printer only; no motion, no heater. If the
 # printer freezes, the SSH session drops: read the black box afterwards
 # (capture blackbox-full). The undo stops every load and restarts the camera.
+# Freeze investigation A/B: the SDIO bus never sleeps (no KSO sleep/wake of
+# the CYW43430) for this boot only - kernel 95d0321e+ parameter, nothing
+# persistent; the next boot is back to the driver default (-1).
+EXERCISE_PROFILES["wifi-sdio-idle-off"] = (
+    "P=/sys/module/brcmfmac/parameters/nebulaos_sdio_idle; [ -w $P ] || { echo NO_SDIO_IDLE_PARAM; exit 3; }; "
+    "echo \"before=$(cat $P)\"; echo 0 > $P; echo \"after=$(cat $P)\"; "
+    "grep wlan0 /proc/net/wireless; echo WIFI_SDIO_IDLE_OFF_RESULT=DONE",
+    "true",
+    60)
+
 _SOAK_SECONDS = 1800
 EXERCISE_PROFILES["freeze-soak"] = (
     _IDLE_GUARD + (
