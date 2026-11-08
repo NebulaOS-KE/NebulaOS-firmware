@@ -523,6 +523,12 @@ CAPTURE_PROFILES = {
         "sed -n \"${a:-1},${b:-1}p\" $S 2>&1 | grep -v 'dropbear' | tail -n 400; "
         "echo '=== log files'; ls -la /opt/printer_data/logs/ 2>&1",
         False, None, 120),
+    # 2026-11-08: the end of the previous Klipper log (klippy.log.1 - the
+    # boot that ended), with the last Stats lines and any warnings. Read-only.
+    "klippy-prev-tail": ("K=/opt/printer_data/logs/klippy.log.1; ls -la $K 2>&1; "
+        "echo '=== warnings (last 40)'; grep -n -i -E 'timer too close|lost communication|shutdown|error|warn|retransmit|stall' $K | tail -n 40 | cut -c1-300; "
+        "echo '=== tail 150'; tail -n 150 $K | cut -c1-400",
+        False, None, 120),
     # Run 24 (2026-11-07): what one black box heartbeat costs (read-only:
     # the heartbeat's own line builder into /tmp, 10 rounds, wall time from
     # /proc/uptime and the CPU time of this shell's children from
