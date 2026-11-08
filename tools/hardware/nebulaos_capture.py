@@ -512,6 +512,17 @@ CAPTURE_PROFILES = {
         "echo '== notices'; ls -la /usr/data/nebulaos/system/notices 2>&1; cat /usr/data/nebulaos/system/notices/printer-restarted.txt 2>/dev/null; "
         "echo '== i2c aborts this boot'; dmesg | grep -c 'I2C txabrt'",
         False, None, 60),
+    # 2026-11-08: the newest FREEZE/CRASH evidence in full (the 'blackbox'
+    # profile shows heads and tails only), the previous boot's system.log
+    # and the log files kept from it. Read-only.
+    "blackbox-full": ("N=/usr/data/nebulaos/logs; L=$(ls $N/crash/*-pmsg-* 2>/dev/null | tail -n 1); "
+        "P=${L%-pmsg-*}; for f in \"$P\"-*; do [ -f \"$f\" ] || continue; echo \"=== $f\"; cat \"$f\"; done; "
+        "echo '=== previous-boot-kernel.log'; cat $N/previous-boot-kernel.log 2>&1; "
+        "echo '=== system.log (previous boot)'; S=/opt/printer_data/logs/system.log; "
+        "a=$(grep -n 'syslogd started' $S | tail -n 2 | head -n 1 | cut -d: -f1); b=$(grep -n 'syslogd started' $S | tail -n 1 | cut -d: -f1); "
+        "sed -n \"${a:-1},${b:-1}p\" $S 2>&1 | grep -v 'dropbear' | tail -n 400; "
+        "echo '=== log files'; ls -la /opt/printer_data/logs/ 2>&1",
+        False, None, 120),
     # Run 24 (2026-11-07): what one black box heartbeat costs (read-only:
     # the heartbeat's own line builder into /tmp, 10 rounds, wall time from
     # /proc/uptime and the CPU time of this shell's children from
