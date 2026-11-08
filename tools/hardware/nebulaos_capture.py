@@ -512,6 +512,21 @@ CAPTURE_PROFILES = {
         "echo '== notices'; ls -la /usr/data/nebulaos/system/notices 2>&1; cat /usr/data/nebulaos/system/notices/printer-restarted.txt 2>/dev/null; "
         "echo '== i2c aborts this boot'; dmesg | grep -c 'I2C txabrt'",
         False, None, 60),
+    # 2026-11-08: firmware retraction during a print (1.0.2: values from the
+    # slicer via START_PRINT). Active values, the START_PRINT line and what
+    # the job's G-code uses: G10/G11 (firmware) vs G1 E- (slicer retracts).
+    # Read-only; the file scan runs at nice 19.
+    "retraction-check": ("M=http://127.0.0.1:7125; echo '== now'; date; "
+        "echo '== firmware_retraction / print_stats'; wget -q -T 5 -O - \"$M/printer/objects/query?firmware_retraction&print_stats=state,filename,print_duration\" 2>&1 | head -c 1500; echo; "
+        "echo '== klippy.log'; grep -E 'Firmware retraction from the slicer|SET_RETRACTION|START_PRINT' /opt/printer_data/logs/klippy.log 2>/dev/null | tail -n 6 | cut -c1-300; "
+        "f=$(wget -q -T 5 -O - \"$M/printer/objects/query?print_stats=filename\" 2>/dev/null | sed -n 's/.*\"filename\": *\"\\([^\"]*\\)\".*/\\1/p'); "
+        "G=\"/opt/printer_data/gcodes/$f\"; echo \"== file: $f\"; if [ -n \"$f\" ] && [ -f \"$G\" ]; then ls -la \"$G\"; "
+        "grep -m2 -E '^ *START_PRINT' \"$G\" | cut -c1-300; "
+        "echo \"G10=$(nice -n 19 grep -c '^G10' \"$G\") G11=$(nice -n 19 grep -c '^G11' \"$G\") "
+        "slicer_retracts=$(nice -n 19 grep -cE '^G1 [^;]*E-[0-9.]+ *(F[0-9.]+)? *(;.*)?$' \"$G\")\"; "
+        "grep -E '^; *(use_firmware_retraction|retraction_length|retraction_speed|deretraction_speed|retract_restart_extra|wipe|retract_when_changing_layer|z_hop) *=' \"$G\" | head -n 12; "
+        "else echo NO_ACTIVE_FILE; fi",
+        False, None, 120),
     # 2026-11-08: is the freeze-diagnosis kernel armed? Pre-timeout irq,
     # hard-lockup detector, sysctls, brcmfmac SDIO idle / KSO, i2c errors,
     # core timer irq counts. Read-only.
