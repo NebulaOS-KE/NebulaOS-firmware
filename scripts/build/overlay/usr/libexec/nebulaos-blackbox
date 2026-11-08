@@ -31,6 +31,9 @@
 #
 # The reasons (REASON= in /run/nebulaos/last-reset and reset-history.log),
 # checked in this order:
+#   FREEZE       (first) a panic dump from the watchdog pre-timeout handler
+#                ("nebulaos-freeze:", 1.0.2): the printer froze and the
+#                kernel dumped its state 40 s later
 #   CRASH        a kernel panic or oops dump is in pstore
 #   RESTART      the heartbeat log ends in "shutdown clean" (rcK), or the
 #                SoC scratch word holds the kernel's reboot signature 0x3535
@@ -85,6 +88,9 @@ REBOOT_SIGNATURE=13621    # 0x3535, soc-x2000/reset.c jz_wdt_restart
 #        <cppsr decimal or empty> <pmsg file or empty>
 reason() {
 	console="$1"; dump="$2"; rsr="$3"; cppsr="${4:-}"; pmsg="${5:-}"
+	# dump 2: the panic came from the watchdog pre-timeout handler
+	# (ingenic_wdt.c, "nebulaos-freeze:") - a freeze that left its state.
+	if [ "$dump" = 2 ]; then echo FREEZE; return; fi
 	if [ "$dump" = 1 ]; then echo CRASH; return; fi
 	if [ -n "$pmsg" ] && [ -s "$pmsg" ] && grep -v '^$' "$pmsg" 2>/dev/null | tail -n 1 | grep -q '^shutdown clean'; then
 		echo RESTART; return
@@ -134,7 +140,7 @@ collect() {
 		[ -f "$f" ] || continue
 		case "${f##*/}" in
 			console-ramoops*) console="$f" ;;
-			dmesg-ramoops*) dump=1 ;;
+			dmesg-ramoops*) if grep -q 'nebulaos-freeze:' "$f" 2>/dev/null; then dump=2; elif [ "$dump" = 0 ]; then dump=1; fi ;;
 			pmsg-ramoops*) pmsg="$f" ;;
 		esac
 	done
