@@ -1344,6 +1344,45 @@ EXERCISE_PROFILES["watchdog-fire"] = (
     "[ -n \"${W:-}\" ] && kill -TERM $W 2>/dev/null",
     90)
 
+# Run 25 (2026-11-08): the overnight mid-print freeze (both CPUs silent,
+# hardware watchdog reset after 60 s). One long soak loads every suspect at
+# once instead of one at a time, because the freeze took hours to appear:
+#  - timer churn: one python3 per CPU in a 0.5 ms sleep loop reading the
+#    monotonic clock (hrtimer programming + global clocksource reads);
+#  - Wi-Fi: 2 x 100 pkt/s x 1400 B pings to the gateway (SDIO);
+#  - camera: a local MJPEG viewer, and S50webcam stop/start every 5 min (dwc2);
+#  - eMMC: 256 KiB written + fsync'd every 2 s to one temporary file in
+#    /usr/data, deleted afterwards (~0.2 GB over 30 min).
+# A heartbeat every 60 s (load, core-timer irq counts, wlan0, D-state tasks)
+# shows how far it got. Idle printer only; no motion, no heater. If the
+# printer freezes, the SSH session drops: read the black box afterwards
+# (capture blackbox-full). The undo stops every load and restarts the camera.
+_SOAK_SECONDS = 1800
+EXERCISE_PROFILES["freeze-soak"] = (
+    _IDLE_GUARD + (
+    "GW=$(ip route 2>/dev/null | awk '/^default/{print $3; exit}'); [ -n \"$GW\" ] || { echo NO_GATEWAY; exit 3; }; "
+    "echo \"boot_id=$(cat /proc/sys/kernel/random/boot_id) uptime=$(cut -d' ' -f1 /proc/uptime) gateway=$GW seconds=%d\"; "
+    "P=; for c in $(seq 0 $(($(nproc) - 1))); do A=; command -v taskset >/dev/null && A=\"taskset -c $c\"; $A python3 -c 'import time\n"
+    "while True:\n time.sleep(0.0005); time.monotonic()' & P=\"$P $!\"; done; "
+    "for i in 1 2; do ping -q -s 1400 -i 0.01 -w %d \"$GW\" > $T/ping$i.txt 2>&1 & P=\"$P $!\"; done; "
+    "curl -s --max-time %d -o /dev/null http://127.0.0.1:8080/stream & P=\"$P $!\"; "
+    "F=/usr/data/.nebulaos-soak.$$; ( while :; do head -c 262144 /dev/urandom > $F; sync $F 2>/dev/null || sync; sleep 2; done ) & P=\"$P $!\"; "
+    "echo \"loads started: $P\"; end=$((" + _NOW_S + " + %d)); n=0; "
+    "while [ " + _NOW_S + " -lt $end ]; do sleep 60; n=$((n + 1)); "
+    "echo \"== t=${n}m uptime=$(cut -d' ' -f1 /proc/uptime) load=$(cut -d' ' -f1-3 /proc/loadavg)\"; "
+    "grep -iE 'ost|timer' /proc/interrupts | tr -s ' ' | cut -c1-120; grep wlan0 /proc/net/dev | tr -s ' '; "
+    "for d in usb1 1-1; do p=/sys/bus/usb/devices/$d/power; echo \"usb $d $(cat $p/runtime_status $p/runtime_suspended_time 2>/dev/null | tr '\\n' ' ')\"; done; "
+    "for f in /proc/[0-9]*/stat; do s=$(cut -d' ' -f3 \"$f\" 2>/dev/null); [ \"$s\" = D ] && echo \"D: $(cut -d' ' -f1-2 \"$f\")\"; done; "
+    "if [ $((n %% 5)) = 0 ] && [ -x /etc/init.d/S50webcam ]; then /etc/init.d/S50webcam stop >/dev/null 2>&1; sleep 5; "
+    "/etc/init.d/S50webcam start >/dev/null 2>&1; echo \"camera restarted\"; "
+    "curl -s --max-time 120 -o /dev/null http://127.0.0.1:8080/stream & P=\"$P $!\"; fi; "
+    "dmesg | tail -n 5 | grep -iE 'error|timeout|fail|brcmf|dwc2|mmc' | cut -c1-200; done; "
+    "kill $P 2>/dev/null; wait 2>/dev/null; P=; rm -f $F; F=; cat $T/ping*.txt | grep -E 'transmitted|round-trip'; "
+    "echo FREEZE_SOAK_RESULT=SURVIVED") % (_SOAK_SECONDS, _SOAK_SECONDS, _SOAK_SECONDS, _SOAK_SECONDS),
+    "[ -n \"${P:-}\" ] && kill $P 2>/dev/null; [ -n \"${F:-}\" ] && rm -f \"$F\"; "
+    "[ -x /etc/init.d/S50webcam ] && { pidof ustreamer >/dev/null || /etc/init.d/S50webcam start >/dev/null 2>&1; }",
+    _SOAK_SECONDS + 300)
+
 EXERCISE_PROFILES.update({
     # uart1 framing errors at boot (open observation): which open produces
     # them. The MCU sends a stats message every 5 s with or without a host, so
