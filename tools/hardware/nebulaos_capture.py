@@ -524,7 +524,7 @@ CAPTURE_PROFILES = {
         "grep -m2 -E '^ *START_PRINT' \"$G\" | cut -c1-300; "
         "echo \"G10=$(nice -n 19 grep -c '^G10' \"$G\") G11=$(nice -n 19 grep -c '^G11' \"$G\") "
         "slicer_retracts=$(nice -n 19 grep -cE '^G1 [^;]*E-[0-9.]+ *(F[0-9.]+)? *(;.*)?$' \"$G\")\"; "
-        "grep -E '^; *(use_firmware_retraction|retraction_length|retraction_speed|deretraction_speed|retract_restart_extra|wipe|retract_when_changing_layer|z_hop) *=' \"$G\" | head -n 12; "
+        "grep -E '^; *(use_firmware_retraction|retraction_length|retraction_speed|deretraction_speed|retract_restart_extra|wipe|retract_when_changing_layer|z_hop|filament_retraction_length|filament_retraction_speed|filament_deretraction_speed|filament_retract_restart_extra|filament_settings_id|print_settings_id|printer_settings_id) *=' \"$G\" | cut -c1-200 | head -n 20; "
         "else echo NO_ACTIVE_FILE; fi",
         False, None, 120),
     # 2026-11-08: is the freeze-diagnosis kernel armed? Pre-timeout irq,
