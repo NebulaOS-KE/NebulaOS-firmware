@@ -1382,6 +1382,17 @@ EXERCISE_PROFILES["wifi-sdio-idle-off"] = (
     "true",
     60)
 
+# Freeze investigation: keep every USB device and hub awake (no runtime
+# suspend, so the dwc2 host never clock-gates) for this boot only. Nothing
+# persistent; devices plugged in later still use the default.
+EXERCISE_PROFILES["usb-autosuspend-off"] = (
+    "n=0; for c in /sys/bus/usb/devices/*/power/control; do [ -w \"$c\" ] || continue; "
+    "echo on > \"$c\" && n=$((n + 1)); done; echo \"usb_devices_kept_awake=$n\"; "
+    "for d in /sys/bus/usb/devices/*/power; do echo \"${d%/power} $(cat $d/control $d/runtime_status 2>/dev/null | tr '\\n' ' ')\"; done; "
+    "echo USB_AUTOSUSPEND_OFF_RESULT=DONE",
+    "true",
+    60)
+
 _SOAK_SECONDS = 1800
 EXERCISE_PROFILES["freeze-soak"] = (
     _IDLE_GUARD + (
