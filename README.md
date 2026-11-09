@@ -5,7 +5,7 @@
 NebulaOS is custom firmware for the Creality Ender-3 V3 KE. This repository builds it: it pins
 every input, fetches them, and produces the kernel and root filesystem that go onto the printer.
 
-Current version: **1.0.1** (`NEBULAOS_VERSION` in
+Current version: **1.0.2** (`NEBULAOS_VERSION` in
 [`manifests/dependencies.conf`](manifests/dependencies.conf)).
 
 ## The project
