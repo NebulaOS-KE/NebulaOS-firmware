@@ -392,7 +392,7 @@ CAPTURE_PROFILES = {
         "echo '== system.log: ota'; grep -h -i 'ota' /opt/printer_data/logs/system.log 2>/dev/null | tail -n 30 | cut -c1-300; "
         "echo '== clock'; date -u; "
         "echo '== github from the printer'; for u in https://api.github.com/repos/NebulaOS-KE/NebulaOS/releases/latest "
-        "https://github.com/NebulaOS-KE/NebulaOS/releases/download/v1.0.0/nebulaos-release.json; do "
+        "https://github.com/NebulaOS-KE/NebulaOS/releases/latest/download/nebulaos-release.json; do "
         "python3 -c \"import sys,urllib.request as u; r=u.Request(sys.argv[1],method='HEAD',headers={'User-Agent':'NebulaOS-ota'}); "
         "x=u.urlopen(r,timeout=20); print(x.status, x.geturl()[:120])\" $u 2>&1 | tail -n 2; done",
         False, None, 90),

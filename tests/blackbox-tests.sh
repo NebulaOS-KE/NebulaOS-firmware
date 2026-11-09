@@ -111,6 +111,7 @@ printf 'Panic#1 Part1\nnebulaos-freeze: watchdog not fed for 40 s (cpu0, jiffies
 collect
 grep -q '^REASON=FREEZE$' "$WORK/run/last-reset" && pass "caught freeze: REASON=FREEZE" || fail "caught freeze: $(cat "$WORK/run/last-reset" 2>&1)"
 ls "$L/crash" | grep -q -- '-FREEZE-dmesg-ramoops-0.txt$' && pass "caught freeze: the state dump is kept" || fail "caught freeze dump not kept"
+grep -q '^PSTORE_DUMP=freeze$' "$WORK/run/last-reset" && pass "caught freeze: PSTORE_DUMP=freeze in last-reset" || fail "caught freeze PSTORE_DUMP: $(grep PSTORE_DUMP "$WORK/run/last-reset")"
 check "a pre-timeout dump is a FREEZE, whatever else" "$(sh "$BB" reason "$C.freeze" 2 2 13621 "$M.clean")" FREEZE
 
 # collect runs once per boot: a second run keeps this boot's verdict.

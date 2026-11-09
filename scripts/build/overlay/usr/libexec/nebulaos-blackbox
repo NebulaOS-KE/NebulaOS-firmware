@@ -193,7 +193,7 @@ collect() {
 		echo "RESET_STATUS=$(hex "$rsr")"
 		echo "CPPSR=$(hex "$cppsr")"
 		echo "PSTORE_CONSOLE=$([ -n "$console" ] && echo yes || echo no)"
-		echo "PSTORE_DUMP=$([ "$dump" = 1 ] && echo yes || echo no)"
+		echo "PSTORE_DUMP=$([ "$dump" = 1 ] && echo yes || { [ "$dump" = 2 ] && echo freeze || echo no; })"
 		echo "PSTORE_HEARTBEAT=$([ -n "$pmsg" ] && echo yes || echo no)"
 		[ -n "$pmsg" ] && echo "LAST_HEARTBEAT=$last_hb"
 		echo "CHECKED_AT=$stamp UPTIME=$uptime_s"
