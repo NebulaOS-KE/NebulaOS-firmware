@@ -253,7 +253,7 @@ _UPDATE_LOG = (
 
 # Profiles that may also run on Creality's system (the other slot): read-only
 # and meaningful from there.
-STOCK_CAPTURE_PROFILES = ("nebulaos-postmortem", "datafs-check-readonly")
+STOCK_CAPTURE_PROFILES = ("nebulaos-postmortem", "datafs-check-readonly", "stock-gui-state")
 
 # name -> (body, needs_diag, probe or None, timeout seconds)
 CAPTURE_PROFILES = {
@@ -292,7 +292,7 @@ CAPTURE_PROFILES = {
         "echo; echo '== old boot uploads'; ls -la /usr/data/nebulaos/boot/uploads 2>/dev/null",
         False, None, 180),
     "versions": (_VERSIONS, False, None, 90),
-    # G125 follow-up (Tim 2026-10-29: the Spoolman page opens empty although the
+    # G125 follow-up (2026-10-29: the Spoolman page opens empty although the
     # server works), read-only: the file, the helper, Moonraker's endpoint and
     # what the screen logged about it.
     "spoolman": ("C=/opt/printer_data/config/moonraker.conf; echo \"== $C\"; ls -la $C; "
@@ -307,6 +307,16 @@ CAPTURE_PROFILES = {
     "update-log": (_UPDATE_LOG, False, None, 60),
     # G82 (Run 15 test): the GuppyScreen -> NebulaScreen settings migration,
     # read-only - the old file must be unchanged, the new one a copy of it.
+    # Input shaper (2026-11-07), read-only: the saved [input_shaper] values
+    # (printer.cfg autosave), the active ones (Klipper status) and every
+    # calibration result in the Klipper logs, oldest log first.
+    "shaper-state": ("echo '== saved (printer.cfg autosave)'; "
+        "sed -n '/^#\\*# \\[input_shaper\\]/,/^#\\*# *$/p' /opt/printer_data/config/printer.cfg 2>&1 | head -n 12; "
+        "echo '== active'; wget -q -O - 'http://127.0.0.1:7125/printer/objects/query?input_shaper' 2>&1 | head -c 1500; echo; "
+        "echo '== calibration results in klippy logs'; L=/opt/printer_data/logs; for f in $(ls -tr $L/klippy.log* 2>/dev/null); do "
+        "grep -hE 'Testing axis|Testing frequency 1[0-9][0-9] Hz$|Fitted shaper|Recommended shaper|shaper_freq_[xy]|Shaper calibration data written' $f "
+        "| grep -v '^#' | sed \"s|^|$(basename $f): |\" | tail -n 40; done",
+        False, None, 60),
     # Result and step order of the last auto-calibrate (Run 18 test 4), read-only.
     "autocal-result": ("echo '== calibration status'; wget -q -O - 'http://127.0.0.1:7125/printer/objects/query?nebulaos_calibration' 2>&1 | head -c 3000; "
         "echo; echo '== journal'; cat /usr/data/nebulaos/printer_data/calibration/*journal*.json 2>&1 | head -c 3000; "
@@ -359,7 +369,7 @@ CAPTURE_PROFILES = {
         "|| ps | grep -E '[k]lippy|[m]oonraker|[n]ebulascreen'",
         False, None, 60),
     # Print statistics sources left by stock Creality and an earlier Moonraker
-    # (Run 23, Tim 2026-11-02: Statistics page + import): the stock lifetime
+    # (Run 23, 2026-11-02: Statistics page + import): the stock lifetime
     # counter and print history, and the old Moonraker database. Read-only.
     "stats-sources": ("C=/usr/data/creality/userdata; "
         "echo '== creality userdata'; ls -la $C $C/config $C/history 2>&1 | head -n 40; "
@@ -370,7 +380,7 @@ CAPTURE_PROFILES = {
         "for d in /usr/data/printer_data/database/*; do echo \"-- $d\"; wc -c < $d 2>/dev/null; head -c 16 $d 2>/dev/null | od -A d -c | head -n 2; done; "
         "echo '== NebulaOS moonraker history totals'; wget -q -T 5 -O - 'http://127.0.0.1:7125/server/history/totals' 2>&1 | head -c 1500; echo",
         False, None, 60),
-    # Why a system update over the internet failed (G79, Run 23 OTA test, Tim
+    # Why a system update over the internet failed (G79, Run 23 OTA test,
     # 2026-11-03): the check cache, the download state, the downloaded files,
     # free space, osconfig's ota status and the system log's ota lines, and
     # whether GitHub answers from the printer. Read-only (HEAD requests only).
@@ -382,11 +392,84 @@ CAPTURE_PROFILES = {
         "echo '== system.log: ota'; grep -h -i 'ota' /opt/printer_data/logs/system.log 2>/dev/null | tail -n 30 | cut -c1-300; "
         "echo '== clock'; date -u; "
         "echo '== github from the printer'; for u in https://api.github.com/repos/NebulaOS-KE/NebulaOS/releases/latest "
-        "https://github.com/NebulaOS-KE/NebulaOS/releases/download/v1.0.0/nebulaos-release.json; do "
+        "https://github.com/NebulaOS-KE/NebulaOS/releases/latest/download/nebulaos-release.json; do "
         "python3 -c \"import sys,urllib.request as u; r=u.Request(sys.argv[1],method='HEAD',headers={'User-Agent':'NebulaOS-ota'}); "
         "x=u.urlopen(r,timeout=20); print(x.status, x.geturl()[:120])\" $u 2>&1 | tail -n 2; done",
         False, None, 90),
-    # Are the imported statistics right (Run 23, Tim 2026-11-02): what the
+    # Why a system image install ended as it did (Run 23 OTA retest,
+    # 2026-11-04: "print is running" with no print): the job state with its
+    # busy reason, the last result, a pending trial, osconfig's image status
+    # and the system log's image lines. Read-only.
+    "image-state": ("echo '== job state'; cat /run/nebulaos/image-update/state.json 2>&1 | head -c 3000; echo; "
+        "echo '== last'; cat /usr/data/nebulaos/system/image-update-last.json 2>&1 | head -c 3000; echo; "
+        "echo '== trial'; cat /usr/data/nebulaos/system/image-update-trial.json 2>&1 | head -c 2000; echo; "
+        "echo '== osconfig image status'; /usr/libexec/nebulaos/nebulaos-osconfig image status 2>&1 | head -c 4000; echo; "
+        "echo '== work dir'; ls -la /usr/data/nebulaos/system/image-work 2>&1 | head -n 10; "
+        "echo '== system.log: image'; grep -h 'nebulaos-osconfig: image' /opt/printer_data/logs/system.log 2>/dev/null | tail -n 20 | cut -c1-400",
+        False, None, 60),
+    # Every read-only (GET) answer the screen and Mainsail use, whole, one
+    # "=== <path>" block each (Run 23, for the wiki: example responses, and
+    # real data behind the simulator's screenshots). GET only: no POST, no
+    # refresh, nothing that changes the printer. Network names and addresses
+    # are in it - redact before publishing.
+    "api-snapshot": ("M=http://127.0.0.1:7125; for p in "
+        "/machine/nebulaos/info /machine/nebulaos/network/status /machine/nebulaos/boot_display/status "
+        "/machine/nebulaos/boot_display/images /machine/nebulaos/logs/status /machine/nebulaos/storage "
+        "/machine/nebulaos/cleanup/plan /machine/nebulaos/cleanup/nebulaos/plan /machine/nebulaos/stats "
+        "/machine/nebulaos/display/status /machine/nebulaos/spoolman/status /machine/nebulaos/camera/status "
+        "/machine/nebulaos/wifi/status '/machine/nebulaos/system/busy?profile=request' "
+        "'/machine/nebulaos/system/busy?profile=restart' /machine/nebulaos/image/list "
+        "/machine/nebulaos/image/status /machine/nebulaos/ota/status /machine/nebulaos/mcu/status "
+        "/machine/nebulaos/mcu/files /machine/nebulaos/updates/readiness "
+        "/server/info /server/config /machine/system_info /machine/proc_stats /machine/update/status "
+        "'/server/history/list?limit=10' '/server/history/totals' '/server/files/list?root=gcodes' "
+        "/printer/info /printer/objects/list "
+        "'/printer/objects/query?webhooks&print_stats&virtual_sdcard&toolhead&extruder&heater_bed&fan&gcode_move&exclude_object&idle_timeout&filament_switch_sensor%20filament_sensor&tmc2209%20stepper_x&tmc2209%20stepper_y&tmc2209%20stepper_z&tmc2209%20extruder&display_status&motion_report&system_stats&bed_mesh' "
+        "; do echo \"=== $p\"; wget -q -T 30 -O - \"$M$p\" 2>&1 | head -c 60000; echo; done",
+        False, None, 240),
+    # What the touchscreen shows right now, pixel for pixel (Run 23, wiki
+    # screenshots of pages only a live printer can fill). The whole
+    # framebuffer, gzip+base64 between markers, plus the geometry and pan
+    # offset to decode it. Reading /dev/fb0 changes nothing on screen.
+    "screen-grab": ("S=/sys/class/graphics/fb0; for f in virtual_size bits_per_pixel stride pan name; do "
+        "echo \"fb_$f=$(cat $S/$f 2>/dev/null)\"; done; "
+        "echo \"display=$(wget -q -T 5 -O - http://127.0.0.1:7125/machine/nebulaos/display/status 2>/dev/null | head -c 600)\"; "
+        "echo '== fb0 gzip base64 begin'; gzip -c -f < /dev/fb0 | base64; echo '== fb0 gzip base64 end'",
+        False, None, 60),
+    # Which touchscreen app stock Creality starts, and why (Run 23,
+    # 2026-11-05: after installing Creality's .img, OpenKE's GuppyScreen came
+    # back instead of Creality's GUI). Init scripts, the overlay's changes,
+    # running GUI processes, leftovers on the data drive. Read-only; works on
+    # stock and NebulaOS.
+    "stock-gui-state": ("echo '== os'; cat /etc/ota_info 2>/dev/null | head -5; uname -r; "
+        "echo '== mounts'; grep -E ' / | /overlay| /usr/data' /proc/mounts; "
+        "echo '== init.d'; ls -la /etc/init.d/ 2>&1; "
+        "echo '== overlay upper etc/init.d'; for d in /overlay/upper /overlay/root /overlay; do [ -d $d/etc/init.d ] && { echo \"-- $d\"; ls -la $d/etc/init.d; }; done; "
+        "echo '== overlay upper (top)'; for d in /overlay/upper /overlay/root; do [ -d $d ] && find $d -maxdepth 3 2>/dev/null | head -n 80; done; "
+        "echo '== gui processes'; ps w 2>/dev/null | grep -i -E 'guppy|display|lvgl|Monitor|web-server|ks_|creality' | grep -v grep; "
+        "echo '== data leftovers'; ls -la /usr/data/ 2>&1 | head -n 40; ls -la /usr/data/guppyscreen 2>&1 | head -n 15; "
+        "echo '== init scripts mentioning guppy or display'; grep -l -i -E 'guppy|display-server|Monitor' /etc/init.d/* 2>/dev/null; "
+        "for f in $(grep -l -i -E 'guppy' /etc/init.d/* 2>/dev/null); do echo \"--- $f\"; head -n 40 $f; done; "
+        "echo '== reinstall-creality.sh'; cat /usr/data/guppyscreen/reinstall-creality.sh 2>&1 | head -n 60; "
+        "echo '== lower S99start_app / S12boot_display'; ls -la /rom/etc/init.d/S99start_app /rom/etc/init.d/S12boot_display 2>&1",
+        False, None, 60),
+    # Why Klipper reports "-dirty" (Run 23, the docs agent's Under-the-Hood
+    # question): which tracked file git sees as changed, by content or mode.
+    # --no-optional-locks: git does not rewrite the index. Read-only.
+    "klipper-dirty": ("K=$(readlink -f /opt/klipper); echo \"== checkout $K\"; "
+        "G='git --no-optional-locks'; for d in $K /usr/data/nebulaos/apps/nebulaos-klipper-extensions; do "
+        "[ -d $d/.git ] || [ -f $d/.git ] || continue; echo \"=== $d\"; "
+        "$G -C $d describe --always --tags --long --dirty 2>&1; $G -C $d rev-parse HEAD 2>&1; "
+        "echo '-- core.fileMode'; $G -C $d config --get core.fileMode 2>&1; "
+        "echo '-- status --porcelain'; $G -C $d status --porcelain 2>&1 | head -n 40; "
+        "echo '-- diff --stat'; $G -C $d diff --stat 2>&1 | tail -n 20; "
+        "echo '-- diff --summary'; $G -C $d diff --summary 2>&1 | head -n 20; "
+        "echo '-- diff (first 80 lines)'; $G -C $d diff 2>&1 | head -n 80; done; "
+        "echo '== which git'; command -v git; "
+        "echo '== compose log'; grep -h 'nebulaos-klipper-compose' /opt/printer_data/logs/system.log 2>/dev/null | tail -n 25 | cut -c1-300; "
+        "echo '== klippy.log version'; grep -h -A10 'Git version' /opt/printer_data/logs/klippy.log 2>/dev/null | grep -v '^Args\\|^CPU\\|^Python\\|^Start printer' | tail -n 40 | cut -c1-400",
+        False, None, 60),
+    # Are the imported statistics right (Run 23, 2026-11-02): what the
     # Statistics page gets, the cached import, and the old Moonraker database
     # itself - its totals next to the sum of its own job rows and their dates.
     # Read-only (SQLite opened mode=ro).
@@ -401,7 +484,7 @@ CAPTURE_PROFILES = {
         "print('rows', r[2], 'print h', round((r[3] or 0)/3600.0,2), 'from', time.strftime('%F',time.gmtime(r[0] or 0)), 'to', time.strftime('%F',time.gmtime(r[1] or 0))); "
         "[print(time.strftime('%F %H:%M',time.gmtime(x[0])),x[1],x[2],round(x[3]/60.0,1),'min') for x in c.execute('SELECT start_time,status,filename,print_duration FROM job_history ORDER BY start_time DESC LIMIT 8')]\" 2>&1",
         False, None, 60),
-    # Did a print make a timelapse (Run 23, Tim 2026-11-01): the rendered
+    # Did a print make a timelapse (Run 23, 2026-11-01): the rendered
     # videos, the frame directory, the timelapse settings and Moonraker's
     # timelapse lines. Read-only.
     "timelapse": ("echo '== now'; date; "
@@ -411,7 +494,116 @@ CAPTURE_PROFILES = {
         "echo '== settings'; wget -q -T 5 -O - 'http://127.0.0.1:7125/machine/timelapse/settings' 2>&1 | head -c 2500; echo; "
         "echo '== moonraker.log: timelapse'; grep -hi timelapse /opt/printer_data/logs/moonraker.log 2>/dev/null | tail -n 60 | cut -c1-250",
         False, None, 60),
-    # Live print state after a power-loss resume (Run 23, Tim 2026-10-31):
+    # Black box (Run 24, 2026-11-06): why the last boot ended and what was
+    # kept - S03nebulaos-blackbox's verdict, the reset history, the crash
+    # evidence (heads and tails), the SoC reset status, pstore now and the
+    # heartbeat daemon. Read-only.
+    "blackbox": ("echo '== now'; date; uptime; "
+        "echo '== last-reset'; cat /run/nebulaos/last-reset 2>&1; "
+        "N=/usr/data/nebulaos/logs; echo '== reset-history (last 20)'; tail -n 20 $N/reset-history.log 2>&1; "
+        "echo '== reset status'; for f in nebulaos_reset_rsr nebulaos_reset_cppsr; do "
+        "echo \"$f=$(cat /sys/module/ingenic_wdt/parameters/$f 2>&1)\"; done; dmesg | grep -E 'ingenic_wdt|ramoops|pstore' | cut -c1-200; "
+        "echo '== pstore now'; grep pstore /proc/mounts; ls -la /sys/fs/pstore 2>&1; ls -la /dev/pmsg0 2>&1; "
+        "echo '== heartbeat daemon'; ps -o pid,args | grep '[n]ebulaos-blackbox heartbeat'; "
+        "cat /proc/$(cat /var/run/nebulaos-heartbeat.pid 2>/dev/null)/sched 2>/dev/null | grep -E '^policy|^prio'; "
+        "echo '== crash evidence'; ls -la $N/crash 2>&1; for f in $N/crash/*; do [ -f \"$f\" ] || continue; "
+        "echo \"--- $f ($(wc -l < \"$f\") lines)\"; head -n 5 \"$f\" | cut -c1-250; echo '...'; tail -n 25 \"$f\" | cut -c1-250; done; "
+        "echo '== previous-boot-kernel.log (last 30)'; tail -n 30 $N/previous-boot-kernel.log 2>&1 | cut -c1-250; "
+        "echo '== notices'; ls -la /usr/data/nebulaos/system/notices 2>&1; cat /usr/data/nebulaos/system/notices/printer-restarted.txt 2>/dev/null; "
+        "echo '== i2c aborts this boot'; dmesg | grep -c 'I2C txabrt'",
+        False, None, 60),
+    # 2026-11-08: firmware retraction during a print (1.0.2: values from the
+    # slicer via START_PRINT). Active values, the START_PRINT line and what
+    # the job's G-code uses: G10/G11 (firmware) vs G1 E- (slicer retracts).
+    # Read-only; the file scan runs at nice 19.
+    "retraction-check": ("M=http://127.0.0.1:7125; echo '== now'; date; "
+        "echo '== firmware_retraction / print_stats'; wget -q -T 5 -O - \"$M/printer/objects/query?firmware_retraction&print_stats=state,filename,print_duration\" 2>&1 | head -c 1500; echo; "
+        "echo '== klippy.log'; grep -E 'Firmware retraction from the slicer|SET_RETRACTION|START_PRINT' /opt/printer_data/logs/klippy.log 2>/dev/null | tail -n 6 | cut -c1-300; "
+        "f=$(wget -q -T 5 -O - \"$M/printer/objects/query?print_stats=filename\" 2>/dev/null | sed -n 's/.*\"filename\": *\"\\([^\"]*\\)\".*/\\1/p'); "
+        "G=\"/opt/printer_data/gcodes/$f\"; echo \"== file: $f\"; if [ -n \"$f\" ] && [ -f \"$G\" ]; then ls -la \"$G\"; "
+        "grep -m2 -E '^ *START_PRINT' \"$G\" | cut -c1-300; "
+        "echo \"G10=$(nice -n 19 grep -c '^G10' \"$G\") G11=$(nice -n 19 grep -c '^G11' \"$G\") "
+        "slicer_retracts=$(nice -n 19 grep -cE '^G1 [^;]*E-[0-9.]+ *(F[0-9.]+)? *(;.*)?$' \"$G\")\"; "
+        "grep -E '^; *(use_firmware_retraction|retraction_length|retraction_speed|deretraction_speed|retract_restart_extra|wipe|retract_when_changing_layer|z_hop|filament_retraction_length|filament_retraction_speed|filament_deretraction_speed|filament_retract_restart_extra|filament_settings_id|print_settings_id|printer_settings_id) *=' \"$G\" | cut -c1-200 | head -n 20; "
+        "else echo NO_ACTIVE_FILE; fi",
+        False, None, 120),
+    # 2026-11-08: is the freeze-diagnosis kernel armed? Pre-timeout irq,
+    # hard-lockup detector, sysctls, brcmfmac SDIO idle / KSO, i2c errors,
+    # core timer irq counts. Read-only.
+    "freeze-diag": ("echo '== now'; date; uptime; uname -v; "
+        "echo '== watchdog irq'; grep -iE 'watchdog|tcu|ost' /proc/interrupts | tr -s ' '; "
+        "dmesg | grep -iE 'nebulaos-freeze|watchdog-pretimeout|ingenic_wdt|ingenic-wdt' | cut -c1-200; "
+        "echo '== lockup detectors'; for k in watchdog nmi_watchdog watchdog_thresh softlockup_panic hardlockup_panic "
+        "panic_on_rcu_stall softlockup_all_cpu_backtrace hardlockup_all_cpu_backtrace hung_task_timeout_secs panic; do "
+        "echo \"$k=$(cat /proc/sys/kernel/$k 2>&1)\"; done; dmesg | grep -iE 'lockup|NMI watchdog|buddy' | cut -c1-200; "
+        "echo '== brcmfmac'; echo \"nebulaos_sdio_idle=$(cat /sys/module/brcmfmac/parameters/nebulaos_sdio_idle 2>&1)\"; "
+        "dmesg | grep -iE 'brcmf|mmc1' | cut -c1-200 | tail -n 15; iw dev wlan0 get power_save 2>&1; "
+        "echo '== i2c'; dmesg | grep -iE 'i2c' | cut -c1-200 | tail -n 10; "
+        "echo '== feeder'; ps -o pid,args | grep '[w]atchdog'; echo \"last-reset=$(cat /run/nebulaos/last-reset 2>&1)\"; "
+        "N=/usr/data/nebulaos/logs; tail -n 3 $N/reset-history.log 2>&1",
+        False, None, 60),
+    # 2026-11-08: the newest FREEZE/CRASH evidence in full (the 'blackbox'
+    # profile shows heads and tails only), the previous boot's system.log
+    # and the log files kept from it. Read-only.
+    "blackbox-full": ("N=/usr/data/nebulaos/logs; L=$(ls $N/crash/*-pmsg-* 2>/dev/null | tail -n 1); "
+        "P=${L%-pmsg-*}; for f in \"$P\"-*; do [ -f \"$f\" ] || continue; echo \"=== $f\"; cat \"$f\"; done; "
+        "echo '=== previous-boot-kernel.log'; cat $N/previous-boot-kernel.log 2>&1; "
+        "echo '=== system.log (previous boot)'; S=/opt/printer_data/logs/system.log; "
+        "a=$(grep -n 'syslogd started' $S | tail -n 2 | head -n 1 | cut -d: -f1); b=$(grep -n 'syslogd started' $S | tail -n 1 | cut -d: -f1); "
+        "sed -n \"${a:-1},${b:-1}p\" $S 2>&1 | grep -v 'dropbear' | tail -n 400; "
+        "echo '=== log files'; ls -la /opt/printer_data/logs/ 2>&1",
+        False, None, 120),
+    # 2026-11-08: the end of the previous Klipper log (klippy.log.1 - the
+    # boot that ended), with the last Stats lines and any warnings. Read-only.
+    "klippy-prev-tail": ("K=/opt/printer_data/logs/klippy.log.1; ls -la $K 2>&1; "
+        "echo '=== warnings (last 40)'; grep -n -i -E 'timer too close|lost communication|shutdown|error|warn|retransmit|stall' $K | tail -n 40 | cut -c1-300; "
+        "echo '=== tail 150'; tail -n 150 $K | cut -c1-400",
+        False, None, 120),
+    # Run 24 (2026-11-07): what one black box heartbeat costs (read-only:
+    # the heartbeat's own line builder into /tmp, 10 rounds, wall time from
+    # /proc/uptime and the CPU time of this shell's children from
+    # /proc/self/stat - suspected in a 'Timer too close' while probing).
+    "blackbox-cost": ("echo '== now'; date; uptime; echo \"processes=$(ls -d /proc/[0-9]* | wc -l)\"; "
+        "B=/usr/libexec/nebulaos-blackbox; D=/tmp/nebulaos-hbcost.$$; mkdir -p $D; : > $D/p; "
+        "for n in 0 19; do c0=$(cut -d' ' -f16,17 /proc/$$/stat); w0=$(cut -d' ' -f1 /proc/uptime); "
+        "i=0; while [ $i -lt 10 ]; do nice -n $n sh $B heartbeat-line $D/p $D/n 10 > /dev/null; mv -f $D/n $D/p; i=$((i+1)); done; "
+        "w1=$(cut -d' ' -f1 /proc/uptime); c1=$(cut -d' ' -f16,17 /proc/$$/stat); "
+        "echo \"nice=$n rounds=10 wall_s=$w0..$w1 children_cpu_ticks=$c0..$c1 (100/s)\"; done; "
+        "echo \"last line: $(sh $B heartbeat-line $D/p $D/n 10)\"; echo \"wifi=$(sh $B wifi-state 2>&1)\"; rm -rf $D",
+        False, None, 120),
+    # Run 24 (2026-11-07): why SSH sessions and big transfers stall - the
+    # TCP connections (who is streaming the camera, open SSH sessions),
+    # wlan0 throughput over 10 s, Wi-Fi station state, socket memory and
+    # the TCP error counters. Read-only.
+    "net-state": ("echo '== now'; date; uptime; "
+        "echo '== tcp connections'; netstat -tn 2>/dev/null | grep -v '127.0.0.1' | head -n 60; "
+        "echo '== listening'; netstat -tln 2>/dev/null; "
+        "echo '== wlan0 throughput (10 s)'; a=$(grep wlan0 /proc/net/dev); sleep 10; b=$(grep wlan0 /proc/net/dev); "
+        "echo \"before: $a\"; echo \"after:  $b\"; "
+        "echo '== station'; iw dev wlan0 station dump 2>&1 | head -n 30; iw dev wlan0 get power_save 2>&1; "
+        "echo '== sockstat'; cat /proc/net/sockstat; "
+        "echo '== tcp counters'; grep -E '^Tcp' /proc/net/snmp; grep -E '^TcpExt' /proc/net/netstat | tr ' ' '\\n' | paste - - 2>/dev/null | head -n 5; "
+        "echo '== ustreamer'; ps -o pid,stat,args | grep '[u]streamer'; "
+        "echo '== dropbear'; ps -o pid,stat,args | grep '[d]ropbear'",
+        False, None, 60),
+    # Run 24 (2026-11-07): what a stalled transfer is waiting on - process
+    # states with their wait channel, dirty/writeback memory, the eMMC
+    # request counters over 5 s, and the scp/sh processes' wchan and stack.
+    # Read-only.
+    "io-state": ("echo '== now'; date; uptime; "
+        "echo '== processes not sleeping normally'; ps -o pid,stat,args | awk 'NR==1 || $2 !~ /^S/' | cut -c1-160; "
+        "echo '== wait channels'; for d in /proc/[0-9]*; do s=$(cut -d' ' -f3 $d/stat 2>/dev/null); "
+        "case \"$s\" in D|R) echo \"${d##*/} $s $(cat $d/comm 2>/dev/null) wchan=$(cat $d/wchan 2>/dev/null)\";; esac; done; "
+        "echo '== scp'; for p in $(pidof scp 2>/dev/null); do echo \"scp $p $(cut -d' ' -f3 /proc/$p/stat) wchan=$(cat /proc/$p/wchan)\"; "
+        "cat /proc/$p/stack 2>/dev/null | head -n 20; ls -l /proc/$p/fd 2>/dev/null | tail -n 4; done; "
+        "echo '== memory'; grep -E '^(MemFree|MemAvailable|Cached|Dirty|Writeback|WritebackTmp|SwapFree):' /proc/meminfo; "
+        "grep -E '^(nr_dirty|nr_writeback|nr_dirty_threshold|nr_dirty_background_threshold) ' /proc/vmstat; "
+        "for k in dirty_ratio dirty_background_ratio dirty_bytes dirty_background_bytes dirty_expire_centisecs; do echo \"$k=$(cat /proc/sys/vm/$k)\"; done; "
+        "echo '== mmcblk0 stat (5 s)'; cat /sys/block/mmcblk0/stat; sleep 5; cat /sys/block/mmcblk0/stat; "
+        "echo '== staging'; ls -la /usr/data/nebulaos-hwagent 2>&1 | tail -n 8; df -k /usr/data; "
+        "echo '== kernel (last 20)'; dmesg | tail -n 20 | cut -c1-200",
+        False, None, 60),
+    # Live print state after a power-loss resume (Run 23, 2026-10-31):
     # what Klipper and Moonraker believe right now, and the screen's view.
     # Read-only.
     "plr-state": ("echo '== now'; date; uptime; "
@@ -442,7 +634,7 @@ CAPTURE_PROFILES = {
         "d=json.load(u.urlopen(\"http://127.0.0.1:7125/server/gcode_store?count=300\",timeout=10))[\"result\"][\"gcode_store\"]; "
         "[print(time.strftime(\"%H:%M:%S\",time.localtime(e[\"time\"])),e[\"type\"],e[\"message\"][:200]) for e in d]' 2>&1 | tail -n 300",
         False, None, 60),
-    # Why Klippy crashed or shut down (Run 21 Q1 test, Tim 2026-10-26): the
+    # Why Klippy crashed or shut down (Run 21 Q1 test, 2026-10-26): the
     # live state, the last traceback / shutdown with context, the last
     # non-Stats lines, kernel OOM lines, memguard, the shaper CSVs in /tmp.
     # Read-only.
@@ -1114,7 +1306,7 @@ _KLIPPY_RESTORE = (
     "echo \"klippy_state_after=${s:-unknown} waited_s=$i\"; " + _QM + " snap klippy-restarted; fi")
 _APP_IDENTIFY = "/usr/bin/python3 /etc/nebulaos/mcu_application_identify.py; " + _QM + " snap"
 
-# G117(b) step 2 (Run 21, Tim 2026-10-28): the watchdog really resets a
+# G117(b) step 2 (Run 21, 2026-10-28): the watchdog really resets a
 # printer that stops feeding it. Idle printer only (no print, no heater
 # target). Uses S02nebulaos-watchdog's feeder when it runs (on by default
 # since Run 22), else arms BusyBox watchdog -F -T 60 -t 10 like S02;
@@ -1123,6 +1315,42 @@ _APP_IDENTIFY = "/usr/bin/python3 /etc/nebulaos/mcu_application_identify.py; " +
 # then returns; the SoC resets itself ~60 s after the last feed. Check
 # afterwards with inspect (new boot_id) and capture boot-history. The undo
 # stops a feeder that was not killed yet (TERM = magic close).
+# Run 24 (2026-11-06): PID wrap. The kernel is BASE_SMALL (pid_max 4096);
+# SSH logins hung at ~80 min uptime twice, each time right as PIDs reached
+# ~4020 and wrapped. Forks short-lived `sh -c :` children until the PID
+# wraps (at most 9000), then reports the state around the wrap: pid_max,
+# blocked (D) tasks, the dropbear and memguard processes. Idle printer
+# only; no motion, no heater; nothing is written. The next connection after
+# it tells whether SSH survives a PID wrap.
+EXERCISE_PROFILES["pid-wrap"] = (
+    _IDLE_GUARD +
+    "echo \"pid_max=$(cat /proc/sys/kernel/pid_max) uptime=$(cut -d' ' -f1 /proc/uptime)\"; "
+    "last=$(sh -c 'echo $$'); echo start_pid=$last; i=0; w=; "
+    "while [ $i -lt 9000 ]; do p=$(sh -c 'echo $$'); "
+    "if [ \"$p\" -lt \"$last\" ]; then w=1; echo \"wrapped after $i forks: $last -> $p\"; break; fi; "
+    "last=$p; i=$((i + 1)); done; [ -n \"$w\" ] || echo NO_WRAP; "
+    "sleep 3; echo '== D-state tasks'; for f in /proc/[0-9]*/stat; do "
+    "s=$(cut -d' ' -f3 \"$f\" 2>/dev/null); [ \"$s\" = D ] && cat \"$f\" | cut -d' ' -f1-3; done; "
+    "echo '== dropbear / memguard'; ps -o pid,stat,args | grep -E '[d]ropbear|[m]emguard'; "
+    "echo PID_WRAP_RESULT=DONE",
+    "true",
+    300)
+
+# Run 24 (2026-11-06): SSH sessions and a 145 MB transfer stalled for
+# minutes on ke-dev while the printer itself ran normally (memguard kept
+# logging, no kernel errors). The CYW43438 runs the firmware's PM_FAST
+# power save (nebulaos-wifi-power-save.sh P0). Turns power save off on
+# wlan0 for this boot only (nothing persistent; the next boot is back to
+# the default), shows the state before and after and the link quality.
+EXERCISE_PROFILES["wifi-ps-off"] = (
+    "echo \"before: $(iw dev wlan0 get power_save 2>&1)\"; "
+    "iw dev wlan0 link 2>&1 | grep -E 'signal|tx bitrate|rx bitrate'; "
+    "iw dev wlan0 set power_save off 2>&1; "
+    "echo \"after: $(iw dev wlan0 get power_save 2>&1)\"; "
+    "grep wlan0 /proc/net/wireless; echo WIFI_PS_OFF_RESULT=DONE",
+    "true",
+    60)
+
 EXERCISE_PROFILES["watchdog-fire"] = (
     _IDLE_GUARD +
     "[ -c /dev/watchdog ] || { echo NO_WATCHDOG_DEVICE; exit 3; }; "
@@ -1145,6 +1373,66 @@ EXERCISE_PROFILES["watchdog-fire"] = (
     "echo WATCHDOG_FIRE_RESULT=COUNTING_RESET_EXPECTED_WITHIN_60S",
     "[ -n \"${W:-}\" ] && kill -TERM $W 2>/dev/null",
     90)
+
+# Run 25 (2026-11-08): the overnight mid-print freeze (both CPUs silent,
+# hardware watchdog reset after 60 s). One long soak loads every suspect at
+# once instead of one at a time, because the freeze took hours to appear:
+#  - timer churn: one python3 per CPU in a 0.5 ms sleep loop reading the
+#    monotonic clock (hrtimer programming + global clocksource reads);
+#  - Wi-Fi: 2 x 100 pkt/s x 1400 B pings to the gateway (SDIO);
+#  - camera: a local MJPEG viewer, and S50webcam stop/start every 5 min (dwc2);
+#  - eMMC: 256 KiB written + fsync'd every 2 s to one temporary file in
+#    /usr/data, deleted afterwards (~0.2 GB over 30 min).
+# A heartbeat every 60 s (load, core-timer irq counts, wlan0, D-state tasks)
+# shows how far it got. Idle printer only; no motion, no heater. If the
+# printer freezes, the SSH session drops: read the black box afterwards
+# (capture blackbox-full). The undo stops every load and restarts the camera.
+# Freeze investigation A/B: the SDIO bus never sleeps (no KSO sleep/wake of
+# the CYW43430) for this boot only - kernel 95d0321e+ parameter, nothing
+# persistent; the next boot is back to the driver default (-1).
+EXERCISE_PROFILES["wifi-sdio-idle-off"] = (
+    "P=/sys/module/brcmfmac/parameters/nebulaos_sdio_idle; [ -w $P ] || { echo NO_SDIO_IDLE_PARAM; exit 3; }; "
+    "echo \"before=$(cat $P)\"; echo 0 > $P; echo \"after=$(cat $P)\"; "
+    "grep wlan0 /proc/net/wireless; echo WIFI_SDIO_IDLE_OFF_RESULT=DONE",
+    "true",
+    60)
+
+# Freeze investigation: keep every USB device and hub awake (no runtime
+# suspend, so the dwc2 host never clock-gates) for this boot only. Nothing
+# persistent; devices plugged in later still use the default.
+EXERCISE_PROFILES["usb-autosuspend-off"] = (
+    "n=0; for c in /sys/bus/usb/devices/*/power/control; do [ -w \"$c\" ] || continue; "
+    "echo on > \"$c\" && n=$((n + 1)); done; echo \"usb_devices_kept_awake=$n\"; "
+    "for d in /sys/bus/usb/devices/*/power; do echo \"${d%/power} $(cat $d/control $d/runtime_status 2>/dev/null | tr '\\n' ' ')\"; done; "
+    "echo USB_AUTOSUSPEND_OFF_RESULT=DONE",
+    "true",
+    60)
+
+_SOAK_SECONDS = 1800
+EXERCISE_PROFILES["freeze-soak"] = (
+    _IDLE_GUARD + (
+    "GW=$(ip route 2>/dev/null | awk '/^default/{print $3; exit}'); [ -n \"$GW\" ] || { echo NO_GATEWAY; exit 3; }; "
+    "echo \"boot_id=$(cat /proc/sys/kernel/random/boot_id) uptime=$(cut -d' ' -f1 /proc/uptime) gateway=$GW seconds=%d\"; "
+    "P=; for c in $(seq 0 $(($(nproc) - 1))); do A=; command -v taskset >/dev/null && A=\"taskset -c $c\"; $A python3 -c 'import time\n"
+    "while True:\n time.sleep(0.0005); time.monotonic()' & P=\"$P $!\"; done; "
+    "for i in 1 2; do ping -q -s 1400 -i 0.01 -w %d \"$GW\" > $T/ping$i.txt 2>&1 & P=\"$P $!\"; done; "
+    "curl -s --max-time %d -o /dev/null http://127.0.0.1:8080/stream & P=\"$P $!\"; "
+    "F=/usr/data/.nebulaos-soak.$$; ( while :; do head -c 262144 /dev/urandom > $F; sync $F 2>/dev/null || sync; sleep 2; done ) & P=\"$P $!\"; "
+    "echo \"loads started: $P\"; end=$((" + _NOW_S + " + %d)); n=0; "
+    "while [ " + _NOW_S + " -lt $end ]; do sleep 60; n=$((n + 1)); "
+    "echo \"== t=${n}m uptime=$(cut -d' ' -f1 /proc/uptime) load=$(cut -d' ' -f1-3 /proc/loadavg)\"; "
+    "grep -iE 'ost|timer' /proc/interrupts | tr -s ' ' | cut -c1-120; grep wlan0 /proc/net/dev | tr -s ' '; "
+    "for d in usb1 1-1; do p=/sys/bus/usb/devices/$d/power; echo \"usb $d $(cat $p/runtime_status $p/runtime_suspended_time 2>/dev/null | tr '\\n' ' ')\"; done; "
+    "for f in /proc/[0-9]*/stat; do s=$(cut -d' ' -f3 \"$f\" 2>/dev/null); [ \"$s\" = D ] && echo \"D: $(cut -d' ' -f1-2 \"$f\")\"; done; "
+    "if [ $((n %% 5)) = 0 ] && [ -x /etc/init.d/S50webcam ]; then /etc/init.d/S50webcam stop >/dev/null 2>&1; sleep 5; "
+    "/etc/init.d/S50webcam start >/dev/null 2>&1; echo \"camera restarted\"; "
+    "curl -s --max-time 120 -o /dev/null http://127.0.0.1:8080/stream & P=\"$P $!\"; fi; "
+    "dmesg | tail -n 5 | grep -iE 'error|timeout|fail|brcmf|dwc2|mmc' | cut -c1-200; done; "
+    "kill $P 2>/dev/null; wait 2>/dev/null; P=; rm -f $F; F=; cat $T/ping*.txt | grep -E 'transmitted|round-trip'; "
+    "echo FREEZE_SOAK_RESULT=SURVIVED") % (_SOAK_SECONDS, _SOAK_SECONDS, _SOAK_SECONDS, _SOAK_SECONDS),
+    "[ -n \"${P:-}\" ] && kill $P 2>/dev/null; [ -n \"${F:-}\" ] && rm -f \"$F\"; "
+    "[ -x /etc/init.d/S50webcam ] && { pidof ustreamer >/dev/null || /etc/init.d/S50webcam start >/dev/null 2>&1; }",
+    _SOAK_SECONDS + 300)
 
 EXERCISE_PROFILES.update({
     # uart1 framing errors at boot (open observation): which open produces

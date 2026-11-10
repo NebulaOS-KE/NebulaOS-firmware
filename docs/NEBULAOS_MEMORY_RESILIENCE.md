@@ -8,7 +8,7 @@
 
 - **Firmware repo HEAD:** `58a0ba5cdab669138c5c76ffade84139ed146398` (branch `master`, clean except the pre-existing documented untracked `docs/HOW_TO_SWITCH_STOCK_AND_CUSTOM.md`).
 - **NebulaOS Klipper fork:** `coreflake1/NebulaOS-klipper`, branch `nebulaos`, commit `b3d5ab2b9484f1558586c3a2ea43d46ff9a473a7` (ancestry: `pellcorp/klipper@386fde4` + one commit, the klippy_extras addition). Local `vendor/klipper` checkout clean except a compiled `.so` build byproduct (not tracked).
-- **Running device (192.168.0.146):** kernel `6.6.18-rt23`, OTA marker `ota:kernel2` (custom slot active), `klippy_state: ready`, `klippy_connected: true`.
+- **Running device (192.168.1.146):** kernel `6.6.18-rt23`, OTA marker `ota:kernel2` (custom slot active), `klippy_state: ready`, `klippy_connected: true`.
 - **Namespace state:** `/usr/data/nebulaos/apps/{klipper,moonraker,mainsail}` all present and empty (the earlier stuck `.partial` directories were cleaned up); `activation-state.json` shows `klipper`/`moonraker`/`mainsail` = `immutable:incomplete_or_invalid`, `printer_data`/`shared_gcode` = `persistent`. This exact state is the baseline the memory-resilience work must not regress.
 - **OOM evidence (from `dmesg`, captured before this sub-mission began):**
   ```

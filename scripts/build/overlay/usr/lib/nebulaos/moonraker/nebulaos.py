@@ -71,7 +71,7 @@ BUSY_ENDPOINT_PROFILES = ("restart", "request")
 # The Python check's own timeouts are 3 s per request; a hung Klippy costs
 # one of them. Bounded here so a stuck helper never holds the screen.
 BUSY_TIMEOUT = 15.
-# Run 23 (Tim): Settings > Printer > Statistics - the most recent prints shown.
+# Run 23: Settings > Printer > Statistics - the most recent prints shown.
 STATS_RECENT = 5
 # G98: a refusal relayed by a NebulaOS process outside Moonraker (the
 # supervisorctl shim): one line, printable, bounded.
@@ -92,6 +92,12 @@ def combine_stats(baseline: Dict[str, Any], totals: Dict[str, Any],
              "longest_print": num(totals.get("longest_print")),
              "jobs": int(num(totals.get("total_jobs"))),
              "by_status": by_status, "recent": recent}
+    # Run 23 (ke-dev: jobs 16, by_status 7+9+4): Moonraker's total_jobs only
+    # grows when a job finishes; a job it relabels "interrupted" at start-up
+    # never reaches it. Count finished jobs from the history rows instead.
+    finished = sum(int(num(n)) for st, n in by_status.items() if st != "in_progress")
+    if by_status:
+        since["jobs"] = finished
     imported = {name: src for name, src in baseline.items()
                 if isinstance(src, dict) and src.get("status") == "imported"}
     before = max([num(src.get("print_time")) for src in imported.values()] + [0.])
@@ -136,7 +142,7 @@ class NebulaOS:
             ("/machine/nebulaos/cleanup/creality", RequestType.POST, self._cleanup_creality),
             ("/machine/nebulaos/cleanup/nebulaos/plan", RequestType.GET, self._cleanup_nebulaos_plan),
             ("/machine/nebulaos/cleanup/nebulaos", RequestType.POST, self._cleanup_nebulaos),
-            # Run 23 (Tim): print statistics, before and since NebulaOS.
+            # Run 23: print statistics, before and since NebulaOS.
             ("/machine/nebulaos/stats", RequestType.GET, self._stats),
             ("/machine/nebulaos/boot_display/preview", RequestType.POST, self._bd_preview),
             ("/machine/nebulaos/boot_display/import_usb", RequestType.POST, self._bd_import_usb),

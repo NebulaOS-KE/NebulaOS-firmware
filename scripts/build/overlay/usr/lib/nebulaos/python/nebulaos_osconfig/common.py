@@ -200,10 +200,12 @@ def parse_kv(text):
 #   request             every user-started update/install/flash/switch/reset
 #   point_of_no_return  re-checks inside a running job (the caller's own lock
 #                       is excluded by its holder token; no pending-trial rule)
+#   image_switch        the image install's stop points: point_of_no_return
+#                       without LOW_MEMORY (the job's own load)
 #   git                 the git wrapper inside a Moonraker update: not
 #                       update_manager busy
 #   restart             supervisorctl restart/stop of klipper, the screen's
-#                       Restart Klipper / Restart MCU: G95 (Tim 2026-10-22) -
+#                       Restart Klipper / Restart MCU: G95 (2026-10-22) -
 #                       only a POSITIVE answer refuses (print_stats printing/
 #                       paused, a heater target or idle_timeout "Printing" from
 #                       a live reply, or the memguard markers while Klippy
@@ -252,6 +254,14 @@ PROFILES = {
                 "UNKNOWN", "update_manager", "trial"},
     "point_of_no_return": {"PRINTING", "PAUSED", "ACTIVE", "CALIBRATING", "UPDATING",
                            "LOW_MEMORY", "UNKNOWN", "update_manager"},
+    # The image install's own stop points: point_of_no_return without
+    # LOW_MEMORY. Its unpacking and writing are what press the memory (memguard
+    # P1 at PSI some >= 10 %, with 135 MB still free), and what is left - a slot
+    # switch and a reboot - frees it all. Counted, it stopped every online
+    # update of the 248 MB printer after the write and blanked the slot it had
+    # just written (Run 23 OTA retest, 2026-11-04).
+    "image_switch": {"PRINTING", "PAUSED", "ACTIVE", "CALIBRATING", "UPDATING",
+                     "UNKNOWN", "update_manager"},
     "git": {"PRINTING", "PAUSED", "ACTIVE", "CALIBRATING", "UPDATING", "LOW_MEMORY",
             "UNKNOWN"},
     "restart": {"PRINTING", "PAUSED", "ACTIVE"},

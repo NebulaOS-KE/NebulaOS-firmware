@@ -526,6 +526,78 @@ class _CountingFactory:
         return t
 
 
+class RestorePortReleaseTests(unittest.TestCase):
+    """Run 23 (ke-dev, 2026-11-05): after a successful flash restore() still
+    held the bootloader transport, and the post-flash identify (which refuses
+    a port any process holds) failed - a good flash reported FLASH_FAILED."""
+
+    def _restore(self, factory, cf):
+        def identify(port, baud):
+            still_open = [t for t in factory.transports if t.closed == 0]
+            if still_open:
+                raise RuntimeError("port_in_use_by_pid")
+            return NATIVE_VERSION, "build"
+        return restore_mod.restore(
+            creality_flash_module=cf, transport_factory=factory,
+            application_identify_fn=identify, restart_fn=lambda port, baud: "reset",
+            file_exists_fn=lambda path: True,
+            hash_fn=lambda path: known.NATIVE_CANDIDATE_001_SHA256,
+            read_bytes_fn=lambda path: b"fake-image-bytes", sleep_fn=lambda s: None)
+
+    def test_port_released_before_post_flash_identify(self):
+        f = _CountingFactory()
+        r = self._restore(f, FakeCrealityFlash(flash_should_succeed=True))
+        self.assertEqual(r.state, restore_mod.RESTORED_AND_VERIFIED, r.detail)
+        self.assertTrue(f.transports and all(t.closed == 1 for t in f.transports))
+
+    def test_port_released_when_bootloader_never_answers(self):
+        f = _CountingFactory()
+        r = self._restore(f, FakeCrealityFlash(bootloader_reachable=False))
+        self.assertEqual(r.state, restore_mod.FLASH_FAILED)
+        self.assertTrue(f.transports and all(t.closed == 1 for t in f.transports),
+                        [t.closed for t in f.transports])
+
+    def test_hw_id_serial_error_is_a_result_not_an_exception(self):
+        class _SerialBoom(FakeCrealityFlash):
+            def get_version(self, transport):
+                raise OSError("simulated SerialException")
+        f = _CountingFactory()
+        r = self._restore(f, _SerialBoom(flash_should_succeed=True))
+        self.assertEqual(r.state, restore_mod.FLASH_FAILED)
+        self.assertIn("hw_id_query_failed", r.detail)
+        self.assertTrue(all(t.closed == 1 for t in f.transports))
+
+    def test_identity_check_reports_the_board_as_it_is_after_restore(self):
+        import io, contextlib
+        import mcu_identity_check as check
+        saved = (lifecycle.decide, restore_mod.restore)
+        lifecycle.decide = lambda: lifecycle.LifecycleDecision(
+            state=lifecycle.SUPPORTED_HW_KNOWN_STOCK_APP, action=lifecycle.RESTORE_AUTHORIZED,
+            application_identity=STOCK_VERSION, application_class=known.KNOWN_STOCK,
+            detail="known_stock_application_identity_confirmed_exact_match")
+        restore_mod.restore = lambda: restore_mod.RestoreResult(
+            restore_mod.RESTORED_AND_VERIFIED, "application_identity=" + NATIVE_VERSION)
+        out = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(out), self.assertRaises(SystemExit) as ctx:
+                check.main()
+        finally:
+            lifecycle.decide, restore_mod.restore = saved
+        self.assertEqual(ctx.exception.code, 0)
+        text = out.getvalue()
+        self.assertIn("MCU_LIFECYCLE_STATE=SUPPORTED_HW_NATIVE_APP", text)
+        self.assertIn("MCU_APPLICATION_CLASS=NATIVE_CANDIDATE_001", text)
+        self.assertIn("MCU_APPLICATION_IDENTITY=" + NATIVE_VERSION, text)
+        self.assertIn("restored_from_known_stock (was %s)" % STOCK_VERSION, text)
+        self.assertTrue(text.rstrip().endswith("MCU_GUARD_RESULT=PASS"))
+
+    def test_port_released_when_flash_fails(self):
+        f = _CountingFactory()
+        r = self._restore(f, FakeCrealityFlash(flash_should_succeed=False))
+        self.assertEqual(r.state, restore_mod.FLASH_FAILED)
+        self.assertTrue(all(t.closed == 1 for t in f.transports))
+
+
 class HardwareFallbackTests(unittest.TestCase):
     """The pyserial fallback path (_check_hardware_identity), ke-dev
     2026-10-03: primary identify timed out and the fallback crashed on

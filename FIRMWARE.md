@@ -2279,7 +2279,7 @@ before, and it's rich with real, useful confirmation:
 - `U-Boot SPL 2013.07 (Oct 09 2023 - 16:41:52)` - the real, exact U-Boot version, printed live for
   the first time (previously only inferred from `ballaswag/ingenic-usbboot`'s own bundled boot log
   screenshot).
-- `vendonvram sn: ... nvram mac: FCEE11004C14 ... nvram model: F005` - U-Boot itself printing the
+- `vendonvram sn: ... nvram mac: FCEE11000001 ... nvram model: F005` - U-Boot itself printing the
   exact same `sn_mac` partition data independently pulled via the mask-ROM path in §25 (real
   cross-validation, two completely different access methods agreeing).
 - `Uncompressing Linux...` / `Ok, booting the kernel.` immediately followed by
@@ -3354,7 +3354,7 @@ Self-healing worked exactly as designed throughout - `S99confirm-good` correctly
 this boot (Moonraker never came up healthy, no network at all - both wlan0 and eth0 timed out during
 `Starting network`), leaving the ota marker on stock, so the very next reboot returned there with no
 manual marker write needed. Device confirmed back on stock via serial, real WiFi reassociating to
-"Office_2.4Ghz" - fully healthy, zero side effects from the test.
+"HomeWiFi" - fully healthy, zero side effects from the test.
 
 Full boot log: `vendor/device-backups/custom-boot-wifi-gpio-fix-uart1-combined-20260721.log`.
 
@@ -4437,8 +4437,8 @@ by default.
 
 ```
 # iw dev wlan0 link
-Connected to 30:23:03:dc:0b:6b (on wlan0)
-	SSID: Office_2.4Ghz
+Connected to 02:00:00:00:00:01 (on wlan0)
+	SSID: HomeWiFi
 	freq: 2462
 	signal: -38 dBm
 	rx bitrate: 72.2 MBit/s
@@ -4446,7 +4446,7 @@ Connected to 30:23:03:dc:0b:6b (on wlan0)
 
 # ip addr show wlan0
 2: wlan0: <BROADCAST,MULTICAST,UP,LOWER_UP> ...
-    inet 192.168.0.146/24 brd 192.168.0.255 scope global wlan0
+    inet 192.168.1.146/24 brd 192.168.1.255 scope global wlan0
 ```
 
 Same BSSID and SSID stock's own boot logs have shown throughout this entire investigation. Pinged
@@ -4594,7 +4594,7 @@ so repeat builds stay safe either way.
 
 With every fix above in place, Moonraker's own `/server/info` endpoint started returning a real,
 healthy JSON body - but `wget`-ed from `127.0.0.1`, it came back `401 Unauthorized` instead, since
-`moonraker.conf`'s `trusted_clients` only listed `192.168.0.0/16` and `10.0.0.0/8`, neither of which
+`moonraker.conf`'s `trusted_clients` only listed `192.168.1.0/16` and `10.0.0.0/8`, neither of which
 covers loopback. `S99confirm-good`'s own health check greps for `"result"` in the response body, which
 a 401 never has - so it kept declaring Moonraker unhealthy and leaving the ota marker on stock, even
 though the server was fully up. Fixed by adding `127.0.0.1` to `trusted_clients` - a one-line,

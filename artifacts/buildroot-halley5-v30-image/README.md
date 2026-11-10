@@ -21,14 +21,15 @@ described the current configuration. It does not.
 
 ## When these were recorded
 
-From `build-manifest.txt` (G18, 2026-10-15: refreshed from a DEV build; the
-previous record was from 2026-10-03, kernel 066394b, and still showed the
-Ingenic kernel boot logo that kernel d3cdc47 removed):
+From `build-manifest.txt` (2026-11-07: refreshed from release build A of
+1c2e584, kernel 11f0f0c - PREEMPT instead of PREEMPT_RT, black box
+pstore/ramoops in the DTS; the previous record was from 2026-10-15, kernel
+d3cdc47). Copied from the build, not edited:
 
 ```
-built_at          = 2026-10-15T17:41:05Z
-git_commit_main   = 832a10d67072faa96bde53e04fc61dbcb49fec9a
-git_commit_kernel = d3cdc473e309cf1eb0e0fd4978e1673747adc02d
+built_at          = 2026-11-07T19:42:52Z
+git_commit_main   = 1c2e58441c443ab201ea6afed9128b95bd2b9895
+git_commit_kernel = 11f0f0c87900129fb93d5bd4a9129e8989a619d6
 ```
 
 That build includes the Phase 1.9A/1.9B host-MCU accelerometer and EEPROM bus

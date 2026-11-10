@@ -33,6 +33,7 @@ SAFETY CONTRACT (unchanged from the original file, still enforced):
 import os
 import sys
 
+import mcu_known_identities
 import mcu_lifecycle
 import mcu_restore
 
@@ -63,14 +64,25 @@ def main():
         # applications. Stock Creality recovery to native is never skipped.
         restore_result = mcu_restore.restore()
         fields.update(restore_result.as_dict())
-        emit(fields)
         if restore_result.state == mcu_restore.RESTORED_AND_VERIFIED:
+            # Run 23: describe the board as it is now - native, verified by
+            # restore()'s post-flash identify; the hardware ID passed its
+            # allow-list check before the flash. What it ran before is kept
+            # in MCU_LIFECYCLE_DETAIL.
+            fields["MCU_LIFECYCLE_STATE"] = mcu_lifecycle.SUPPORTED_HW_NATIVE_APP
+            fields["MCU_LIFECYCLE_DETAIL"] = (
+                "restored_from_known_stock (was %s)" % fields.get("MCU_APPLICATION_IDENTITY", "unknown"))
+            fields["MCU_APPLICATION_IDENTITY"] = mcu_known_identities.NATIVE_CANDIDATE_001_VERSION
+            fields["MCU_APPLICATION_CLASS"] = mcu_known_identities.NATIVE_CANDIDATE_001
+            fields["MCU_HW_ID_STATUS"] = "MATCH"
+            emit(fields)
             print("MCU_GUARD_RESULT=PASS")
             sys.exit(0)
         else:
             # CANDIDATE_ARTIFACT_MISSING / CANDIDATE_HASH_BAD / FLASH_FAILED:
             # bounded failure, no stock fallback, preserve diagnostics, do
             # not let Klipper start against a partially-restored/unknown MCU.
+            emit(fields)
             print("MCU_GUARD_RESULT=FAIL")
             sys.exit(1)
 

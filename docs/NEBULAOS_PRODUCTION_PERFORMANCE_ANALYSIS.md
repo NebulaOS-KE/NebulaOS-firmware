@@ -3,7 +3,7 @@
 2026-07-30. Measurement-first, analysis-only audit. **No source modified, no
 build performed, no image flashed, no service disabled, no printer motion,
 heating, extrusion, probing, or print started.** Everything below is either
-a direct live measurement against the running device (192.168.0.128, custom
+a direct live measurement against the running device (192.168.1.128, custom
 slot), a direct read of the tracked repo source, or a direct read of the
 real, already-built `rootfs.squashfs` artifact already present in this
 checkout (`vendor/buildroot-x2000/output/images/rootfs.squashfs`) — no new
@@ -122,15 +122,15 @@ but **precise sub-second milestone timestamps were not reliably captured**,
 for reasons that are themselves a real, reportable finding:
 
 1. **The device's DHCP lease changes across reboots** (confirmed: it was
-   at `192.168.0.128` before this session's reboots, came back at
-   `192.168.0.129` after reboot #1, per this project's own prior
+   at `192.168.1.128` before this session's reboots, came back at
+   `192.168.1.129` after reboot #1, per this project's own prior
    documented behavior — the IP is not fixed/reserved). A host-side poller
    watching a single fixed IP therefore measures nothing useful once the
    device changes address mid-poll.
 2. **Correcting for that with a live network rescan introduced a real
    false-positive risk**: during reboot #2's measurement, the rescan logic
    (looking for *any* newly-appeared host with port 22 open) locked onto
-   `192.168.0.20` — an unrelated, already-online device on the same LAN
+   `192.168.1.20` — an unrelated, already-online device on the same LAN
    (confirmed afterward: sub-millisecond ping latency, inconsistent with
    the WiFi-connected printer's typical 30-2000ms+ latency; and it did not
    speak dropbear's SSH banner when checked directly). This produced a

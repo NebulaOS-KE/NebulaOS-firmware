@@ -1,6 +1,6 @@
 #!/bin/sh
 # Run 23 (2026-10-29): the repositories moved from github.com/coreflake1 to the
-# NebulaOS-KE organisation. Run ONCE by Tim (git config and .gitmodules are
+# NebulaOS-KE organisation. Run ONCE by the owner (git config and .gitmodules are
 # write-protected for the agent on purpose):
 #
 #   1. every workspace repository's origin -> https://github.com/NebulaOS-KE/<name>

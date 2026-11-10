@@ -7,7 +7,7 @@
 # Python start-up:
 #
 #   restart    supervisorctl restart/stop of klipper (v3.1: < 2 s, runs before
-#              `stop`): G95 (Tim 2026-10-22, design v3.7) - only a POSITIVE
+#              `stop`): G95 (2026-10-22, design v3.7) - only a POSITIVE
 #              answer refuses: PRINTING PAUSED ACTIVE from a live reply, or
 #              the memguard markers while Klippy answers. No answer, a
 #              timeout or an error (UNKNOWN) = allowed: a hung Klipper can

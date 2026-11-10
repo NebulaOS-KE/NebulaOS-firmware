@@ -278,7 +278,7 @@ def _file_digest(path):
 
 
 def builtin_path():
-    """Run 21 (Tim): "NebulaOS" is the Blueprint logo on the boot screen too,
+    """Run 21: "NebulaOS" is the Blueprint logo on the boot screen too,
     the same picture as the packaged power-on logo, so the whole boot shows
     one logo. The text card is only the fallback when the file is missing."""
     return _shipped(FRESH_DEFAULT)

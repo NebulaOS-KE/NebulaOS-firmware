@@ -75,7 +75,7 @@ accept(){
 }
 
 echo "=== the removed surface must be gone ==="
-refuse "--host, the old target argument"            --host 192.168.0.98 inspect
+refuse "--host, the old target argument"            --host 192.168.1.98 inspect
 refuse "--password"                                  --device p1 --password hunter2 inspect
 refuse "--command"                                   --device p1 --command "rm -rf /" inspect
 refuse "the old 'flash' subcommand"                  --device p1 --control "$SHA" flash

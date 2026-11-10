@@ -166,7 +166,11 @@ if command -v git >/dev/null 2>&1 && git -C "$REPO_ROOT" rev-parse --git-dir >/d
     #   fallback (ke-dev 2026-10-03, final qualification test build).
     #   f0e87e08d2ee: M1 identify budget 15 s (live-verified on ke-dev
     #   2026-10-05, _scratch/LIVE-FINAL-FIX-VERIFICATION.md; approved).
-    GD32_REVIEWED="3a7a81762b6804e2cedda495112802da25850ed6 f0e87e08d2ee8430e1a1dfe59d473527f8fe8463"
+    #   70654ef8ef30 + 120ad65f8ff8: restore closes the bootloader port before
+    #   the post-flash identify (a good flash was reported FLASH_FAILED),
+    #   restore reason kept, power-cycle notice (ke-dev 2026-11-05, Run 23;
+    #   nebula-verifier PASS on both).
+    GD32_REVIEWED="3a7a81762b6804e2cedda495112802da25850ed6 f0e87e08d2ee8430e1a1dfe59d473527f8fe8463 70654ef8ef30d643633224ed066067766f90fb54 120ad65f8ff8cd4c3175d4267af1424028266dfb"
     if [ -n "$MERGE_BASE" ]; then
         UNREVIEWED=""
         for c in $(git -C "$REPO_ROOT" rev-list "$MERGE_BASE"..HEAD -- $GD32_FILES 2>/dev/null); do
@@ -357,7 +361,7 @@ if [ -n "$PLR_CANDIDATE" ] && [ -n "$JOURNAL_CANDIDATE" ]; then
         fail "nebulaos_plr_journal.py's page layout constants do not match the expected stock-compatible layout"
     fi
 
-    # M24 (decided by Tim, Run 12, 2026-10-18): the opt-in physical resume
+    # M24 (decided Run 12, 2026-10-18): the opt-in physical resume
     # may end with M24; nothing else may. Checked at source level: the only
     # emitted M24 is inside build_physical_resume_lines(), physical_resume
     # defaults to False, and the resume command refuses physical resume

@@ -1,5 +1,5 @@
 #!/bin/sh
-# R1 (G82 stage 4, Run 19): rename the NebulaScreen repository, once, by Tim.
+# R1 (G82 stage 4, Run 19): rename the NebulaScreen repository, once, by the owner.
 #
 #   GitHub  coreflake1/NebulaOS-guppyscreen -> coreflake1/NebulaOS-nebulascreen
 #   local   <workspace>/NebulaOS-guppyscreen -> <workspace>/NebulaOS-nebulascreen
@@ -9,7 +9,7 @@
 # GitHub (old URLs keep working through GitHub's redirect, so old builds stay
 # reproducible). Ends with RENAME_RESULT=PASS or RENAME_RESULT=FAIL.
 #
-#   sh /home/tim/workspace/NebulaOS/NebulaOS-firmware/tools/r1-rename-screen-repo.sh
+#   sh ~/workspace/NebulaOS/NebulaOS-firmware/tools/r1-rename-screen-repo.sh
 set -u
 WS=$(cd "$(dirname "$0")/../.." && pwd)
 OWNER=coreflake1

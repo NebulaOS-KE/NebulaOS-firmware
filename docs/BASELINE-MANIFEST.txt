@@ -71,7 +71,7 @@ QUALIFIED_FIXES=M1,S1,S2,S3,S4,NG1,G9_PHASE1
 #   NG1: Moonraker 404 in ~0.02 s, 0 _ABNF errors, macro seeder clean
 #   The fixes M1/S1/S2/S3/S4/NG1 are byte-identical to pre-final build f97e472, whose
 #   extended acceptance (10/10 reboots, camera cycles, synthetic regression) passed.
-EVIDENCE_DIR=/home/tim/workspace/NebulaOS/_scratch/final-baseline-20261007/
+EVIDENCE_DIR=~/workspace/NebulaOS/_scratch/final-baseline-20261007/
 EVIDENCE_REPORTS=_scratch/FINAL-BASELINE-CHANGESET.md, _scratch/PRE-FINAL-HARDWARE-ACCEPTANCE.md, _scratch/PRE-FINAL-BASELINE-BUILD.md, _scratch/NG1-TORNADO-PATCH-ARCHITECTURE.md, _scratch/FINAL-BASELINE-DEFERRED-GAPS-INVESTIGATION.md, _scratch/prefinal-acceptance-20261007/
 
 # --- deferred work (not baseline blockers) ---

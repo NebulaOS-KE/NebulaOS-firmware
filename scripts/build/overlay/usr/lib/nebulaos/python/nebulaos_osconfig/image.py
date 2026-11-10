@@ -709,8 +709,9 @@ def _write_payload(work, payload_dir, rec, dev, label, progress, share):
 
 def _stop_check(holder):
     """P2: the busy check at a point of no return (the job's own lock is
-    excluded). The busy state, or None when the job may go on."""
-    state = common.busy_state("point_of_no_return", holder)
+    excluded; low memory is the job's own doing, common.PROFILES). The busy
+    state, or None when the job may go on."""
+    state = common.busy_state("image_switch", holder)
     return state if state["busy"] else None
 
 

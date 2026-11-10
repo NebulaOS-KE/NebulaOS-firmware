@@ -58,7 +58,7 @@ with local HEAD == remote HEAD.
 ## Phase 3: pre-flash printer checks
 
 Device located via `nmap -p 22 --open` scan (IP had drifted, as expected -
-see project memory on DHCP lease churn): `192.168.0.242`, dropbear banner,
+see project memory on DHCP lease churn): `192.168.1.242`, dropbear banner,
 password `openke` accepted. Confirmed:
 
 - `/proc/cmdline`: `root=/dev/mmcblk0p8 ... rootfstype=squashfs ro` - real
@@ -119,11 +119,11 @@ Backed up (streamed directly over SSH to the build host - the device had
 no free space to stage a local copy at all):
 
 ```
-ssh root@192.168.0.242 "tar -cf - -C /usr/data nebulaos printer_data/gcodes" \
+ssh root@192.168.1.242 "tar -cf - -C /usr/data nebulaos printer_data/gcodes" \
     > nebulaos-device-backup-20260808T165251Z/usr-data-backup.tar
 ```
 
-- Path: `/home/tim/Documents/nebulaos-device-backup-20260808T165251Z/usr-data-backup.tar`
+- Path: `~/Documents/nebulaos-device-backup-20260808T165251Z/usr-data-backup.tar`
 - Size: 373,587,968 bytes (~356 MiB), 12,665 entries
 - SHA256: `be6f597b665d917a089aaaf3027a00ca5cbfa51b3ff8b746137995e6ab40c4d0`
 - Two Unix-domain sockets (`nebulaos/printer_data/comms/moonraker.sock`,
@@ -356,7 +356,7 @@ first, cold provisioning boot).
 
 Soak (~220s uptime at check time): all services still running (nginx,
 webcam, ustreamer, Klipper, Moonraker, GuppyScreen), WiFi still connected
-(`Office_2.4Ghz`), printer still idle. `dmesg` grep for error/fail/oops/
+(`HomeWiFi`), printer still idle. `dmesg` grep for error/fail/oops/
 panic/BUG/warn found four lines, all at boot timestamps 0.0-1.1s (long
 before the soak's own observation window) - `ingenic-dma`/`ingenic-tcu`
 IRQ-not-found probe-ordering messages and one `mmc1: Failed to initialize

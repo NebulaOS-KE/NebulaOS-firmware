@@ -1,7 +1,7 @@
 #!/bin/sh
 #
 # Offline tests for /etc/nebulaos-retention.sh --manual, the Storage page's
-# "Free up space" (Run 23, Tim): NebulaOS's own leftovers go regardless of
+# "Free up space" (Run 23): NebulaOS's own leftovers go regardless of
 # age; print files, configuration, calibration, PLR state, settings, the
 # update supervisor's last-known-good and Creality's data stay. --dry-run
 # changes nothing and lists what would go.

@@ -626,6 +626,53 @@ else
     fail "G76: notice not removed after PASS ($(cat "$WORK/g76.state" 2>/dev/null | head -1))"
 fi
 
+echo "--- Run 23: a failed restore leaves the power-cycle notice and keeps its reason ---"
+mock_ff="$WORK/mock_flash_failed.py"
+cat > "$mock_ff" <<'MOCK_EOF'
+#!/usr/bin/env python3
+print("MCU_LIFECYCLE_STATE=SUPPORTED_HW_KNOWN_STOCK_APP")
+print("MCU_APPLICATION_IDENTITY=38d96adc-dirty-20231016_135251-longer-virtual-machine")
+print("MCU_APPLICATION_CLASS=KNOWN_STOCK")
+print("MCU_LIFECYCLE_DETAIL=known_stock_application_identity_confirmed_exact_match")
+print("MCU_RESTORE_RESULT=FLASH_FAILED")
+print("MCU_RESTORE_DETAIL=could_not_enter_bootloader: restart_command_path=(x) magic_sequence_fallback=(it's 'quoted')")
+print("MCU_GUARD_RESULT=FAIL")
+MOCK_EOF
+chmod +x "$mock_ff"
+rm -f "$G76_NOTICE"
+MCU_GUARD_STATE="$WORK/ff.state" MCU_IDENTITY_CHECK="$mock_ff" MCU_UNREACHABLE_NOTICE="$G76_NOTICE" \
+    sh "$GUARD_SCRIPT" start > /dev/null 2>&1
+if grep -q 'could not be installed. Switch the printer off, wait 10 seconds' "$G76_NOTICE" 2>/dev/null; then
+    pass "Run 23: FLASH_FAILED writes the power-cycle notice"
+else
+    fail "Run 23: no power-cycle notice after FLASH_FAILED"
+fi
+ff_detail=$(sh -c ". '$WORK/ff.state'; printf '%s' \"\$MCU_RESTORE_DETAIL\"" 2>&1)
+case "$ff_detail" in
+    "could_not_enter_bootloader: restart_command_path=(x) magic_sequence_fallback=(it's 'quoted')")
+        pass "Run 23: the restore reason is kept in the state file and sources back exactly" ;;
+    *) fail "Run 23: restore reason not kept (got: $ff_detail)" ;;
+esac
+MCU_GUARD_STATE="$WORK/ff.state" MCU_IDENTITY_CHECK="$mock_pass_g76" MCU_UNREACHABLE_NOTICE="$G76_NOTICE" \
+    sh "$GUARD_SCRIPT" start > /dev/null 2>&1
+if [ ! -e "$G76_NOTICE" ]; then
+    pass "Run 23: the next PASS removes the FLASH_FAILED notice"
+else
+    fail "Run 23: FLASH_FAILED notice not removed after PASS"
+fi
+
+mock_hwmm="$WORK/mock_hw_mismatch.py"
+sed 's/^print("MCU_RESTORE_DETAIL=.*$/print("MCU_RESTORE_DETAIL=hardware_identity_mismatch: got=x allowed=y")/' "$mock_ff" > "$mock_hwmm"
+chmod +x "$mock_hwmm"
+rm -f "$G76_NOTICE"
+MCU_GUARD_STATE="$WORK/hwmm.state" MCU_IDENTITY_CHECK="$mock_hwmm" MCU_UNREACHABLE_NOTICE="$G76_NOTICE" \
+    sh "$GUARD_SCRIPT" start > /dev/null 2>&1
+if [ ! -e "$G76_NOTICE" ] && grep -q '^MCU_GUARD_RESULT=FAIL' "$WORK/hwmm.state"; then
+    pass "Run 23: no power-cycle notice when a power cycle cannot help (hardware mismatch), still FAIL"
+else
+    fail "Run 23: hardware-mismatch FLASH_FAILED handled wrongly (notice present or not FAIL)"
+fi
+
 # Test with helper that produces empty output - should exit 0 with WARN.
 mock_empty="$WORK/mock_empty.py"
 cat > "$mock_empty" <<'MOCK_EOF'

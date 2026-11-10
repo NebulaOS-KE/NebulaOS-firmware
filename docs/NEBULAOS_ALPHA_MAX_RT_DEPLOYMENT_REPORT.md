@@ -40,11 +40,11 @@ DEPLOYMENT_PACKAGE: build-work/deploy-packages/NEBULAOS-ALPHA-MAX-RT-20260731T21
 ROLLBACK_B0_PACKAGE: build-work/deploy-packages/B0-20260731T155014Z/ (verified, hashes match;
   this is also the image the device was running immediately before this deployment)
 
-PRINTER_INITIAL_IDENTITY: booted custom (B0, root=/dev/mmcblk0p8), MAC 16:3b:5d:14:20:90,
-  IP 192.168.0.243 — confirmed via multiple indicators (MAC, root partition, Klipper identity)
-PRINTER_STOCK_IP: 192.168.0.231 (confirmed via root=/dev/mmcblk0p7, factory MAC
-  fc:ee:11:00:4c:14, hostname Ender3V3KE-4C14)
-PRINTER_FINAL_IP: 192.168.0.243 (same MAC as initial — CID-derived MAC is unchanged by SDIO/RT
+PRINTER_INITIAL_IDENTITY: booted custom (B0, root=/dev/mmcblk0p8), MAC 16:3b:5d:00:00:01,
+  IP 192.168.1.243 — confirmed via multiple indicators (MAC, root partition, Klipper identity)
+PRINTER_STOCK_IP: 192.168.1.231 (confirmed via root=/dev/mmcblk0p7, factory MAC
+  fc:ee:11:00:00:01, hostname Ender3V3KE-0001)
+PRINTER_FINAL_IP: 192.168.1.243 (same MAC as initial — CID-derived MAC is unchanged by SDIO/RT
   variant, as expected, since the algorithm and its eMMC-CID input are both unchanged)
 
 STOCK_PRESERVED: yes — never written; only ever the target for the OTA marker, never for
@@ -64,7 +64,7 @@ W3_CONFIRMED: yes (dmesg: "mmc1: new high speed SDIO card", no MMC/SDIO errors; 
   DTS independently confirmed cap-sdio-irq + cap-sd-highspeed present, cap-mmc-highspeed absent)
 P1_CONFIRMED: yes (`iw dev wlan0 get power_save` → "Power save: off", both immediately after
   activation and again after the warm reboot — the marker persists on /usr/data)
-CID_MAC: 16:3b:5d:14:20:90
+CID_MAC: 16:3b:5d:00:00:01
 CID_MAC_DERIVATION_CONFIRMED: reproduced from the live eMMC CID via the existing
   `nebulaos_derive_mac_from_identifier` function during Mode B earlier this session (same
   physical eMMC, same algorithm, unchanged in this mission) — not re-derived manually in this
@@ -85,7 +85,7 @@ KLIPPER: ready (both after first boot and after the warm reboot)
 MOONRAKER: healthy (/printer/info responds correctly, klippy_state ready)
 GUPPYSCREEN: running (confirmed via process list)
 CAMERA: HTTP 200 (snapshot, both paused-then-resumed and after warm reboot)
-WIFI: associated, real traffic (SSID fsociety, real RX/TX byte counts)
+WIFI: associated, real traffic (SSID OtherNetwork, real RX/TX byte counts)
 OTA_CONFIRMATION: ota:kernel2 confirmed both after first boot and after the warm reboot
   (S99confirm-good correctly flipped it forward both times, having detected real
   klippy_state=ready)

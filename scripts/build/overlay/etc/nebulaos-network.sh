@@ -78,7 +78,7 @@ nnet_valid_ipv4() {
 	return 0
 }
 
-# The default host name, unique per printer (Run 23, Tim: every printer was
+# The default host name, unique per printer (Run 23: every printer was
 # "nebulaos", so two on one network clashed in the router, Mainsail and
 # nebulaos.local): "nebulaos-" + the last 4 hex digits of the stable Wi-Fi
 # MAC (nebulaos-stable-mac.sh - derived from the eMMC CID, the same address

@@ -232,7 +232,7 @@ itself — never a sequence of instructions.
 
 ## 13. Launch location
 
-Start sessions from the workspace root (`/home/tim/workspace/NebulaOS`): `.claude/` loads from
+Start sessions from the workspace root (`~/workspace/NebulaOS`): `.claude/` loads from
 the primary project directory. Each repository carries a git-excluded sentinel
 `<repo>/.claude/settings.local.json` that blocks edits when a session is started inside a repo.
 

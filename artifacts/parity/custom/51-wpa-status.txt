@@ -1,11 +1,11 @@
-bssid=30:23:03:dc:0b:6b
+bssid=02:00:00:00:00:01
 freq=2462
-ssid=Office_2.4Ghz
+ssid=HomeWiFi
 id=0
 mode=station
 pairwise_cipher=CCMP
 group_cipher=CCMP
 key_mgmt=WPA2-PSK
 wpa_state=COMPLETED
-ip_address=192.168.0.146
-address=20:0b:74:69:99:fd
+ip_address=192.168.1.146
+address=20:0b:74:00:00:01

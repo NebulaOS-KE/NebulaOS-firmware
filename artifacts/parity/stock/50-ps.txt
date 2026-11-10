@@ -73,9 +73,9 @@ PID   USER     TIME  COMMAND
  1229 root      0:00 /usr/bin/wipe_data
  1237 root      0:00 /usr/data/guppyscreen/k1_mods/respawn/supervise-daemon guppyscreen --start --stderr /usr/data/printer_data/logs/guppyscreen.log --pidfile /var/run/guppyscreen.pid /usr/data/guppyscreen/guppyscreen
  1239 root      0:08 /usr/data/guppyscreen/guppyscreen
- 1257 root      0:00 /usr/bin/mdns --service _Creality-26096911004C14._udp.local --port 5353 --hostname Ender3V3KE-4C14
+ 1257 root      0:00 /usr/bin/mdns --service _Creality-26090000000001._udp.local --port 5353 --hostname Ender3V3KE-0001
  1258 root      0:00 /sbin/getty -L console 115200 vt100
- 1327 root      0:00 udhcpc -i wlan0 -x hostname:Ender3V3KE-4C14
+ 1327 root      0:00 udhcpc -i wlan0 -x hostname:Ender3V3KE-0001
  5661 root      0:00 /usr/sbin/dropbear -R
  5681 root      0:00 sh /tmp/capture-state.sh /tmp/parity-stock
  5688 root      0:00 [sleep]

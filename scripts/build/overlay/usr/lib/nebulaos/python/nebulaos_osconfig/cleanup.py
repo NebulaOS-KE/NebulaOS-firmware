@@ -14,7 +14,7 @@
 #   - the swap file only when it is not in use
 #   - Creality's timelapse videos only when asked for
 #   - refused while printing (the Moonraker component checks first)
-#   - the print statistics a later import reads (Run 23, Tim 2026-11-02):
+#   - the print statistics a later import reads (Run 23, 2026-11-02):
 #     Creality's lifetime print counter and print history, and the old
 #     Moonraker database (printer_data/database) - see STATISTICS_KEEP
 # Everything not on the list stays: macaddr.txt, wpa_supplicant.conf,
@@ -273,7 +273,7 @@ def storage():
 
 
 
-# -- "Free up space" (Run 23, Tim) ----------------------------------------------
+# -- "Free up space" (Run 23) ----------------------------------------------
 # NebulaOS's own leftovers - old logs, old update backups, unfinished update
 # downloads, uploaded system images, the download cache - through the one
 # cleanup path that already owns them: /etc/nebulaos-retention.sh --manual.

@@ -10,7 +10,7 @@ then a baseline JPEG, quality 92, 4:4:4. bootdisplay then shows it without
 scaling; Apply still makes the power-on logo from it (poweronlogo.convert).
 
 The committed JPEGs are the assets (another Pillow may encode other bytes);
-this script records how they were made. The source PNGs are Tim's
+this script records how they were made. The source PNGs are the owner's
 (2026-10-15/26, not in the repository).
 
     make-boot-logos.py <source-dir> <out-dir>

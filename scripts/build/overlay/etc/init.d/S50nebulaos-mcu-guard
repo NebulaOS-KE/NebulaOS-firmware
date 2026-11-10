@@ -90,6 +90,7 @@ write_state() {
 	MCU_APPLICATION_CLASS=${_application_class:-unknown}
 	MCU_HW_ID_STATUS=${_hw_id_status:-not_checked}
 	MCU_RESTORE_RESULT=${_restore_result:-not_attempted}
+	MCU_RESTORE_DETAIL='$(single_quote "${_restore_detail:-}")'
 	EOF
     mcu_unreachable_notice "$_result"
 }
@@ -102,12 +103,30 @@ write_state() {
 # tells the user what fixes it - one notice (the G65 notice mechanism),
 # removed again as soon as the MCU answers.
 MCU_UNREACHABLE_NOTICE="${MCU_UNREACHABLE_NOTICE:-/usr/data/nebulaos/system/notices/mcu-unreachable.txt}"
+# A power cycle cannot fix a wrong board or a bad built-in firmware file;
+# every other FLASH_FAILED reason (bootloader not answering, transfer or
+# post-flash check failing) is what a power cycle does fix.
+restore_needs_other_fix() {
+    case "${_restore_detail:-}" in
+        hardware_identity_mismatch*|candidate_validation_error*) return 0 ;;
+    esac
+    return 1
+}
+
 mcu_unreachable_notice() {
     _nd=$(dirname "$MCU_UNREACHABLE_NOTICE")
     [ -d "$(dirname "$_nd")" ] || return 0
     if [ "${_lifecycle_state:-}" = MCU_UNREACHABLE ]; then
         mkdir -p "$_nd" 2>/dev/null
         printf '%s\n' "The printer's mainboard is not answering. Switch the printer off, wait 10 seconds and switch it on again." \
+            > "$MCU_UNREACHABLE_NOTICE" 2>/dev/null
+    elif [ "${_restore_result:-}" = FLASH_FAILED ] && ! restore_needs_other_fix; then
+        # Run 23 (ke-dev, 2026-11-05): after Creality's system restarts into
+        # NebulaOS by software (its USB updater does), the mainboard will not
+        # take new firmware until the power is cut. NebulaOS retries at every
+        # start, so one power cycle is the fix.
+        mkdir -p "$_nd" 2>/dev/null
+        printf '%s\n' "The mainboard firmware could not be installed. Switch the printer off, wait 10 seconds and switch it on again - NebulaOS installs it when it starts." \
             > "$MCU_UNREACHABLE_NOTICE" 2>/dev/null
     elif [ "$1" = PASS ]; then
         rm -f "$MCU_UNREACHABLE_NOTICE" 2>/dev/null
@@ -148,6 +167,7 @@ do_check() {
     _application_class=$(echo "$check_output" | sed -n 's/^MCU_APPLICATION_CLASS=//p' | head -1)
     _hw_id_status=$(echo "$check_output" | sed -n 's/^MCU_HW_ID_STATUS=//p' | head -1)
     _restore_result=$(echo "$check_output" | sed -n 's/^MCU_RESTORE_RESULT=//p' | head -1)
+    _restore_detail=$(echo "$check_output" | sed -n 's/^MCU_RESTORE_DETAIL=//p' | head -1)
 
     # If the helper produced no parseable output at all, treat as a warning
     # (timing issue, import error, etc.) - do not block Klipper.
@@ -159,7 +179,7 @@ do_check() {
         exit 0
     fi
 
-    log "lifecycle_state=$_lifecycle_state application_class=$_application_class hw_id_status=$_hw_id_status restore_result=$_restore_result"
+    log "lifecycle_state=$_lifecycle_state application_class=$_application_class hw_id_status=$_hw_id_status restore_result=$_restore_result restore_detail=$_restore_detail"
 
     # Decision logic based on the helper's structured result. The helper
     # (mcu_identity_check.py, delegating to mcu_lifecycle.py/mcu_restore.py)

@@ -155,6 +155,20 @@ def _validate_candidate(candidate_path, expected_sha256, exists_fn, sha_fn):
     return None
 
 
+def _close_quietly(transport):
+    """Close a bootloader transport, never raising. Run 23 (ke-dev,
+    2026-11-05): restore() kept the bootloader transport open while the
+    post-flash identify ran; that identify refuses a port any process holds
+    (find_process_holding_port, our own pid included), so every successful
+    flash was reported as FLASH_FAILED (post_flash_identify_failed)."""
+    if transport is None:
+        return
+    try:
+        transport.close()
+    except Exception:
+        pass
+
+
 def _enter_bootloader_via_restart_command(
         port, app_baud, transport_factory, restart_fn, creality_flash_module,
         sleep_fn=time.sleep, attempts=BOOTLOADER_HANDSHAKE_ATTEMPTS,
@@ -182,6 +196,7 @@ def _enter_bootloader_via_restart_command(
     sleep_fn(settle_delay)
     last_error = None
     for _ in range(attempts):
+        transport = None
         try:
             transport = transport_factory()
             if creality_flash_module.handshake(transport):
@@ -191,6 +206,7 @@ def _enter_bootloader_via_restart_command(
             last_error = f"handshake_error: {e}"
         except Exception as e:
             last_error = f"transport_error: {e}"
+        _close_quietly(transport)
         sleep_fn(retry_delay)
     raise RuntimeError(
         f"bootloader_unreachable_after_restart_command "
@@ -271,40 +287,46 @@ def restore(creality_flash_module=None, transport_factory=None,
                 f"restart_command_path_failed ({e}); "
                 f"fallback_magic_sequence_succeeded (hw={version_string})")
         except Exception as fallback_e:
+            _close_quietly(transport)
             return RestoreResult(
                 FLASH_FAILED,
                 f"could_not_enter_bootloader: restart_command_path=({e}) "
                 f"magic_sequence_fallback=({fallback_e})")
 
-    # Stage 2, part 2: hardware identity must match the allow-list BEFORE
-    # any erase/write - "unsupported HW -> never flash". Uses
-    # creality_flash's low-level get_version()/check_identity() directly
-    # (not the identify()/flash() wrappers, which would attempt their own
-    # redundant magic-sequence bootloader entry - we are already in the
-    # bootloader from the step above).
     try:
-        version_string = creality_flash_module.get_version(transport)
-    except creality_flash_module.FlashError as e:
-        return RestoreResult(FLASH_FAILED, f"hw_id_query_failed: {e}")
-    if not creality_flash_module.check_identity(version_string):
-        return RestoreResult(
-            FLASH_FAILED,
-            f"hardware_identity_mismatch: got={version_string!r} "
-            f"allowed={creality_flash_module.DEFAULT_ALLOWED_HW_IDS!r}")
+        # Stage 2, part 2: hardware identity must match the allow-list BEFORE
+        # any erase/write - "unsupported HW -> never flash". Uses
+        # creality_flash's low-level get_version()/check_identity() directly
+        # (not the identify()/flash() wrappers, which would attempt their own
+        # redundant magic-sequence bootloader entry - we are already in the
+        # bootloader from the step above).
+        try:
+            version_string = creality_flash_module.get_version(transport)
+        except Exception as e:  # restore() must never raise (serial errors too)
+            return RestoreResult(FLASH_FAILED, f"hw_id_query_failed: {e}")
+        if not creality_flash_module.check_identity(version_string):
+            return RestoreResult(
+                FLASH_FAILED,
+                f"hardware_identity_mismatch: got={version_string!r} "
+                f"allowed={creality_flash_module.DEFAULT_ALLOWED_HW_IDS!r}")
 
-    try:
-        sector_size = creality_flash_module.get_sector_size(transport)
-        image = read_bytes(candidate_path)
-        if not creality_flash_module.flash_image(transport, image, sector_size):
-            return RestoreResult(
-                FLASH_FAILED, "flash transfer did not report completion")
-        if not creality_flash_module.app_start(transport):
-            return RestoreResult(
-                FLASH_FAILED, "application failed to start after flash")
-    except creality_flash_module.FlashError as e:
-        return RestoreResult(FLASH_FAILED, f"flash_error: {e}")
-    except Exception as e:
-        return RestoreResult(FLASH_FAILED, f"unexpected_error: {e}")
+        try:
+            sector_size = creality_flash_module.get_sector_size(transport)
+            image = read_bytes(candidate_path)
+            if not creality_flash_module.flash_image(transport, image, sector_size):
+                return RestoreResult(
+                    FLASH_FAILED, "flash transfer did not report completion")
+            if not creality_flash_module.app_start(transport):
+                return RestoreResult(
+                    FLASH_FAILED, "application failed to start after flash")
+        except creality_flash_module.FlashError as e:
+            return RestoreResult(FLASH_FAILED, f"flash_error: {e}")
+        except Exception as e:
+            return RestoreResult(FLASH_FAILED, f"unexpected_error: {e}")
+    finally:
+        # The port must be free before the post-flash identify below opens
+        # it again (it refuses a port that is still held, by anyone).
+        _close_quietly(transport)
 
     # Post-flash verification: the flash reporting success is not sufficient
     # proof - confirm the application identity now actually matches

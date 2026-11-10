@@ -1,7 +1,7 @@
 # NebulaOS Live Wi-Fi / Camera / PREEMPT_RT Qualification Report
 
 Mode B (live hardware) execution log for the pre-qualification mission. Printer: Creality
-Ender-3 V3 KE + Nebula Pad, IP 192.168.0.129, booted on the "custom" (NebulaOS) rootfs slot
+Ender-3 V3 KE + Nebula Pad, IP 192.168.1.129, booted on the "custom" (NebulaOS) rootfs slot
 throughout this session unless noted. This document is updated continuously as phases complete.
 
 **Status: IN PROGRESS.** No production selections have been committed. No production tag has
@@ -16,7 +16,7 @@ Captured with zero state changes. Confirms prior source-only analysis on:
 - Camera: `/dev/video0`/`/dev/video1` present; ustreamer running `--resolution=1920x1080
   --desired-fps=30`; snapshot HTTP 200 in 44ms. Matches documented C0 baseline exactly.
 - CPU: 95% idle, load 0.04–0.15 with camera streaming continuously.
-- Wi-Fi: associated (SSID `fsociety`, -69dBm, 57.7/72.2 Mbit/s bitrates); `ccode=CN` confirmed
+- Wi-Fi: associated (SSID `OtherNetwork`, -69dBm, 57.7/72.2 Mbit/s bitrates); `ccode=CN` confirmed
   present in `/lib/firmware/brcm/brcmfmac43430-sdio.txt`.
 - Power-save: currently **on** (matches documented P0/PM_FAST default).
 - Safety state at session start: `print_stats.state=standby`, not paused, `homed_axes=""`,
@@ -24,7 +24,7 @@ Captured with zero state changes. Confirms prior source-only analysis on:
 
 **Open finding carried into B3**: NVRAM contains the known placeholder
 (`macaddr=00:11:22:33:44:55`, `il0macaddr=00:90:4c:c5:12:38`), but the live `wlan0` MAC is
-`20:0b:74:69:99:fd` — this address does **not** have the locally-administered bit set
+`20:0b:74:00:00:01` — this address does **not** have the locally-administered bit set
 (`0x20` = `00100000`, bit 1 clear), meaning it is not the product of the standard kernel
 `eth_random_addr()`/`eth_hw_addr_random()` fallback the source-only analysis assumed. MAC
 provenance is unresolved pending B3.
@@ -159,7 +159,7 @@ Searched, all read-only, no writes to any factory partition:
 - `/proc/cmdline`: no `mac=` parameter.
 - U-Boot environment: not accessible from this running system (no `fw_printenv`, no exposed env
   partition found under standard paths).
-- eMMC CID (`/sys/class/mmc_host/mmc0/mmc0:*/cid`): `45010044473430303801d7ce3f2c9a00` — present
+- eMMC CID (`/sys/class/mmc_host/mmc0/mmc0:*/cid`): `45010044473430303801000000000100` — present
   and readable, but no current code path on this legacy image derives anything from it.
 
 No external stable-identity source was found feeding the live MAC through any standard Linux
@@ -177,10 +177,10 @@ separate SSH invocation from the safety check itself, per the mandatory safety p
 
 | Reboot | wlan0 MAC | IP | Safety state after |
 |---|---|---|---|
-| baseline (pre-reboot) | `20:0b:74:69:99:fd` | 192.168.0.129 | standby |
-| warm reboot 1 | `20:0b:74:69:99:fd` | 192.168.0.129 | standby |
-| warm reboot 2 | `20:0b:74:69:99:fd` | 192.168.0.129 | standby |
-| warm reboot 3 | `20:0b:74:69:99:fd` | 192.168.0.129 | standby |
+| baseline (pre-reboot) | `20:0b:74:00:00:01` | 192.168.1.129 | standby |
+| warm reboot 1 | `20:0b:74:00:00:01` | 192.168.1.129 | standby |
+| warm reboot 2 | `20:0b:74:00:00:01` | 192.168.1.129 | standby |
+| warm reboot 3 | `20:0b:74:00:00:01` | 192.168.1.129 | standby |
 
 **Result: identical MAC and identical IP across all 3 warm reboots.** This directly
 contradicts the source-only analysis's assumption that brcmfmac generates a new random MAC on
@@ -216,7 +216,7 @@ steps complete.
 ## Phase B4 — Wi-Fi power-save A/B (legacy image, complete)
 
 Same kernel/rootfs/SDIO/camera throughout; only `iw dev wlan0 set power_save on|off` toggled.
-Ping target: default gateway (192.168.0.1), 50 samples per state, `-i 0.2`.
+Ping target: default gateway (192.168.1.1), 50 samples per state, `-i 0.2`.
 
 | State | Median | P95 | P99 | Loss |
 |---|---|---|---|---|
@@ -244,16 +244,16 @@ While investigating the partition table for B3.3's slot deployment (see below), 
 `sn_mac` partlabel (`/dev/mmcblk0p2`, 1024 bytes) was found — not previously known to this
 project. Read-only bounded read (512 bytes):
 ```
-26096911004C14;FCEE11004C14;F005;NEBULA V1.0.0.1;;;;;
+26090000000001;FCEE11000001;F005;NEBULA V1.0.0.1;;;;;
 ```
-Semicolon-delimited fields: a serial number (`26096911004C14`), what is structurally a MAC
-address with no separators (`FCEE11004C14` = `FC:EE:11:00:4C:14`), a short code (`F005`), and a
-model/firmware string (`NEBULA V1.0.0.1`). The serial's last 6 hex digits (`004C14`) match the
+Semicolon-delimited fields: a serial number (`26090000000001`), what is structurally a MAC
+address with no separators (`FCEE11000001` = `FC:EE:11:00:00:01`), a short code (`F005`), and a
+model/firmware string (`NEBULA V1.0.0.1`). The serial's last 6 hex digits (`000001`) match the
 MAC's last 3 bytes exactly — strong evidence this is a genuine, real, per-unit factory identity
 record, not a placeholder.
 
-**This factory MAC (`FC:EE:11:00:4C:14`) does not match the live `wlan0` MAC
-(`20:0b:74:69:99:fd`).** Neither the OUI nor any byte overlaps. This means: a real factory
+**This factory MAC (`FC:EE:11:00:00:01`) does not match the live `wlan0` MAC
+(`20:0b:74:00:00:01`).** Neither the OUI nor any byte overlaps. This means: a real factory
 identity partition exists on this hardware, but the current Wi-Fi stack does not consume it —
 the live MAC's stability (B3.2) comes from some other mechanism, still not fully identified
 (most likely still chip-internal OTP/CIS, now proven distinct from this partition). This is a
@@ -265,17 +265,17 @@ session.
 
 To deploy B0 safely (see B3.3 below), the device was switched to stock firmware (writing
 `ota:kernel` to the marker at `/dev/mmcblk0p1` via the project's own `write_ota_marker()`,
-then rebooting). Stock came up on a **different DHCP IP** (192.168.0.138, vs custom's
-192.168.0.129) — itself evidence the MAC differs by boot target. Confirmed directly: stock's
-`wlan0` shows `link/ether fc:ee:11:00:4c:14` — an **exact match** for the `sn_mac` partition's
-stored MAC field found in B3.1. Stock's own hostname is `Ender3V3KE-4C14`, also matching the
+then rebooting). Stock came up on a **different DHCP IP** (192.168.1.138, vs custom's
+192.168.1.129) — itself evidence the MAC differs by boot target. Confirmed directly: stock's
+`wlan0` shows `link/ether fc:ee:11:00:00:01` — an **exact match** for the `sn_mac` partition's
+stored MAC field found in B3.1. Stock's own hostname is `Ender3V3KE-0001`, also matching the
 partition's serial suffix. **Stock correctly reads and uses the real factory MAC; NebulaOS
 (custom) currently does not — it produces a completely different, still only partially
-explained address (`20:0b:74:69:99:fd`) through some other internal brcmfmac/firmware
+explained address (`20:0b:74:00:00:01`) through some other internal brcmfmac/firmware
 mechanism.**
 
 ```
-MAC_PROVENANCE: FACTORY_STABLE (confirmed directly - stock uses fc:ee:11:00:4c:14 from the
+MAC_PROVENANCE: FACTORY_STABLE (confirmed directly - stock uses fc:ee:11:00:00:01 from the
   sn_mac partition, mmcblk0p2, exactly as stored)
 STABLE_MAC_IMPLEMENTATION: REVISE_TO_PRESERVE_FACTORY_MAC
 ```
@@ -340,7 +340,7 @@ this blocker.
 
 Sequence actually performed:
 1. Safety-checked (standby), wrote `ota:kernel` marker, rebooted → stock came up on a new DHCP
-   IP (192.168.0.138), confirming the MAC-provenance finding above.
+   IP (192.168.1.138), confirming the MAC-provenance finding above.
 2. Password-authenticated to stock (key auth not trusted there — different OS/rootfs).
 3. Staged B0's `xImage` (5,488,704B) + `rootfs.squashfs` (101,777,408B) +
    `build-manifest.txt` under `/usr/data/b0-stage/` (not `/tmp` — tmpfs only had 98.5MB free,
@@ -352,17 +352,17 @@ Sequence actually performed:
    script itself), wrote both images, verified by MD5 read-back. OTA marker deliberately left
    untouched by the script itself (separate step, as designed).
 6. Safety-checked again (still standby), manually wrote `ota:kernel2`, rebooted — landed on a
-   **third** DHCP IP (192.168.0.243), confirming the derived stable-MAC design changed the
+   **third** DHCP IP (192.168.1.243), confirming the derived stable-MAC design changed the
    Wi-Fi identity yet again (expected — B0 is the first image with `nebulaos-stable-mac.sh`
    active).
 
 **Derived stable-MAC validation — real success**:
-- `cat /sys/class/net/wlan0/address` → `16:3b:5d:14:20:90`. Local-administered bit set
+- `cat /sys/class/net/wlan0/address` → `16:3b:5d:00:00:01`. Local-administered bit set
   (`0x16` = `00010110`, bit 1 = 1), multicast bit clear — correct format.
 - Manually sourcing the actual on-device `/etc/nebulaos-stable-mac.sh` and calling
   `nebulaos_read_hardware_identifier` + `nebulaos_derive_mac_from_identifier` directly
-  reproduces **exactly** `16:3b:5d:14:20:90` from the real eMMC CID
-  (`45010044473430303801d7ce3f2c9a00`, identical to the CID read earlier from the legacy
+  reproduces **exactly** `16:3b:5d:00:00:01` from the real eMMC CID
+  (`45010044473430303801000000000100`, identical to the CID read earlier from the legacy
   image, as expected — same physical eMMC) — the derivation is genuinely deterministic and
   matches what was actually applied at boot.
 - 2/2 warm reboots: identical MAC, identical IP, `printer/info` returns `state: ready` both
@@ -438,16 +438,16 @@ silently skipped.
 ### B1 (W1, cap-sdio-irq) — PASS
 
 Deployed via the stock↔custom cycle described above. Boot took noticeably longer than B0's
-(~8+ minutes vs B0's few minutes) — landed on yet another DHCP IP (192.168.0.98), no clear
+(~8+ minutes vs B0's few minutes) — landed on yet another DHCP IP (192.168.1.98), no clear
 single cause identified (not obviously SDIO-related, since enumeration itself was clean; most
 likely just DHCP/network timing variance, not investigated further given time constraints).
 
-- `wlan0` MAC: `16:3b:5d:14:20:90` — identical to B0, confirming the derivation is consistent
+- `wlan0` MAC: `16:3b:5d:00:00:01` — identical to B0, confirming the derivation is consistent
   across variants that don't touch anything CID-related (as expected).
 - `dmesg`: `mmc1: new high speed SDIO card at address 0001`, no MMC/SDIO errors, no firmware
   resets — only the same pre-existing, already-documented harmless `clm_blob`/`txcap_blob`
   "not available" warnings seen on every variant including B0.
-- Wi-Fi association: real, working (`SSID: fsociety`, real RX/TX byte counts, not just
+- Wi-Fi association: real, working (`SSID: OtherNetwork`, real RX/TX byte counts, not just
   "associated" with zero traffic).
 - Klipper: `state: ready`. Camera: snapshot HTTP 200.
 - Could not confirm `cap-sdio-irq`'s exact live sysfs/DT path in the time available (DTS
@@ -464,7 +464,7 @@ functional-pass, not a measured-improvement pass.
 ### B2 (W2, cap-sd-highspeed) — PASS
 
 Same deployment cycle. Boot was fast this time (~1 min uptime observed). `wlan0` MAC identical
-(`16:3b:5d:14:20:90`). `dmesg`: `mmc1: new high speed SDIO card at address 0001`, no MMC/SDIO
+(`16:3b:5d:00:00:01`). `dmesg`: `mmc1: new high speed SDIO card at address 0001`, no MMC/SDIO
 errors, no firmware resets, only the same expected `clm_blob` warning. Standby/not-paused
 confirmed. Camera snapshot HTTP 200. Klipper `state: ready`.
 
@@ -474,7 +474,7 @@ criteria pass; no quantitative throughput/latency benefit measured in the time a
 ### B3 (W3, both cap-sdio-irq + cap-sd-highspeed) — PASS
 
 Deployed only after W1 and W2 independently passed, per the mission's own ordering rule. `wlan0`
-MAC identical (`16:3b:5d:14:20:90`). `dmesg`: `mmc1: new high speed SDIO card`, no MMC/SDIO
+MAC identical (`16:3b:5d:00:00:01`). `dmesg`: `mmc1: new high speed SDIO card`, no MMC/SDIO
 errors, no firmware resets. Two unrelated `error -ENXIO` lines appear
 (`ingenic-dma ... IRQ pdmam not found`, `ingenic-tcu ... IRQ index 1 not found`) — both occur
 before `mmc1` even initializes and concern unrelated DMA/timer peripherals, not SDIO/Wi-Fi;
@@ -491,8 +491,8 @@ benefit is measured to justify a change — W1/W2/W3 are all confirmed *safe*, n
 ## Phase B8/B11-B12 — PREEMPT_RT non-motion A/B (complete)
 
 Deployed via the same stock↔custom cycle (stock landed on yet another DHCP IP this time,
-192.168.0.231 — expected, same factory MAC `fc:ee:11:00:4c:14` confirmed, just a different
-DHCP lease). B4 booted at 192.168.0.243.
+192.168.1.231 — expected, same factory MAC `fc:ee:11:00:00:01` confirmed, just a different
+DHCP lease). B4 booted at 192.168.1.243.
 
 **Genuine RT kernel confirmed** (not just a build-tag artifact):
 - `uname -a`: `Linux buildroot 6.6.18-rt23 #2 SMP PREEMPT_RT ...` — note `PREEMPT_RT`, not
@@ -509,11 +509,11 @@ non-RT variant) — the threaded handler is keeping up with the real-time SOF ca
 visibly falling behind.
 
 Other results:
-- `wlan0` MAC identical (`16:3b:5d:14:20:90`) — same derivation, unaffected by kernel
+- `wlan0` MAC identical (`16:3b:5d:00:00:01`) — same derivation, unaffected by kernel
   preemption model, as expected.
 - 5 rapid camera snapshots: HTTP 200 every time, 7–23ms each (comparable to or faster than
   every non-RT variant's ~44ms — likely just normal variance, not attributed to RT).
-- Wi-Fi: real association with active traffic (`SSID: fsociety`, real RX/TX byte counts).
+- Wi-Fi: real association with active traffic (`SSID: OtherNetwork`, real RX/TX byte counts).
 - `dmesg` swept for `error|panic|oops` (excluding the same pre-existing, already-understood
   `ENXIO`/`clm_blob`/`txcap_blob` lines seen on every variant): **zero matches**.
 - Klipper `state: ready`, safety state standby/not-paused throughout.
@@ -556,7 +556,7 @@ chosen as the final state because it is the fully-validated, non-experimental ba
 measured benefit forgone (W0 is the recommended SDIO default per B5's own conclusion).
 
 **Final confirmation**: booted, `uname` confirms plain `PREEMPT` (not RT), `wlan0` MAC
-`16:3b:5d:14:20:90` (stable, as validated), Klipper `state: ready`, printer standby/not
+`16:3b:5d:00:00:01` (stable, as validated), Klipper `state: ready`, printer standby/not
 paused/not homed, camera snapshot HTTP 200, OTA marker confirmed `ota:kernel2` (S99confirm-good
 already flipped it forward — this boot is sticky for future reboots too, no manual intervention
 needed to keep it there).

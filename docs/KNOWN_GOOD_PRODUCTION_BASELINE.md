@@ -9,7 +9,7 @@ narrative and per-mission 48/50/52-field reports this baseline draws on.
 ## 1. Baseline identity
 
 - Date: 2026-07-26.
-- NebulaOS repository: `/home/tim/Documents/ke-mainline-klipper`.
+- NebulaOS repository: `~/Documents/ke-mainline-klipper`.
 - NebulaOS branch: `master`.
 - NebulaOS commit: `b5e2118` (the "MCU root-cause + 1080p30 qualification
   mission" final report commit - the last commit before this baseline
@@ -18,7 +18,7 @@ narrative and per-mission 48/50/52-field reports this baseline draws on.
   across every mission recorded in `USB_WEBCAM_MISSION_STATUS.md` - only
   the kernel *config fragment* changed, adding `CONFIG_EXFAT_FS=y`, never
   the kernel source tree itself).
-- GuppyScreen repository: `/home/tim/Documents/guppyscreen`.
+- GuppyScreen repository: `~/Documents/guppyscreen`.
 - GuppyScreen branch: `ke-next`.
 - GuppyScreen commit: `90140caaa656e9e2da9d4ce821a5a1468ed574f1` ("Add
   ax88179 USB-Ethernet build recipe + modules (moved from
@@ -118,7 +118,7 @@ Collected read-only, each query executed and reviewed as its own
 independent step (no query was ever combined with a state-changing
 command):
 
-- Device IP: `192.168.0.146` (DHCP-assigned; drifts between sessions,
+- Device IP: `192.168.1.146` (DHCP-assigned; drifts between sessions,
   see the `reference-device-access` memory for rediscovery via `nmap`).
 - Kernel version: `Linux buildroot 6.6.18-rt23 #8 SMP PREEMPT Sun Jul 26
   13:43:20 UTC 2026 mips GNU/Linux`.

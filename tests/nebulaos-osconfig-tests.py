@@ -545,7 +545,7 @@ class BootDisplayTests(unittest.TestCase):
                 b.resolve_image(bad)
 
     def test_builtin_is_the_blueprint_logo(self):
-        # Run 21 (Tim): "NebulaOS" shows the Blueprint logo on the boot screen
+        # Run 21: "NebulaOS" shows the Blueprint logo on the boot screen
         # as well, not the text card; the render and preview follow the file
         b = self.b
         b.PREVIEW_DIR = os.path.join(self.e.tmp, "preview")
@@ -998,7 +998,7 @@ class WifiTests(unittest.TestCase):
         self.assertEqual(self.w.connect({"ssid": "Mixed", "password": "longpassword"})["ssid"], "Mixed")
 
     def test_chosen_network_survives_the_next_scan(self):
-        # P9 on ke-dev (2026-10-15): connected to fsociety, the screen then
+        # P9 on ke-dev (2026-10-15): connected to OtherNetwork, the screen then
         # scanned, and wpa_supplicant picked the stronger saved network
         # (Office) again - all saved networks had the same priority. The
         # network the user chose last must win every later selection.
@@ -1173,10 +1173,10 @@ class SpoolmanTests(unittest.TestCase):
 
     def test_set_changes_only_the_server_line(self):
         self.conf(self.CONF)
-        out = self.s.set_server("192.168.0.20", "7913")
+        out = self.s.set_server("192.168.1.20", "7913")
         self.assertEqual((out["result"], out["restart"], out["port"]), ("APPLIED", "moonraker", 7913))
-        self.assertEqual(self.conf(), self.CONF.replace("http://10.0.0.5:7912", "http://192.168.0.20:7913"))
-        self.assertEqual(self.s.set_server("192.168.0.20", 7913)["result"], "UNCHANGED")
+        self.assertEqual(self.conf(), self.CONF.replace("http://10.0.0.5:7912", "http://192.168.1.20:7913"))
+        self.assertEqual(self.s.set_server("192.168.1.20", 7913)["result"], "UNCHANGED")
 
     def test_set_adds_the_section_when_missing(self):
         self.conf("[server]\nhost: 0.0.0.0\n\n\n")
@@ -1548,6 +1548,27 @@ class OtaTests(unittest.TestCase):
         fake_busy(self.e.common, ["PRINTING"])
         with self.assertRaises(self.e.common.Refused):
             self.o.download(now=1800000000)
+
+    def test_download_just_started_is_running_not_stopped(self):
+        # Run 23 OTA retest: polled before the worker took its lock, a fresh
+        # "running" state was reported as stopped and a second tap refused.
+        self.checked()
+        started, old = [], subprocess.Popen
+        subprocess.Popen = lambda *a, **k: started.append(a[0])
+        try:
+            self.assertEqual(self.o.download(now=1800000000)["result"], "STARTED")
+            self.assertEqual(self.o.status()["download"]["state"], "running")
+            with self.assertRaises(self.e.common.OsConfigError) as cm:
+                self.o.download(now=1800000000)
+            self.assertEqual(cm.exception.code, "BUSY")
+            self.assertEqual(len(started), 1)
+            state = json.load(open(self.o.DOWNLOAD_STATE))
+            state["updated"] -= self.o.WORKER_START_SECONDS + 1     # the worker never came
+            json.dump(state, open(self.o.DOWNLOAD_STATE, "w"))
+            st = self.o.status()["download"]
+            self.assertEqual((st["state"], st["error"]), ("failed", "INTERRUPTED"))
+        finally:
+            subprocess.Popen = old
 
     def test_download_becomes_the_ota_image_source(self):
         self.checked()
@@ -2291,6 +2312,22 @@ class LogsTests(unittest.TestCase):
             self.l.set_level("trace")
         self.assertEqual(self.l.status()["levels"], ["info", "warning", "debug"])
 
+    def test_last_restart_in_state(self):
+        """Run 24 black box: why the previous boot ended, and the history,
+        are in nebulaos-state.txt."""
+        t = self.e.tmp
+        self.l.LAST_RESET_FILE = os.path.join(t, "last-reset")
+        self.l.RESET_HISTORY = os.path.join(t, "reset-history.log")
+        self.assertEqual(self.l.last_reset(), {"reason": "not recorded"})
+        open(self.l.LAST_RESET_FILE, "w").write(
+            "REASON=FREEZE\nRESET_STATUS=0x00000002\nLAST_HEARTBEAT=hb 2026-11-06T13:46:40Z up=4146\n")
+        open(self.l.RESET_HISTORY, "w").write("".join("line %d\n" % i for i in range(15)))
+        out = self.l.last_reset()
+        self.assertEqual((out["reason"], out["reset_status"]), ("FREEZE", "0x00000002"))
+        self.assertEqual(out["last_heartbeat"], "hb 2026-11-06T13:46:40Z up=4146")
+        self.assertEqual(out["history"], ["line %d" % i for i in range(5, 15)])
+        self.assertIn('"reason": "FREEZE"', self.l.state_text())
+
     def test_debug_expires_after_24_hours(self):
         """G69: a forgotten Debug never stays on; a level set before the
         clock was valid starts its 24 hours once the clock is right."""
@@ -2528,7 +2565,7 @@ class CrealityCleanupTests(unittest.TestCase):
         self.assertFalse(self.exists("creality"))
 
     def test_print_statistics_are_kept(self):
-        # Run 23 (Tim): the stock print counter and history and the old
+        # Run 23: the stock print counter and history and the old
         # Moonraker database stay for the Statistics page's import.
         stats = ["creality/userdata/config/user_data_not_deleted.json",
                  "creality/userdata/history/print_history_record.json",
@@ -2580,7 +2617,7 @@ class CrealityCleanupTests(unittest.TestCase):
 
 
 class StatisticsBaselineTests(unittest.TestCase):
-    """Run 23 (Tim): Settings > Printer > Statistics - what the printer
+    """Run 23: Settings > Printer > Statistics - what the printer
     printed before NebulaOS, imported once from Creality's counter and an
     earlier Moonraker's database, read-only."""
     KEY = "000102030405060708090a0b0c0d0e0f"
@@ -2706,7 +2743,7 @@ class StatisticsBaselineTests(unittest.TestCase):
 
 
 class FreeUpSpaceTests(unittest.TestCase):
-    """Run 23 (Tim): Storage > "Free up space" - NebulaOS's own leftovers
+    """Run 23: Storage > "Free up space" - NebulaOS's own leftovers
     through the real /etc/nebulaos-retention.sh --manual, never print files,
     configuration, calibration or Creality's data."""
 
@@ -3242,6 +3279,20 @@ class ImageTests(unittest.TestCase):
             lock.release()
         self.assertIsNone(c.lock_holder(c.MAINTENANCE_LOCK))
 
+    def test_low_memory_does_not_stop_the_image_job(self):
+        # Run 23 OTA retest: the job's own unpack + write put memguard in P1
+        # (deny-maintenance); its stop points must not count that, while a
+        # request and the other points of no return still do.
+        c = self.e.common
+        os.makedirs(os.path.join(c.RUN_DIR, "memguard"), exist_ok=True)
+        open(os.path.join(c.RUN_DIR, "memguard", "deny-maintenance"), "w").close()
+        facts = {"klippy": "ready", "status": {}, "update_manager_busy": False}
+        self.assertFalse(c.busy_state("image_switch", "image-1", facts)["busy"])
+        self.assertEqual(c.busy_state("point_of_no_return", "image-1", facts)["reason"], "LOW_MEMORY")
+        self.assertEqual(c.busy_state("request", None, facts)["reason"], "LOW_MEMORY")
+        printing = dict(facts, status={"print_stats": {"state": "printing"}})
+        self.assertEqual(c.busy_state("image_switch", "image-1", printing)["reason"], "PRINTING")
+
     def test_stop_point_1_print_started_during_the_write(self):
         # S3: a print started from Mainsail while the image was written: stop
         # before the marker write, the written slot blanked, no switch, no
@@ -3253,7 +3304,7 @@ class ImageTests(unittest.TestCase):
         self.assertEqual((st["state"], st["phase"], st["error"]), ("failed", "stopped_print", "PRINTING"))
         self.assertTrue(st["stopped"] and st["target_cleared"])
         self.assertIn("Nothing was changed on the running system", st["message"])
-        self.assertEqual(calls, [("point_of_no_return", "image-7")])
+        self.assertEqual(calls, [("image_switch", "image-7")])
         self.assertFalse(os.path.exists(self.calls))                 # no swap, no reboot
         self.assertFalse(os.path.exists(self.i.TRIAL))
         self.assertEqual(open(os.path.join(self.dev, "mmcblk0p5"), "rb").read(64), b"\x00" * 64)
@@ -3876,7 +3927,7 @@ class ComponentTests(unittest.TestCase):
     def argv(self):
         return open(self.log).read().splitlines()
 
-    # Run 23 (Tim): Settings > Printer > Statistics.
+    # Run 23: Settings > Printer > Statistics.
     def test_stats_combine_never_adds_overlapping_sources(self):
         c = self.mod.combine_stats(
             {"creality": {"status": "imported", "print_time": 360000.0},
@@ -3887,6 +3938,12 @@ class ComponentTests(unittest.TestCase):
         self.assertEqual(c["lifetime"]["print_time"], 363600.0)   # max(before) + since
         self.assertEqual(c["nebulaos"]["jobs"], 2)
         self.assertEqual(c["nebulaos"]["by_status"], {"completed": 1, "cancelled": 1})
+        # ke-dev, Run 23: Moonraker said 16, its history held 7 + 9 + 4 interrupted
+        ke = self.mod.combine_stats({}, {"total_jobs": 16},
+                                    {"completed": 7, "cancelled": 9, "interrupted": 4,
+                                     "in_progress": 1}, [])
+        self.assertEqual(ke["nebulaos"]["jobs"], 20)
+        self.assertEqual(self.mod.combine_stats({}, {"total_jobs": 3}, {}, [])["nebulaos"]["jobs"], 3)
         nothing = self.mod.combine_stats({}, {}, {}, [])
         self.assertEqual(nothing["lifetime"]["print_time"], 0.)
 

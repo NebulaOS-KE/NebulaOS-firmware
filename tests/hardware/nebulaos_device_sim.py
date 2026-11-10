@@ -57,9 +57,9 @@ class SimulatedPrinter:
 
     def __init__(self,
                  emmc_cid="0x15010047444734303038",
-                 sn_mac_payload=b"26096911004C14;FCEE11004C14;F005;NEBULA V1.0.0.1;;;;;",
-                 nebulaos_address="192.168.0.98",
-                 stock_address="192.168.0.138",
+                 sn_mac_payload=b"26090000000001;FCEE11000001;F005;NEBULA V1.0.0.1;;;;;",
+                 nebulaos_address="192.168.1.98",
+                 stock_address="192.168.1.138",
                  nebulaos_host_key="ssh-ed25519 AAAANEBULAOSKEY",
                  stock_host_key="ssh-ed25519 AAAASTOCKKEY",
                  nebulaos_password="openke",

@@ -9,7 +9,7 @@ with a 180 degree turn (splash.meta ROTATE="2", GuppyScreen display_rotate 2).
 So this asset is a LANDSCAPE card stored rotated 180 degrees, the same transform
 nebulaos_osconfig/bootdisplay.py applies to its built-in splash.
 
-G116 (Run 21, Tim): the logo is the shipped boot logo "NebulaOS Ender-3
+G116 (Run 21): the logo is the shipped boot logo "NebulaOS Ender-3
 Blueprint Interface" (overlay usr/share/nebulaos/boot-logos/, made by
 make-boot-logos.py), the default boot screen of a fresh install, so a fresh
 install shows the same picture before and after Linux starts. Until Run 21 it

@@ -2,8 +2,8 @@ phy#0
 	Interface wlan0
 		ifindex 2
 		wdev 0x1
-		addr 20:0b:74:69:99:fd
-		ssid Office_2.4Ghz
+		addr 20:0b:74:00:00:01
+		ssid HomeWiFi
 		type managed
 		channel 11 (2462 MHz), width: 20 MHz, center1: 2462 MHz
 		txpower 31.00 dBm

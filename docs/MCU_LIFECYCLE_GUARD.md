@@ -275,7 +275,13 @@ MCU_APPLICATION_IDENTITY=<application identify string, or "unknown">
 MCU_APPLICATION_CLASS=NATIVE_CANDIDATE_001|KNOWN_STOCK|UNKNOWN_APPLICATION|unknown
 MCU_HW_ID_STATUS=MATCH|MISMATCH|UNREACHABLE|not_checked_not_needed
 MCU_RESTORE_RESULT=RESTORED_AND_VERIFIED|CANDIDATE_ARTIFACT_MISSING|CANDIDATE_HASH_BAD|FLASH_FAILED|not_attempted
+MCU_RESTORE_DETAIL=<why the restore ended as it did, single-quoted; empty when not attempted>
 ```
+
+After `RESTORED_AND_VERIFIED` the identity, class and lifecycle fields describe the board as it
+is now (native); `MCU_LIFECYCLE_DETAIL` names the stock firmware it replaced (Run 23). On
+`FLASH_FAILED` the guard leaves the power-cycle notice unless the reason is one a power cycle
+cannot fix (`hardware_identity_mismatch`, `candidate_validation_error`).
 
 ## Hardware configuration
 

@@ -19,7 +19,7 @@ tool. You must not:
 - edit or create any source file
 - commit, push, or change branches
 - modify files in any way
-- read `/home/tim/workspace/NebulaOS-archive-*` (blocked mechanically; a
+- read `~/workspace/NebulaOS-archive-*` (blocked mechanically; a
   denial is the guardrail working — report it, never route around it)
 - operate the printer
 

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Nebula Camera controls from a Klipper macro (camera.cfg, Run 23, Tim
+# Nebula Camera controls from a Klipper macro (camera.cfg, Run 23,
 # 2026-10-29: the same settings as the screen's Display > Camera page, in
 # Mainsail's Camera macro group). One fixed verb + value, checked here, then
 # nebulaos-osconfig camera (which stores the setting, applies it to a plugged

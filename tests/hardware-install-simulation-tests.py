@@ -314,15 +314,15 @@ def case_ip_change_enrolled():
         # should find it and the install should complete.
         # Move to EXACT addresses the profile also lists, so this tests
         # rediscovery rather than my ability to predict the simulator.
-        fx.printer.next_address_on_boot = {device.OS_STOCK: "192.168.0.201",
-                                           device.OS_NEBULAOS: "192.168.0.202"}
+        fx.printer.next_address_on_boot = {device.OS_STOCK: "192.168.1.201",
+                                           device.OS_NEBULAOS: "192.168.1.202"}
         pdir = os.path.join(os.environ[profiles.ENV_HOME], "devices", "printer-sim")
         conf = os.path.join(pdir, "profile.conf")
         text = open(conf).read()
-        text = text.replace("STOCK_ADDRESS_HISTORY=192.168.0.138",
-                            "STOCK_ADDRESS_HISTORY=192.168.0.201,192.168.0.138")
-        text = text.replace("NEBULAOS_ADDRESS_HISTORY=192.168.0.98",
-                            "NEBULAOS_ADDRESS_HISTORY=192.168.0.202,192.168.0.98")
+        text = text.replace("STOCK_ADDRESS_HISTORY=192.168.1.138",
+                            "STOCK_ADDRESS_HISTORY=192.168.1.201,192.168.1.138")
+        text = text.replace("NEBULAOS_ADDRESS_HISTORY=192.168.1.98",
+                            "NEBULAOS_ADDRESS_HISTORY=192.168.1.202,192.168.1.98")
         open(conf, "w").write(text)
         fx.profile = profiles.DeviceProfile.load("printer-sim")
         result, err = run_install(fx)

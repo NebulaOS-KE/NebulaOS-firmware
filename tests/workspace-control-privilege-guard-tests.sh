@@ -452,10 +452,10 @@ echo
 # assert that the option itself is refused rather than that a bad value is.
 REASON="accepts only --device and --control"
 echo "[ --host and friends no longer exist - must DENY ]"
-run_case hw DENY nebulaos-hardware 1 "--host at all"        "$HWRUN --host 192.168.0.98 inspect"
+run_case hw DENY nebulaos-hardware 1 "--host at all"        "$HWRUN --host 192.168.1.98 inspect"
 run_case hw DENY nebulaos-hardware 1 "--host public IPv4"   "$HWRUN --host 8.8.8.8 inspect"
 run_case hw DENY nebulaos-hardware 1 "--host hostname"      "$HWRUN --host printer.local inspect"
-run_case hw DENY nebulaos-hardware 1 "--host alongside --device" "$HWRUN $DEV --host 192.168.0.98 inspect"
+run_case hw DENY nebulaos-hardware 1 "--host alongside --device" "$HWRUN $DEV --host 192.168.1.98 inspect"
 run_case hw DENY nebulaos-hardware 1 "--password"           "$HWRUN $DEV --password hunter2 inspect"
 run_case hw DENY nebulaos-hardware 1 "--command"            "$HWRUN $DEV --command id inspect"
 run_case hw DENY nebulaos-hardware 1 "invented --force"     "$HWRUN $DEV --force inspect"
@@ -479,11 +479,11 @@ echo
 
 REASON=""
 echo "[ more device-contact commands - must DENY ]"
-for c in "sftp root@192.168.0.98" "nc 192.168.0.98 22" "socat - TCP:192.168.0.98:22" \
-         "telnet 192.168.0.98" "minicom -D /dev/ttyUSB0" "screen /dev/ttyACM0 250000" \
-         "rsync -a fw.bin root@192.168.0.98:/tmp/" "nmap -p22 192.168.0.0/24" \
-         "arp-scan --localnet" "curl http://192.168.0.98:7125/printer/info" \
-         "wget http://192.168.0.98/x" "dd if=x.img of=/dev/ttyUSB0"; do
+for c in "sftp root@192.168.1.98" "nc 192.168.1.98 22" "socat - TCP:192.168.1.98:22" \
+         "telnet 192.168.1.98" "minicom -D /dev/ttyUSB0" "screen /dev/ttyACM0 250000" \
+         "rsync -a fw.bin root@192.168.1.98:/tmp/" "nmap -p22 192.168.1.0/24" \
+         "arp-scan --localnet" "curl http://192.168.1.98:7125/printer/info" \
+         "wget http://192.168.1.98/x" "dd if=x.img of=/dev/ttyUSB0"; do
   run_case hw DENY nebulaos-hardware 0 "device command: ${c%% *}" "$c"
 done
 echo

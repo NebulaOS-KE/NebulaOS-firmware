@@ -1,5 +1,5 @@
 # nebulaos_osconfig.camera - Creality Nebula Camera controls (G121, Run 22,
-# Tim's list 2026-10-28; investigation _scratch/run22/G121-nebulacam-investigation.md).
+# The owner's list 2026-10-28; investigation _scratch/run22/G121-nebulacam-investigation.md).
 #
 #   camera status                    stored settings, defaults, the camera
 #   camera set --json '{...}'        change some settings (saved, then applied)
@@ -24,7 +24,7 @@
 # camera turns into a mass-storage device) is not in it and cannot be sent: no
 # command-line or HTTP parameter carries a selector number.
 #
-# Flip stays in Mainsail (Tim). Gamma, hue, backlight compensation and focus
+# Flip stays in Mainsail. Gamma, hue, backlight compensation and focus
 # (fixed lens) are never written.
 import array
 import errno
@@ -60,7 +60,7 @@ RANGES = {"brightness": (50, 160), "contrast": (50, 160), "saturation": (50, 160
 # grain on flat surfaces and doubles the JPEG size, 110 is clean. Anti-flicker
 # off showed no banding (50 Hz would band in 60 Hz countries). Night mode
 # defaults to colour: the camera's own automatic switch (threshold fixed in
-# its firmware) went black-and-white in normal room light (Tim: colour).
+# its firmware) went black-and-white in normal room light (owner: colour).
 def default_config():
     return {"schema": SCHEMA, "ir_mode": "color", "power_line": "off",
             "brightness": 125, "contrast": 155, "saturation": 145, "sharpness": 110,
@@ -353,7 +353,7 @@ def set_settings(changes, ioctl=None):
 
 
 def defaults(ioctl=None, sleep=time.sleep, monotonic=time.monotonic):
-    """Every setting back to the default (Tim 2026-10-29: "defaults resets
+    """Every setting back to the default (2026-10-29: "defaults resets
     all"), night mode and anti-flicker included. Manual exposure only goes
     back to automatic with a camera reboot, so then this is a reset - refused
     while the printer is busy, like Reset camera."""

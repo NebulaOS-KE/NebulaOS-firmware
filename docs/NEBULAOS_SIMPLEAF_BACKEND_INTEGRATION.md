@@ -293,7 +293,7 @@ pass and require the user's explicit go-ahead given the real, physical, and
 in some cases hard-to-reverse risk involved (homing, heating, extrusion, a
 firmware flash to the device's A/B slots).
 
-## 11. Live physical qualification (2026-07-30, real device 192.168.0.128)
+## 11. Live physical qualification (2026-07-30, real device 192.168.1.128)
 
 Two real bugs were found and fixed during actual homing qualification -
 full detail in memory record `project_simpleaf_bltouch_qualification`:

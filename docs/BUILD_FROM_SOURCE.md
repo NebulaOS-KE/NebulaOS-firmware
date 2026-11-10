@@ -58,10 +58,9 @@ Buildroot, Moonraker, k1-ustreamer, v4l-utils, Mainsail, WiFi firmware, and the 
 each by exact commit/tag/digest plus a SHA-256, checked on every run. Worth reading that file's own
 comments before touching a pin; most of them exist because of something real that went wrong once.
 
-The 8 kernel variants on top of stock upstream (PREEMPT_RT, a WiFi SDIO IRQ priority fix, VSYNC-
-gated display panning, a pinctrl fix, the final backlight controller, PWM state readback, the final
-touch driver, and disabling WiFi roaming) live as small scripts under `scripts/build/`, applied by
-`scripts/build/apply-qualified-baseline.sh`.
+Every NebulaOS kernel change is a commit on the `openke` branch of NebulaOS-kernel, pinned by
+`KERNEL_PIN`; nothing is patched at build time. The production configuration is that repository's
+`nebulaos_halley5_v30_defconfig`: `CONFIG_PREEMPT`, not `CONFIG_PREEMPT_RT`, since 1.0.2.
 
 The build always fetches fresh — it won't use a local checkout of the kernel, Klipper, or
 GuppyScreen repo sitting next to it, even if you have one. And don't try building those three repos

@@ -17,7 +17,7 @@ NotebookEdit tool. You must not:
 - edit production source
 - commit, push, or rewrite history
 - change branches or stage anything
-- read `/home/tim/workspace/NebulaOS-archive-*` (blocked mechanically)
+- read `~/workspace/NebulaOS-archive-*` (blocked mechanically)
 - operate the printer
 
 **You must not fix problems you find.** Report them to the main agent with evidence and

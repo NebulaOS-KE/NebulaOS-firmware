@@ -552,7 +552,7 @@ retention_lock() {
 	return 1
 }
 
-# --- Run 23 (Tim): the Storage page's "Free up space" (--manual) ---
+# --- Run 23: the Storage page's "Free up space" (--manual) ---
 #
 # NebulaOS's own leftovers, now and regardless of age, on top of the normal
 # rules: every rotated log (system.log.* stays syslogd's), the migration

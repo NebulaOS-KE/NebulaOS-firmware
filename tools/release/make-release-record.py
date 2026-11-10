@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Write the NebulaOS release record for system updates over the internet (G79).
 
-Tim 2026-10-29 (Run 23): no signing key. The record is a release asset next to
+2026-10-29 (Run 23): no signing key. The record is a release asset next to
 the image; the printer fetches both over HTTPS from github.com only and keeps the
 image when its size and sha256 match the record:
 

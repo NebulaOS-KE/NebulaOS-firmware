@@ -1,0 +1,52 @@
+#!/bin/sh
+#
+# nebulaos-blackbox (Run 24, 2026-11-06): at boot, why the previous boot
+# ended (pstore + SoC reset status -> /run/nebulaos/last-reset, logs/
+# reset-history.log, logs/crash/ after a freeze or crash); then the
+# heartbeat into /dev/pmsg0 for the next boot to read. At shutdown (rcK) a
+# "shutdown clean" line, so the next boot knows the restart was orderly.
+# See /usr/libexec/nebulaos-blackbox.
+#
+# S03: after S02nebulaos-watchdog has counted this start and armed the
+# watchdog (a hang in collect is then reset like any other), and before
+# Klipper and the rest have started.
+
+BB=/usr/libexec/nebulaos-blackbox
+PIDFILE=/var/run/nebulaos-heartbeat.pid
+
+heartbeat_running() {
+	p=$(cat "$PIDFILE" 2>/dev/null)
+	[ -n "$p" ] && grep -q 'nebulaos-blackbox.heartbeat' "/proc/$p/cmdline" 2>/dev/null
+}
+
+start_heartbeat() {
+	cd / || true    # no daemon keeps a cwd on /usr/data
+	if heartbeat_running; then
+		echo "nebulaos-blackbox: heartbeat already running"
+	elif [ -c /dev/pmsg0 ]; then
+		# SCHED_OTHER at nice 19, the lowest: never take CPU from Klipper
+		# (at nice -20 its 10 s burst outranked klippy - suspected in a
+		# "Timer too close" while probing, ke-dev 2026-11-07). Late under
+		# overload is fine: a gap in the heartbeat is evidence too. Never above
+		# Klipper's real-time work (klipper_mcu FIFO 49, the IRQ threads).
+		start-stop-daemon -S -b -m -p "$PIDFILE" -N 19 -x "$BB" -- heartbeat \
+			|| echo "nebulaos-blackbox: heartbeat not started"
+	else
+		echo "nebulaos-blackbox: no /dev/pmsg0, heartbeat not started"
+	fi
+}
+
+stop_heartbeat() {
+	start-stop-daemon -K -q -p "$PIDFILE" 2>/dev/null
+	rm -f "$PIDFILE"
+}
+
+# collect itself runs once per boot (it skips when /run/nebulaos/last-reset
+# exists); restart touches only the heartbeat - no shutdown mark mid-boot.
+case "$1" in
+	start) "$BB" collect 2>/dev/null || true; start_heartbeat ;;
+	stop) stop_heartbeat; [ -c /dev/pmsg0 ] && "$BB" shutdown ;;
+	restart) stop_heartbeat; start_heartbeat ;;
+	*) echo "Usage: $0 {start|stop|restart}"; exit 1 ;;
+esac
+exit 0

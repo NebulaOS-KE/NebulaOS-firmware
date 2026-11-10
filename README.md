@@ -1,19 +1,66 @@
 # NebulaOS Firmware
 
-> Part of [NebulaOS](https://github.com/NebulaOS-KE/NebulaOS): open firmware for the Creality Ender-3 V3 KE. The project map, releases and downloads are there.
+> Part of [NebulaOS](https://github.com/NebulaOS-KE/NebulaOS): open firmware for the Creality Ender-3 V3 KE. Downloads and the user manual are there; this repository is the developers' starting point.
 
 NebulaOS is custom firmware for the Creality Ender-3 V3 KE. This repository builds it: it pins
 every input, fetches them, and produces the kernel and root filesystem that go onto the printer.
 
-Current version: **0.9.0** (`NEBULAOS_VERSION` in
+Current version: **1.0.2** (`NEBULAOS_VERSION` in
 [`manifests/dependencies.conf`](manifests/dependencies.conf)).
+
+## The project
+
+```
+                    NebulaOS-kernel ──────────┐
+       Klipper3d/klipper (upstream, pinned) ──┤
+NebulaOS-klipper-extensions (production) ─────┤
+        Arksine/moonraker, Mainsail ──────────┼──► NebulaOS-firmware ──► NebulaOS (releases)
+             NebulaOS-nebulascreen ───────────┤     pins + builds         .img / .ingenic
+      NebulaOS-klipper-mcu (MCU binary) ──────┘
+                                                    nebulaos-packages: Python wheels for
+                                                    Moonraker/Klipper updates on the printer
+```
+
+| Repository | What it is |
+|---|---|
+| [NebulaOS](https://github.com/NebulaOS-KE/NebulaOS) | Releases, downloads and the user manual (wiki) |
+| **NebulaOS-firmware** (this one) | Pins every input by commit or digest (`manifests/dependencies.conf`), builds the image in one pinned container, packages `.img` and `.ingenic` |
+| [NebulaOS-kernel](https://github.com/NebulaOS-KE/NebulaOS-kernel) | Linux 6.6 (linux-stable-rt tree, built with PREEMPT, not PREEMPT_RT) for the Ingenic X2000 (branch `openke`) |
+| [NebulaOS-klipper-extensions](https://github.com/NebulaOS-KE/NebulaOS-klipper-extensions) | NebulaOS's Klipper extras (calibration, load-cell probing, power-loss recovery, ...), composed into upstream Klipper at boot - no Klipper fork |
+| [NebulaOS-nebulascreen](https://github.com/NebulaOS-KE/NebulaOS-nebulascreen) | NebulaScreen, the touchscreen app (based on GuppyScreen); also updatable on its own from its releases |
+| [NebulaOS-klipper-mcu](https://github.com/NebulaOS-KE/NebulaOS-klipper-mcu) | Klipper firmware for the mainboard's GD32F303: upstream Klipper plus an explicit patch series |
+| [nebulaos-packages](https://github.com/NebulaOS-KE/nebulaos-packages) | Pre-built Python packages, so Moonraker and Klipper updates on the printer need no compiler |
+| [lv_drivers](https://github.com/NebulaOS-KE/lv_drivers) | LVGL display/touch drivers used by NebulaScreen |
+
+What ships is what [`manifests/dependencies.conf`](manifests/dependencies.conf) pins - not the
+latest commit of each repository.
+
+### Release files
+
+| File | What it is |
+|---|---|
+| `NebulaOS-Ender3V3KE-<version>.img` | Creality F005 OTA package: OpenKE/SSH installs, NebulaOS's own updates (System image, online) |
+| `NebulaOS-Ender3V3KE-F005_ota_img_V9.<version>.img` | The same payloads, named for stock Creality's touchscreen USB updater (it only offers `*ota_img_V<above 1.1.0.15>*`) |
+| `NebulaOS-Ender3V3KE-<version>.ingenic` | Ingenic Cloner USB recovery package (rewrites the whole printer) |
+| `nebulaos-release.json` | The record a NebulaOS printer reads to update itself over the internet (size + sha256 of the `.img`) |
+| `SHA256SUMS`, `*.sha256`, `*.manifest.txt` | Checksums and the exact source of every component |
+
+### How a release is made
+
+1. Two independent candidate builds of one firmware commit (`tools/run-nebulaos-build.sh --candidate <sha>`
+   in the NebulaOS workspace); kernel and root filesystem must be byte-identical.
+2. `scripts/package/package-release.sh` packages both `.img` files and the `.ingenic`;
+   `scripts/package/check-packaging-reproducibility.sh` checks the packaging; `tools/release/make-release-record.py`
+   writes the release record.
+3. The build is installed and checked on a real printer, then the firmware tag, the NebulaScreen tag
+   and the release assets are published (the record last).
 
 ## What ships in the image
 
 | Component | Source | Notes |
 |---|---|---|
 | Base system | [Buildroot](https://github.com/buildroot/buildroot) 2025.02 (tag 2025.02.18, pinned by commit) | NebulaOS configuration lives in [`br2-external/`](br2-external/) |
-| Kernel | [`NebulaOS-KE/NebulaOS-kernel`](https://github.com/NebulaOS-KE/NebulaOS-kernel), branch `openke` | Linux 6.6 with PREEMPT_RT. Every kernel change is a commit in that repository; nothing is patched at build time |
+| Kernel | [`NebulaOS-KE/NebulaOS-kernel`](https://github.com/NebulaOS-KE/NebulaOS-kernel), branch `openke` | Linux 6.6 from the linux-stable-rt tree, built with PREEMPT (PREEMPT_RT off since 1.0.2; one defconfig line to switch back). Every kernel change is a commit in that repository; nothing is patched at build time |
 | Klipper (host) | [`Klipper3d/klipper`](https://github.com/Klipper3d/klipper) | Pristine upstream, pinned by commit, zero core patches |
 | Klipper extensions | [`NebulaOS-KE/NebulaOS-klipper-extensions`](https://github.com/NebulaOS-KE/NebulaOS-klipper-extensions), branch `production` | NebulaOS's own Klipper extras, composed into Klipper at boot by symlink (see below) |
 | Moonraker | [`Arksine/moonraker`](https://github.com/Arksine/moonraker) | Upstream, plus one allowlisted build-time patch (`scripts/build/patches/moonraker-sqlite-nolock.patch`) applied to the image copy only |
@@ -102,7 +149,7 @@ Details: [`docs/RELEASE_ARTIFACTS.md`](docs/RELEASE_ARTIFACTS.md),
 (`nebulaos-osconfig ota check`), downloads the `.img` over HTTPS from github.com only and keeps it
 when its size and sha256 match the release record (`ota download`); it is then installed like any
 other image (source `ota/`). There is no signing key: trust is GitHub's HTTPS plus the checksum.
-Releases are built by that repository's release workflow from `scripts/release/` here.
+Releases: see [How a release is made](#how-a-release-is-made).
 
 ## Building
 
