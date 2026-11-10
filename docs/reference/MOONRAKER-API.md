@@ -94,6 +94,16 @@ the wrong one.
 The alternative - composing plausible example responses from the key names - was
 available and was not taken. It would have read better and been unfalsifiable.
 
+### Recorded from a printer
+
+Where static analysis cannot resolve an endpoint, a response **recorded from a**
+**real printer** is shown instead, with the capture's date, source file and the
+firmware it ran - and with the reason it is still current, which is always a
+checked statement about the helper's source rather than an assumption. Such a
+sample is weaker evidence than the code: it shows one answer this endpoint gave
+once, not every answer it can give. It is therefore never attached to an endpoint
+whose keys the source already settles.
+
 ## Endpoints
 
 A parameter with no default is **required**; the request fails without it.
@@ -927,6 +937,41 @@ Result keys: `applies`, `from`, `next_boot`, `result`, `trial`.
 Runs `nebulaos-osconfig updates readiness` -> `updates.readiness`.
 
 *Result keys not resolved from source - see [Responses](#responses).*
+
+**Recorded from a printer** on 2026-11-04 by the foreground session, on ke-dev (`_scratch/run23/api-snapshot/redacted/machine_nebulaos_updates_readiness.json`, firmware `ba98eec`). One sample, not a schema: it shows what this printer sent once. It is current because scripts/build/overlay/usr/lib/nebulaos/python/nebulaos_osconfig/updates.py is byte-identical between ba98eec and b95b156 (git diff --quiet), so the helper that produced this response is the one documented here.
+
+Keys in that response: `apps`, `checked_at`, `checked_epoch`, `message`, `result`, `targets`.
+
+```json
+{
+  "result": {
+    "apps": {
+      "klipper": {
+        "detail": "",
+        "helper": "cached",
+        "helper_source_hash": "ba5d16812a19bbf9725860c1c841c496bfc8cca6d1b234c2073773a27d0c003c",
+        "packages": "ok",
+        "ready": true,
+        "target": "0cee841e31d701595b3e509a0b502f6e320f52a8"
+      },
+      "moonraker": {
+        "detail": "",
+        "packages": "ok",
+        "ready": true,
+        "target": "985c1d0bbeb90bc057d34a232c9dc3b05e0c6c8d"
+      }
+    },
+    "checked_at": "2026-11-04T19:26:17Z",
+    "checked_epoch": 1793820377,
+    "message": "The pending update can be installed.",
+    "result": "READY",
+    "targets": {
+      "klipper": "0cee841e31d701595b3e509a0b502f6e320f52a8",
+      "moonraker": "985c1d0bbeb90bc057d34a232c9dc3b05e0c6c8d"
+    }
+  }
+}
+```
 
 ### `machine.nebulaos.wifi.connect`
 
