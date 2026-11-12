@@ -77,32 +77,48 @@ The causes being found and fixed is a different claim from that proof, and the r
 upgrade one into the other. The proof runs live in a build-evidence tree kept outside this
 repository, because it records absolute build paths and per-run hashes.
 
-### For a release, the comparison is a gate
+### For a release: two builds, compared
 
-A release is not built here by hand. `.github/workflows/release.yml` in the
-[NebulaOS repository](https://github.com/NebulaOS-KE/NebulaOS) takes one commit of *this*
-repository and runs it on GitHub's own runners:
+A release is built **twice from the same commit** and the two builds compared before anything is
+packaged. Two routes exist for that, and a developer should know which evidence belongs to
+which.
 
-| Job | What it does |
-|---|---|
-| `build` (matrix `copy: [a, b]`) | **two** independent release builds of the same commit, each a separate `ubuntu-24.04` job running `scripts/release/ci-build.sh` |
-| `compare` | `scripts/release/compare-builds.sh a b` - and `package` does not start unless it passes |
-| `package` | `scripts/package/package-release.sh` on **build A**, then `tools/release/make-release-record.py`, a GitHub build-provenance attestation, and a **draft** release a human publishes after testing it on a printer |
+**The comparison itself** is `scripts/package/check-packaging-reproducibility.sh --build-run-a
+<run> --build-run-b <run>`, and `docs/RELEASE_ARTIFACTS.md` holds each format to its own explicit
+standard - see the next section, because the `.img` cannot meet the byte standard at all.
 
-`compare-builds.sh` is exact about what has to match, and it is worth reading rather than
-summarising from memory:
+**There is also a workflow that does the whole thing on GitHub**, and it is worth knowing about
+even though the published 1.0.2 was not built by it: `.github/workflows/release.yml` in the
+[NebulaOS repository](https://github.com/NebulaOS-KE/NebulaOS) (added 2026-10-29) takes one
+commit of this repository and runs a matrix of two independent builds, then
+`scripts/release/compare-builds.sh a b` as a job the packaging job depends on. That script is
+exact about what must match, and reading it is the quickest way to see what "identical" means
+here:
 
 - `xImage` and `rootfs.squashfs`: **byte for byte**, by sha256;
-- `build-manifest.txt`: identical on every line **except `built_at`**, which is the wall clock of
-  the build and is not part of any artifact;
-- the attestation's `SOURCE_HEAD`, `BUILDER_DIGEST` and `SOURCE_DATE_EPOCH`: equal, and non-empty.
+- `build-manifest.txt`: identical on every line **except `built_at`**, the wall clock of the
+  build, which is not part of any artifact;
+- the attestation's `SOURCE_HEAD`, `BUILDER_DIGEST` and `SOURCE_DATE_EPOCH`: equal and non-empty.
 
-It prints `BUILD_COMPARE=IDENTICAL` or `BUILD_COMPARE=FAIL` and exits non-zero on failure.
+It prints `BUILD_COMPARE=IDENTICAL` or `BUILD_COMPARE=FAIL`, and the packaging job then runs on
+**build A** only, producing a *draft* release a human publishes after testing it on a printer.
 
-**The download is packaged once, from build A.** So "a release is built twice and the two match"
-is a statement about the core - kernel, root filesystem and build record - and not about the
-`.img` file a user downloads, which is produced after the gate rather than compared across it.
-Its provenance is the attestation and the checksums instead.
+**What the 1.0.2 artifacts actually record.** The published `release-manifest.txt` carries
+`BUILD_MODE=candidate`, `SOURCE_HEAD=3bdf3ff53073aaccd13e6c364e7d2dfca1e14801` and
+`BUILD_RUN=/var/tmp/nebulaos-build/3bdf3ff.../run-20261109T131214Z-224824` - a local build run
+through the project's own launcher, not a workflow run - and it records **no comparison**: there
+is no second build's hashes in it and no `BUILD_COMPARE` line anywhere in the release. So for
+1.0.2, "built twice and compared" rests on the project owner's account of how it was built, not
+on anything the release publishes. The capability is in the repository and is exact; the
+evidence trail for this particular release is the single `BUILD_RUN` and the checksums.
+
+That distinction is the whole reason this page exists: *what the tooling enforces* and *what a
+given artifact can prove about itself* are different questions, and conflating them is how a
+reproducibility claim grows legs.
+
+**And the download is packaged from one build, not from both** - so "built twice and identical"
+is a statement about the core (kernel, root filesystem, build record), never about the `.img` a
+user downloads, whose provenance is its checksums and its manifest.
 
 ### And a separate check, for the packaging step itself
 
