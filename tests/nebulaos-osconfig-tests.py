@@ -2464,6 +2464,35 @@ class SettingsSnapshotTests(unittest.TestCase):
         self.assertIn(first, names)
         self.assertEqual(len(names), self.s.KEEP + 1)
 
+    def test_staging_never_inside_config(self):
+        # issue #11: Moonraker watches config; a folder there that is renamed
+        # away before Moonraker watches it leaves a lasting warning.
+        seen = []
+        real_copy2 = self.s.shutil.copy2
+
+        def spy(src, dst, *a, **k):
+            for root, dirs, _ in os.walk(self.s.CONFIG_DIR):
+                seen.extend(os.path.join(root, d) for d in dirs if d.startswith("."))
+            return real_copy2(src, dst, *a, **k)
+        self.s.shutil.copy2 = spy
+        try:
+            out = self.s.take("changed", db="none", now=1792100000)
+        finally:
+            self.s.shutil.copy2 = real_copy2
+        self.assertEqual(out["result"], "TAKEN")
+        self.assertEqual(seen, [])
+        self.assertFalse(os.path.exists(os.path.join(self.pdata, ".nebulaos-snapshot-staging")))
+        self.assertTrue(os.path.isfile(os.path.join(self.s.BACKUPS_DIR, out["name"], "SNAPSHOT.txt")))
+
+    def test_old_and_killed_staging_is_cleaned(self):
+        old = os.path.join(self.s.BACKUPS_DIR, ".settings-20261112-150458-changed.part")
+        killed = os.path.join(self.pdata, ".nebulaos-snapshot-staging", "settings-x")
+        for d in (old, killed):
+            os.makedirs(d)
+        self.s.take("changed", db="none", now=1792100000)
+        self.assertFalse(os.path.exists(old))
+        self.assertFalse(os.path.exists(os.path.dirname(killed)))
+
     def test_api_backup_unreachable_is_recorded(self):
         out = self.s.take("manual", db="api", now=1792100000)
         self.assertEqual(out["result"], "TAKEN")

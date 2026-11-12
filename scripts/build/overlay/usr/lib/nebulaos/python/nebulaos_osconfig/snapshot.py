@@ -19,6 +19,13 @@
 # settings changed since the newest snapshot - so the newest copy always
 # predates the next update (Moonraker updates components without a hook).
 # The newest KEEP are kept, with their database copies.
+#
+# A snapshot is assembled in printer_data/.nebulaos-snapshot-staging/ and
+# then renamed into config/backups/ (same mount, so the rename is atomic).
+# Not in config/backups itself: Moonraker watches config with inotify, and a
+# folder renamed away before Moonraker adds its watch leaves a warning that
+# stays until Moonraker restarts - "file_manager: Error adding inotify watch
+# to root 'config', path: .../backups/.settings-...-changed.part" (issue #11).
 import hashlib
 import json
 import os
@@ -44,6 +51,11 @@ PREFIX = "settings-"
 KEEP = 5
 FILES = ("printer.cfg", "moonraker.conf", "songs.conf")
 REASONS = ("new-system", "changed", "manual")
+
+
+def _staging_dir():
+    """Outside every Moonraker root, on the same mount as BACKUPS_DIR."""
+    return os.path.join(os.path.dirname(CONFIG_DIR), ".nebulaos-snapshot-staging")
 
 
 def _system_label():
@@ -148,8 +160,10 @@ def take(reason, db="api", if_changed=False, now=None):
     stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime(now))
     name = "%s%s-%s" % (PREFIX, stamp, reason)
     final = os.path.join(BACKUPS_DIR, name)
-    tmp = os.path.join(BACKUPS_DIR, "." + name + ".part")
-    shutil.rmtree(tmp, ignore_errors=True)
+    os.makedirs(BACKUPS_DIR, exist_ok=True)
+    staging = _staging_dir()
+    shutil.rmtree(staging, ignore_errors=True)    # left by a run that was killed
+    tmp = os.path.join(staging, name)
     os.makedirs(tmp)
     copied = []
     try:
@@ -170,9 +184,8 @@ def take(reason, db="api", if_changed=False, now=None):
         with open(os.path.join(tmp, "SNAPSHOT.txt"), "w") as handle:
             handle.write("\n".join(lines) + "\n")
         os.rename(tmp, final)
-    except Exception:
-        shutil.rmtree(tmp, ignore_errors=True)
-        raise
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
     pruned = prune()
     return {"result": "TAKEN", "name": name, "files": len(copied), "database": database,
             "pruned": pruned}
@@ -195,6 +208,7 @@ def prune(keep=KEEP):
         except OSError:
             pass
         gone.append(name)
+    # leftovers of the staging inside config/backups before issue #11
     for stale in (os.listdir(BACKUPS_DIR) if os.path.isdir(BACKUPS_DIR) else []):
         if stale.startswith("." + PREFIX) and stale.endswith(".part"):
             shutil.rmtree(os.path.join(BACKUPS_DIR, stale), ignore_errors=True)
