@@ -77,19 +77,44 @@ The causes being found and fixed is a different claim from that proof, and the r
 upgrade one into the other. The proof runs live in a build-evidence tree kept outside this
 repository, because it records absolute build paths and per-run hashes.
 
-For a **release**, though, that comparison is a gate rather than an open question.
-`scripts/package/check-packaging-reproducibility.sh --build-run-a <run> --build-run-b <run>`
-compares two build runs, and `docs/RELEASE_ARTIFACTS.md` holds the three formats to explicit,
-different standards: `xImage` and `rootfs.squashfs` **byte-identical**, the `.ingenic`
-byte-identical (plain ZIP, every entry keeping the template's own metadata), and the `.img`
-same-size plus a bit-identical extracted tree - because Creality's envelope is an encrypted 7z
-whose fresh random AES salt and IV make two archives over identical plaintext differ in about
-99.6% of their bytes, with no option to pin the IV. That case records itself honestly:
-`IMG_BYTE_IDENTICAL=NO`, `IMG_BYTE_IDENTICAL_REASON=encrypted-7z-random-aes-iv`,
-`IMG_CONTENT_IDENTICAL=YES`.
+### For a release, the comparison is a gate
 
-So "two builds of a release come out byte-identical" is a statement about the two core
-artifacts, checked by that script, and not about the `.img` file a user downloads.
+A release is not built here by hand. `.github/workflows/release.yml` in the
+[NebulaOS repository](https://github.com/NebulaOS-KE/NebulaOS) takes one commit of *this*
+repository and runs it on GitHub's own runners:
+
+| Job | What it does |
+|---|---|
+| `build` (matrix `copy: [a, b]`) | **two** independent release builds of the same commit, each a separate `ubuntu-24.04` job running `scripts/release/ci-build.sh` |
+| `compare` | `scripts/release/compare-builds.sh a b` - and `package` does not start unless it passes |
+| `package` | `scripts/package/package-release.sh` on **build A**, then `tools/release/make-release-record.py`, a GitHub build-provenance attestation, and a **draft** release a human publishes after testing it on a printer |
+
+`compare-builds.sh` is exact about what has to match, and it is worth reading rather than
+summarising from memory:
+
+- `xImage` and `rootfs.squashfs`: **byte for byte**, by sha256;
+- `build-manifest.txt`: identical on every line **except `built_at`**, which is the wall clock of
+  the build and is not part of any artifact;
+- the attestation's `SOURCE_HEAD`, `BUILDER_DIGEST` and `SOURCE_DATE_EPOCH`: equal, and non-empty.
+
+It prints `BUILD_COMPARE=IDENTICAL` or `BUILD_COMPARE=FAIL` and exits non-zero on failure.
+
+**The download is packaged once, from build A.** So "a release is built twice and the two match"
+is a statement about the core - kernel, root filesystem and build record - and not about the
+`.img` file a user downloads, which is produced after the gate rather than compared across it.
+Its provenance is the attestation and the checksums instead.
+
+### And a separate check, for the packaging step itself
+
+`scripts/package/check-packaging-reproducibility.sh --build-run-a <run> --build-run-b <run>`
+exists for the question the release gate does not ask: whether *packaging* is deterministic.
+`docs/RELEASE_ARTIFACTS.md` holds the three formats to explicit, different standards: `xImage`
+and `rootfs.squashfs` byte-identical, the `.ingenic` byte-identical (plain ZIP, every entry
+keeping the template's own metadata), and the `.img` same-size plus a bit-identical extracted
+tree - because Creality's envelope is an encrypted 7z whose fresh random AES salt and IV make
+two archives over identical plaintext differ in about 99.6% of their bytes, with no option to
+pin the IV. That case records itself honestly: `IMG_BYTE_IDENTICAL=NO`,
+`IMG_BYTE_IDENTICAL_REASON=encrypted-7z-random-aes-iv`, `IMG_CONTENT_IDENTICAL=YES`.
 
 The retracted claim worth knowing, because older documents still carry it: that build outputs
 "are NOT deterministic across builds (the toolchain embeds a build timestamp), even from
@@ -106,7 +131,8 @@ One place to read with care: `docs/BUILD_PROVENANCE.md`'s own "Working backward"
 says the root cause is **not** established and quotes the 1,454,891-byte measurement. That was
 true when it was written (corrected 2026-09-24) and is now behind `docs/REPRODUCIBILITY.md`,
 which is the canonical record by its own statement. Where the two disagree, the canonical record
-wins - and this page follows it.
+wins - and this page follows it. (Both tracked documents are being corrected at the source;
+until that lands, this paragraph is the warning.)
 
 Related tracked docs: `docs/BUILD_PROVENANCE.md`, `docs/REPRODUCIBILITY.md`,
 `docs/NEBULAOS_RELEASE_ARTIFACT_PROVENANCE.md`.
