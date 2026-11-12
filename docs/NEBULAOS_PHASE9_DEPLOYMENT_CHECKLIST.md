@@ -49,6 +49,9 @@ completed cleanly on retry. Result:
   is real, but "from embedded build timestamps" was a guess and is measured to
   be insufficient - 1,454,891 bytes differ beyond the uImage header. Cause not
   established. See `docs/REPRODUCIBILITY.md`.)
+  (UPDATE 2026-11-12: the causes have since been measured and fixed; a rebuild
+  of the same commit now reproduces both artifacts byte for byte. See
+  `docs/REPRODUCIBILITY.md`.)
 - `scripts/build/package-deployment.sh`: package produced at
   `build-work/deploy-packages/z-compensate-guppyscreen-20260807T224746Z/`
   (local to the throwaway clone - not committed; canonical per

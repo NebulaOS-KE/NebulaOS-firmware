@@ -126,10 +126,10 @@ Buildroot's own overlay dir). No manual step, no real device required.
 `05-final-build.sh` already copies these into `artifacts/buildroot-halley5-v30-image/` for you -
 confirmed against a real fresh-clone build 2026-08-14; this section previously said `uImage`, which
 does not match this project's actual output filename)
-(sha256 sums won't match exactly build-to-build for the image artifacts - `xImage` and
-`rootfs.squashfs` are not byte-reproducible - but the same real code should be present; that's
-what `06-verify.sh` checks for. Corrected 2026-09-24: "timestamps and build-path strings end up
-embedded in a few places" was a plausible guess presented as the explanation, and it is not
-established. What IS measured: the uImage header embeds wall-clock build time, and 1,454,891 of
-~5.5MB still differ beyond that header. Note this does NOT apply to `guppyscreen`, which is now
-reproducible for a fixed pin. See `docs/REPRODUCIBILITY.md`.)
+(Rebuilding the same commit with the same build-container digest reproduces `xImage` and
+`rootfs.squashfs` byte for byte - measured for release 1.0.2. A different commit gives different
+hashes, because `SOURCE_DATE_EPOCH` is the commit's committer date; that the same real code is
+present is what `06-verify.sh` checks. `rootfs.ext2` is not reproducible and is not shipped.
+Corrected 2026-11-12: this note used to say the image artifacts are not byte-reproducible, with
+a cause "not established" - true before the causes were measured and fixed. See
+`docs/REPRODUCIBILITY.md`.)

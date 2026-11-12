@@ -10,19 +10,39 @@ was wrong.
 ```
 GUPPYSCREEN_REPRODUCIBLE_FOR_A_FIXED_PIN    YES (measured, three builds)
 FULL_GUPPYSCREEN_BYTE_REPRODUCIBILITY       NOT ESTABLISHED
-IMAGE_REPRODUCIBLE (xImage, rootfs.squashfs) NOT YET PROVEN at the fixed HEAD
+IMAGE_REPRODUCIBLE (xImage, rootfs.squashfs) YES for one commit + one build-container digest
+                                            (measured: release 1.0.2, two builds on one host)
+IMAGE_REPRODUCIBLE across hosts             NOT ESTABLISHED (never measured)
 IMAGE_NON_DETERMINISM_ROOT_CAUSE            ESTABLISHED (measured, 15 causes)
 ```
 
 The earlier value of `IMAGE_NON_DETERMINISM_ROOT_CAUSE` was `NOT ESTABLISHED`,
-and section 3 below said so at length. That is no longer true: every cause has
-been read out of the differing bytes and fixed. `IMAGE_REPRODUCIBLE` is
-deliberately **not** upgraded here - the causes being found and fixed is not
-the same claim as two clean builds of the final HEAD matching. That proof is
-recorded in the build-evidence tree kept OUTSIDE this repository (it records
-absolute build paths and artifact hashes, which are properties of a machine and
-a run, not of the source), so it is deliberately not linked from here - a path
-this repository cannot resolve from a fresh clone would be worse than none.
+and section 3 below said so at length; it is kept as the record of the
+measurement before the fix. Every cause has since been read out of the
+differing bytes and fixed (section 3b).
+
+`IMAGE_REPRODUCIBLE` is measured, not inferred from the causes being fixed.
+Release 1.0.2 (firmware `3bdf3ff`) was built twice, as Build A and Build B
+(`tools/run-nebulaos-build.sh`, one fresh workspace per run, the same
+build-container digest `sha256:a6ba57c6…`), on 2026-11-09. Both produced the
+same bytes:
+
+```
+xImage           14a47aa8c0e1b3da0aa148278e6e164a6bf571ad189d4f6ec0b3757616e8f160
+rootfs.squashfs  df65c72487389f84017b67b1d6320e9e5728d0b7fe3ab7e22c2e01707b510966
+```
+
+`scripts/package/check-packaging-reproducibility.sh` is the release check
+that compares two such builds (`docs/RELEASE_ARTIFACTS.md`, "Reproducibility").
+
+What this does **not** establish: that a build on a different host, or with a
+different build-container digest, gives the same bytes. Both builds ran on one
+machine; nothing in this repository records a release built on two. And a
+different commit gives different bytes by design: `SOURCE_DATE_EPOCH` is the
+commit's committer date (section 4).
+
+`rootfs.ext2` is still not reproducible (the two 1.0.2 builds differ). It is
+not a delivery artifact: no release format contains it.
 
 ## 1. The retracted claim
 
@@ -80,9 +100,14 @@ embedded build paths and the parallel-object behaviour of `build-mips.sh`
 remain untested for byte-stability. `scripts/build/05-final-build.sh` says so
 deliberately and should not be "upgraded" to a stronger claim without evidence.
 
-## 3. The image — not reproducible, and the cause is NOT established
+## 3. The image before the fix (historical: superseded by 3b)
 
-`xImage` and `rootfs.squashfs` differ between builds whose `kernel.config`,
+This section records the measurement as it stood on 2026-09-24, before any of
+the causes in 3b were fixed. It is kept because the distinction it draws -
+hypotheses are not results - is the point of this file. It no longer describes
+the current build.
+
+`xImage` and `rootfs.squashfs` differed between builds whose `kernel.config`,
 `buildroot.config` and `halley5_v30.dts` are byte-identical, from the same
 container digest, with no input change that reaches the image.
 
@@ -175,7 +200,12 @@ flags cannot reach.
    is mode 0600, which git cannot express through the overlay.
 4. `build_date` and the preflight's `checked_at` derive from the epoch. The
    preflight still uses the wall clock at boot, because it runs there too.
-5. `kernel-gzip-determinism-variant.sh` adds `-n` to the zboot rule.
+5. The kernel itself carries `-n` in the zboot rule: NebulaOS-kernel commit
+   `b31be02d9` ("mips: zboot: gzip -n for a deterministic payload header"),
+   contained in `KERNEL_PIN`. `scripts/build/01-apply-kernel-patches.sh`
+   refuses to build unless the line `gzip -nv9f $(obj)/vmlinux.bin` is
+   present. (An earlier revision of this list named a
+   `kernel-gzip-determinism-variant.sh`; no such script exists.)
 6. `make_seed_archive()` sorts members, fixes owner/mtime, drops the reflog and
    rebuilds `.git/index` from HEAD with zeroed stat data.
 
@@ -260,15 +290,17 @@ on 2026-08-14.
 
 ## 4. Consequence for release qualification
 
-A metadata-only commit followed by a rebuild still yields different flashable
-artifacts. Therefore:
+A rebuild of the **same** commit, with the same build-container digest,
+reproduces `xImage` and `rootfs.squashfs` byte for byte (measured above). A
+**different** commit does not, even a metadata-only one: `SOURCE_DATE_EPOCH`
+is that commit's committer date, and it reaches the image (for example the
+version manifest's `build_date` and the squashfs timestamps). Therefore:
 
 ```
-FINAL_ARTIFACT_EQUALS_HW_QUALIFIED_CANDIDATE = NO   (structurally)
+REBUILD_OF_THE_SAME_COMMIT_EQUALS_THE_QUALIFIED_ARTIFACT  YES  (same container digest)
+ANY_OTHER_COMMIT_EQUALS_THE_QUALIFIED_ARTIFACT            NO   (structurally)
 ```
 
-Hardware evidence cannot be carried across a rebuild on the strength of
-artifact identity, and baseline promotion is not a no-op for the image. The
-conservative route — flash the exact artifact that will ship, and qualify that
-— is the only available one until image reproducibility is solved. That is its
-own scoped piece of work, not something to fold into a release closure.
+Hardware evidence can be carried to a rebuild of the exact qualified commit by
+comparing hashes, and to nothing else. Baseline promotion that adds a commit is
+not a no-op for the image: flash and qualify the artifact that will ship.

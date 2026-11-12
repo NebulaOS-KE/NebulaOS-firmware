@@ -110,6 +110,9 @@ this nondeterminism.
 >   1,454,891 of ~5.5 MB still differ, so the compressed payload is itself
 >   non-deterministic. That is a real open defect with its own scope, recorded
 >   in `docs/REPRODUCIBILITY.md`.
+>   (Update 2026-11-12: since measured and fixed - a rebuild of the same commit
+>   now reproduces `xImage` and `rootfs.squashfs` byte for byte. See
+>   `docs/REPRODUCIBILITY.md`.)
 >
 > - **The reasoning pattern is the thing to avoid**, not just the fact. The
 >   original text attributed an observation to a guessed cause ("most likely an
