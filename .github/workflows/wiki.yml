@@ -1,0 +1,23 @@
+# Publishes this repository's wiki/ folder to its GitHub Wiki whenever wiki/
+# changes on the default branch. The wiki is generated from wiki/ - edit the
+# files here, not the Wiki pages on GitHub (those are overwritten).
+name: Publish wiki
+on:
+  push:
+    branches: [main]
+    paths: ['wiki/**']
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: wiki
+      - name: Sync wiki/ to the GitHub Wiki
+        uses: Andrew-Chen-Wang/github-wiki-action@v4
+        with:
+          path: wiki/
+          token: ${{ secrets.GITHUB_TOKEN }}
