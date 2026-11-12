@@ -126,8 +126,9 @@ which.
 <run> --build-run-b <run>`, and `docs/RELEASE_ARTIFACTS.md` holds each format to its own explicit
 standard - see the next section, because the `.img` cannot meet the byte standard at all.
 
-**There is also a workflow that does the whole thing on GitHub**, and it is worth knowing about
-even though the published 1.0.2 was not built by it: `.github/workflows/release.yml` in the
+**There is also a workflow that does the whole thing on GitHub**, and `docs/REPRODUCIBILITY.md`
+names it too since `1260b70` - it is worth knowing about even though the published 1.0.2 was not
+built by it: `.github/workflows/release.yml` in the
 [NebulaOS repository](https://github.com/NebulaOS-KE/NebulaOS) (added 2026-10-29) takes one
 commit of this repository and runs a matrix of two independent builds, then
 `scripts/release/compare-builds.sh a b` as a job the packaging job depends on. That script is
