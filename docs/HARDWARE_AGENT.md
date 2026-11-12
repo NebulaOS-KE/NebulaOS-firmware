@@ -337,10 +337,18 @@ collection, not a status report.
 ## The MCU cost, stated up front
 
 Booting Creality's slot lets its updater reflash the GD32 with stock firmware,
-destroying the qualified MCU build. That is why Phase 1.8B removed every
-*automatic* route into stock. This install goes there deliberately, because
+replacing the native MCU build. That is why Phase 1.8B removed every *automatic*
+route into stock. This install goes there deliberately, because
 `flash-spare-slot.sh` refuses to write the slot it is booted from — a rule
 written after a real incident where a write landed on the live rootfs.
+
+Note that the reflash is no longer permanent: coming back to NebulaOS,
+`S50nebulaos-mcu-guard` classifies the running MCU application and
+`mcu_restore.py` reinstalls the native firmware automatically when it finds a
+known stock version (one bounded attempt, pinned SHA256, hardware allow-list).
+Firmware classified `UNKNOWN_APPLICATION` is never auto-flashed. So the decision
+to remove automatic routes into stock stands, but "destroying the qualified MCU
+build" overstates the consequence for current code.
 
 NebulaOS's guard gets **one bounded restore attempt** on the way back.
 `PART1_INSTALL_VERIFIED=YES` requires that no restore was needed:
