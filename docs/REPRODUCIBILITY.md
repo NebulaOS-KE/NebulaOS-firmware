@@ -36,8 +36,12 @@ rootfs.squashfs  df65c72487389f84017b67b1d6320e9e5728d0b7fe3ab7e22c2e01707b51096
 that compares two such builds (`docs/RELEASE_ARTIFACTS.md`, "Reproducibility").
 
 What this does **not** establish: that a build on a different host, or with a
-different build-container digest, gives the same bytes. Both builds ran on one
-machine; nothing in this repository records a release built on two. And a
+different build-container digest, gives the same bytes. Both 1.0.2 builds ran on
+one machine (the published 1.0.2 `release-manifest.txt` names `BUILD_MODE=candidate`
+and carries exactly the two hashes above). The NebulaOS repository's
+`.github/workflows/release.yml` builds A and B as two separate GitHub runner jobs
+and runs `scripts/release/compare-builds.sh` before packaging; it has run once
+(2026-10-29) and did not build 1.0.2. And a
 different commit gives different bytes by design: `SOURCE_DATE_EPOCH` is the
 commit's committer date (section 4).
 
