@@ -127,56 +127,35 @@ where Moonraker looks and where updates happen, not to the emergency
 fallback, and a fallback missing every module the shipped `printer.cfg`
 references would be no fallback at all.
 
-### Identity in factory-fallback — decided: ACCEPTED
+### Factory-fallback starts Klipper (2026-11-13, issue #15)
 
-`nebulaos_compat.py` identifies the running Klipper with
-`git -C <checkout> rev-parse HEAD`. The immutable copy is not a git checkout
-and never will be — carrying Klipper's history in the squashfs is not worth
-it — so in `factory_fallback()` that check cannot pass, and Klippy refuses to
-start with that module's own precise message.
+**Superseded:** the 2026-08-17 (Phase K) decision "factory-fallback refuses to
+start". It rested on `nebulaos_compat.py` identifying Klipper by
+`git rev-parse HEAD`, which a tree without `.git` cannot answer. That check no
+longer exists: compatibility is verified by Klipper **symbol** (item 1 of the
+header in `extras/nebulaos_compat.py`), and the chelper verdict is baked into
+the immutable copy by `04-cross-compile-app-stack.sh`. Nothing identity-based
+stops the fallback copy any more.
 
-**Decision (2026-08-17, Phase K): accept it as shipped for hardware
-qualification.** The reasoning, from what `factory_fallback()` actually is
-rather than from the policy statement:
+The fallback copy is the image's own Klipper and extension set, staged by the
+same build that verified them together - a qualified pair, not an unverified
+one. Its only remaining blocker was accidental: 04 staged `extras/*.py`
+instead of the manifest's module list, so `extras/motor_database.cfg` (the
+first non-`.py` module, TMC autotune, 2026-10-10) was missing and
+`nebulaos_compat` refused the tree ("declares 1 module(s) with no source file
+present"). A field printer that fell back after a failed Klipper update
+stayed halted until its owner removed the lock by hand (issue #15).
 
-- It is not a recovery path the device takes on its own. Every call site
-  (`stack_roll_back()` and the three per-component equivalents) is reached
-  only after an update has *already* failed validation **and** one of: no
-  known-good pair exists yet, the known-good pair could not be restored and
-  recomposed, or the restored known-good pair *also* failed validation. The
-  persistent stack is unusable by the time this runs.
-- It is terminal by construction. It holds `$LOCKDIR/klipper-stack.lock`, and
-  `poll_klipper_stack_once()` returns immediately for as long as that lock
-  and the `factory-fallback` state coexist. A human has to clear it. The
-  printer is not autonomously recovered in either design.
-- So what is actually lost is narrow: the case where both persistent
-  checkouts are unusable but the squashfs copy would have printed — which
-  requires the failure to be localised to `/usr/data` (corruption, a torn
-  extraction, a bad object store) rather than to the config or the hardware.
-- In exchange, the operator gets a named, specific stop instead of a start.
-  The alternative is worse than it sounds: the pre-Phase-1 behaviour was to
-  start an emergency Klipper whose extension pairing nothing had verified,
-  and then drive a load-cell probe into a bed with it. "Stopped, and said
-  exactly which checkout it could not identify" is the safer half of that
-  trade on a machine that can push a nozzle into glass.
-- It cannot cause motion. It prevents motion. It is not a new hardware risk,
-  and it does not gate hardware qualification.
+Now:
 
-**Follow-up (not a blocker, not done here):** the clean fix is already
-modelled by something that exists. The build bakes
-`.nebulaos-chelper-verdict.json` into `/opt/klipper` precisely because that
-tree is read-only at boot; an identity file baked the same way, named by a
-new manifest key alongside `chelper.platform_result_file`, would let
-`check_klipper_commit()` fall back to a platform-signed answer when the tree
-has no `.git`. That restores the pre-Phase-1 capability without weakening any
-check. It costs one manifest key and a small change in both repositories, and
-it should be done deliberately rather than folded into a qualification night.
-
-**For tomorrow's hardware test:** the deliberate bad-update rollback case is
-expected to end in `rolled-back` with the known-good pair re-validated, not
-in factory-fallback. If it *does* reach factory-fallback, Klippy refusing to
-start is the expected, documented behaviour described here — not a new fault
-to debug at the printer.
+- 04 stages exactly the manifest's module list (all roles, as S05 composes the
+  persistent checkout) and fails the build if a declared file is missing.
+- 06-verify reads the manifest from the image and fails (REQUIRED) unless every
+  declared module is present in `/opt/klipper/klippy/extras/`.
+- Factory-fallback is still terminal: `klipper-stack.lock` stays and the
+  supervisor does not re-attempt the persistent pair until a human clears it.
+  The difference is that the printer runs on the image's own qualified pair
+  meanwhile instead of halting.
 
 ## The persistent "58bd67d-dirty" symptom (RC2 overnight closure, 2026-09-06)
 

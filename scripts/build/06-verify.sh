@@ -2150,6 +2150,27 @@ else
 	MISS_REQUIRED=$((MISS_REQUIRED + 1))
 fi
 
+# Issue #15 (2026-11-13): the immutable /opt/klipper copy (factory fallback)
+# must hold every module its own manifest declares, or nebulaos_compat
+# refuses it at startup and a fallback printer stays halted. Read from the
+# image itself: the manifest 04 staged next to klippy/, the files in extras/.
+_fb_manifest=$(debugfs -R "cat /opt/klipper/klippy/nebulaos-extensions.json" ${IMAGES}/rootfs.ext2 2>/dev/null)
+_fb_modules=$(printf '%s\n' "$_fb_manifest" | sed -n '/"modules"[[:space:]]*:[[:space:]]*\[/,/^[[:space:]]*\]/p' \
+	| grep -o '"path"[[:space:]]*:[[:space:]]*"[^"]*"' | sed -E 's/.*:[[:space:]]*"([^"]*)"/\1/')
+_fb_missing=""
+_fb_count=0
+for _fb_p in $_fb_modules; do
+	_fb_count=$((_fb_count + 1))
+	debugfs -R "stat /opt/klipper/klippy/extras/${_fb_p##*/}" ${IMAGES}/rootfs.ext2 2>&1 | grep -q "Inode:" \
+		|| _fb_missing="$_fb_missing ${_fb_p##*/}"
+done
+if [ "$_fb_count" -gt 0 ] && [ -z "$_fb_missing" ]; then
+	echo "OK   factory-fallback /opt/klipper: all $_fb_count manifest module(s) present"
+else
+	echo "MISS factory-fallback /opt/klipper: ${_fb_count} manifest module(s), missing:${_fb_missing:- (no manifest in the image)}   <== REQUIRED"
+	MISS_REQUIRED=$((MISS_REQUIRED + 1))
+fi
+
 if [ "$MISS_REQUIRED" -gt 0 ]; then
 	echo "== verification FAILED - $MISS_REQUIRED REQUIRED path(s) missing from the image (see the '<== REQUIRED' lines above). Other MISS lines are reporting only. =="
 	exit 1

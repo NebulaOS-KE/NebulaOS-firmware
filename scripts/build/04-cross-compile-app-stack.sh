@@ -212,21 +212,40 @@ rm -f "$OVERLAY/opt/klipper/klippy/chelper"/*.o "$OVERLAY/opt/klipper/klippy/che
 # and pretending it did would mean shipping an emergency copy that is
 # missing every module the shipped printer.cfg references.
 #
-# Known, deliberate limitation, stated here rather than discovered later:
-# extras/nebulaos_compat.py identifies the running Klipper with
-# `git -C <checkout> rev-parse HEAD`, which cannot answer for a tree with no
-# .git. So in factory-fallback Klippy will refuse to start with that
-# module's own precise message rather than run unverified. That is the
-# behaviour the compatibility contract asks for ("did not start, and said
-# exactly why" over "started, but the probe is subtly wrong"), and
-# factory-fallback is already a terminal state that holds an update lock
-# until a human clears it - but it IS a change from the pre-Phase-1 fork
-# build, where the fallback copy would have started. Flagged for an explicit
-# owner decision; see docs/NEBULAOS_KLIPPER_COMPOSITION.md.
+# The set is the manifest's module list - the same list S05 composes into
+# the persistent checkout - not a glob. Issue #15 (2026-11-13): this used to
+# be `cp extras/*.py`, which silently left out extras/motor_database.cfg (the
+# first non-.py module, TMC autotune, 2026-10-10). nebulaos_compat then
+# refused the fallback copy at startup ("declares 1 module(s) with no source
+# file present ... extras/motor_database.cfg"), so a printer that fell back
+# stayed halted. nebulaos_compat no longer needs a git checkout to identify
+# Klipper (it reads the baked chelper verdict and the manifest), so the
+# fallback copy starts when every module is present - 06-verify checks that
+# against the image's own manifest.
 EXT_SRC="$VENDOR/nebulaos-klipper-extensions"
 if [ -d "$EXT_SRC/extras" ]; then
 	echo "== staging NebulaOS Klipper extension modules into the immutable /opt/klipper copy =="
-	cp "$EXT_SRC"/extras/*.py "$OVERLAY/opt/klipper/klippy/extras/"
+	. "$SCRIPT_DIR/overlay/etc/nebulaos-klipper-compose.sh"
+	_ext_srcdir=$(compose_cfg "$EXT_SRC" source_dir); [ -n "$_ext_srcdir" ] || _ext_srcdir=extras
+	_ext_modules=$(compose_module_paths "$EXT_SRC")
+	if [ -z "$_ext_modules" ]; then
+		echo "FATAL: $EXT_SRC/nebulaos-extensions.json declares no modules" >&2
+		exit 1
+	fi
+	_ext_count=0
+	for _ext_p in $_ext_modules; do
+		_ext_b=$(compose_safe_basename "$_ext_p" "$_ext_srcdir") || {
+			echo "FATAL: unsafe module path '$_ext_p' in the extensions manifest" >&2
+			exit 1
+		}
+		if [ ! -f "$EXT_SRC/$_ext_p" ]; then
+			echo "FATAL: the extensions manifest declares $_ext_p, but $EXT_SRC has no such file" >&2
+			exit 1
+		fi
+		cp "$EXT_SRC/$_ext_p" "$OVERLAY/opt/klipper/klippy/extras/$_ext_b"
+		_ext_count=$((_ext_count + 1))
+	done
+	echo "   $_ext_count module(s) from the manifest, including non-.py files"
 	# nebulaos_compat.py derives its repository root as
 	# dirname(dirname(realpath(__file__))). Through a composed symlink that
 	# resolves to the extensions repo root; for these flattened real files it
