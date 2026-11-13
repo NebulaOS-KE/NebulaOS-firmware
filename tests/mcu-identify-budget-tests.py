@@ -144,6 +144,17 @@ class RealReactorLateSessionTests(unittest.TestCase):
     plus a successful second one)."""
     CONNECT_S = 7.0
 
+    @classmethod
+    def setUpClass(cls):
+        # Klipper compiles klippy/chelper (c_helper.so) with the host gcc on
+        # first use. Do that here, outside the timed calls below: on a fresh
+        # CI runner the compile used to fall inside the "bounded" measurement
+        # of whichever test ran first (12 s against the 10 s bound, while the
+        # timed part itself takes ~5 s).
+        sys.path.insert(0, KLIPPY_DIR)
+        import chelper
+        chelper.get_ffi()
+
     def setUp(self):
         sys.path.insert(0, KLIPPY_DIR)
         import serialhdl
