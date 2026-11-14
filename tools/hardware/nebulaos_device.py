@@ -606,8 +606,11 @@ class SshDeviceSession(DeviceSession):
             opts = opts + ["-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=3"]
         argv = ["ssh"] + opts + ["%s@%s" % (self.username, self.address), script]
         try:
+            # The printer's logs are not guaranteed UTF-8 (a pstore heartbeat
+            # cut mid-character, binary in a process name): never let one byte
+            # lose the whole capture.
             proc = subprocess.run(argv, capture_output=True, text=True,
-                                  timeout=timeout, env=env)
+                                  errors="replace", timeout=timeout, env=env)
         except subprocess.TimeoutExpired as exc:
             partial = exc.stdout or ""
             if isinstance(partial, bytes):
