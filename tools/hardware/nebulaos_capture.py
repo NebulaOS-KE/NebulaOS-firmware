@@ -1571,7 +1571,7 @@ CAPTURE_PROFILES["freeze-context"] = (
     "echo \"== system.log before the last FREEZE/CRASH boot (line ${b:-none})\"; "
     "[ -n \"$b\" ] && head -n $b $S | grep -n 'syslogd started\\|Linux version' | tail -n 3; "
     "[ -n \"$b\" ] && sed -n \"$((b>400 ? b-400 : 1)),${b}p\" $S | grep -v dropbear | grep -viE 'psk|passw' | grep -vE 'kernel: \\[ +[0-9]\\.' | tail -n 90 | cut -c1-300; "
-    "echo '== klippy.log (this boot): start, PLR, prints'; grep -nE 'Start printer at|power_loss|PLR|Starting SD card print|resume|RESUME' $L/klippy.log | head -n 30 | cut -c1-300",
+    "echo '== klippy events after the freeze (dated log + klippy.log): starts, PLR, prints'; for f in $K $L/klippy.log; do echo \"-- $f\"; grep -nE '^(nebulaos_power_loss_recovery|Start printer|Starting SD|Exiting SD|Finished SD|Transition to|Lost communication|Exiting)' $f | tail -n 40 | cut -c1-300; done",
     False, None, 120)
 
 CAPTURE_PROFILES["cam-state"] = (
