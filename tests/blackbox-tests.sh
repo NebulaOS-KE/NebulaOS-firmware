@@ -60,7 +60,8 @@ setup() {
 }
 collect() {
 	NEBULAOS_PSTORE_ERASE=1 NEBULAOS_PSTORE_DIR="$WORK/ps" NEBULAOS_WDT_PARAMS="$WORK/wdt" NEBULAOS_ROOT="$WORK/root" \
-		NEBULAOS_BLACKBOX_RUN_DIR="$WORK/run" NEBULAOS_PROC="$WORK/proc" sh "$BB" collect >/dev/null 2>&1
+		NEBULAOS_BLACKBOX_RUN_DIR="$WORK/run" NEBULAOS_PROC="$WORK/proc" \
+		NEBULAOS_FLIGHTREC_PREV="$WORK/proc/nebulaos_flightrec_prev" sh "$BB" collect >/dev/null 2>&1
 }
 L="$WORK/root/logs"
 N="$WORK/root/system/notices/printer-restarted.txt"
@@ -80,6 +81,28 @@ grep -q '^hb 2026-11-06T13:46:40Z' "$L/previous-boot-heartbeat.log" 2>/dev/null 
 [ -s "$N" ] && grep -q 'Report a problem' "$N" && pass "freeze: notice for the screen" || fail "freeze: no notice"
 [ -e "$WORK/ps/console-ramoops-0" ] && pass "freeze: the console record is not erased (that would wipe this boot's log)" || fail "freeze: console record erased"
 [ ! -e "$WORK/ps/pmsg-ramoops-0" ] && pass "freeze: the old heartbeat log is erased after reading" || fail "freeze: pmsg not erased"
+
+# Kernel flight recorder (2026-11-14): kept with a FREEZE, also when pstore
+# is empty of a dump; ignored when the kernel had no recording; not kept
+# after a clean restart.
+setup 2
+cp "$C.freeze" "$WORK/ps/console-ramoops-0"
+printf 'previous boot: ncpu=2 entries/cpu=8192 symbols=this kernel\ncpu0 1 dt=0.000 IRQ>  35 0x80001234 0x80005678\n' > "$WORK/proc/nebulaos_flightrec_prev"
+collect
+ls "$L/crash" | grep -q -- '-FREEZE-flightrec.txt$' && pass "freeze: flight recorder kept in logs/crash" || fail "flightrec not kept: $(ls "$L/crash" 2>&1)"
+grep -q 'IRQ>  35' "$L/crash/"*-FREEZE-flightrec.txt 2>/dev/null && pass "freeze: flight recorder content intact" || fail "flightrec content"
+setup 2
+rm -rf "$L/crash"
+cp "$C.freeze" "$WORK/ps/console-ramoops-0"
+printf 'previous boot: no valid recording\n' > "$WORK/proc/nebulaos_flightrec_prev"
+collect
+! ls "$L/crash" 2>/dev/null | grep -q -- 'flightrec' && pass "freeze: an empty flight recorder is not kept" || fail "empty flightrec kept"
+setup 2
+rm -rf "$L/crash"
+cp "$C.restart" "$WORK/ps/console-ramoops-0"
+printf 'previous boot: ncpu=2 entries/cpu=8192 symbols=this kernel\n' > "$WORK/proc/nebulaos_flightrec_prev"
+collect
+! ls "$L/crash" 2>/dev/null | grep -q -- 'flightrec' && pass "restart: the flight recorder is not kept" || fail "restart kept flightrec"
 
 setup 2
 rm -f "$N"

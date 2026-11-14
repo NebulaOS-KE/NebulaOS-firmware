@@ -13,7 +13,7 @@
 9690c4b144d80abb028a8f4e45db8fbf6527590c23a54a23aee714d8a81a13e5  host  tools/attest/nebulaos-attest.py
 90d32f860de4c3fe3b08c2aaa7c5a633340f041cf236b0b28625bd19d0aee461  host  tools/emmc/nebulaos_layout.py
 c86ad71f1e541e7db93a1b8565a0f55be1bac921fba79eafe5b1ce4611176663  host  tools/hardware/nebulaos_agent.py
-482dc69722203a91895868620f35a9dd448c525dffdf9433a0ed9333a900251d  host  tools/hardware/nebulaos_capture.py
+06748345bbba93bf54f28c160c5c92476c5025d81ddc0757002441cf99bf1c38  host  tools/hardware/nebulaos_capture.py
 6c22308c8d8e04d1b4cafdfb4a35085be137eff980f92a4f34aa72f820d22dcc  host  tools/hardware/nebulaos_control.py
 2bca0ff5f6bf60992d5bb8eb867a4d15374d9b4ac088b3a7e8812b47d646c749  host  tools/hardware/nebulaos_device.py
 aef1b5fc8cf52522b29a583c6453a75b15d54e5381e2e402c9cc9e4ccee9e273  host  tools/hardware/nebulaos_evidence.py
@@ -48,6 +48,7 @@ a9b1e4742cda36859a1996b058732e9c731df131bb7b0b3b70f4c42bf913cd54  host  tools/hw
 212dd94f65cdccb32a6674d856449e118d5b46ea99eda51b860e016cb3df06dd  host  tools/hwcap/lv_s2.sh
 0dfd4e7cd2f0956e2a89537ed514e6b59f88031d1879de03f8afa877c2e4f258  host  tools/hwcap/pf_cam.sh
 48f2a363df24f27b763eec08221941891433549d8c9c5eb20a6f3cd1efcf9b3d  host  tools/hwcap/ptyrtt.py
+563355514aea1770d46fcf721c62693270d4ac81bd5bd1aafe17563d3d077ee8  host  tools/hwcap/provoke.sh
 ea54969056611f4e23e39af9a28a83bea0d17897827a847212e1aa736ab4c05a  host  tools/hwcap/qualmcu.py
 c0665faba25581dd313227e138deb1ef58cdfeea6a5cc27075cbb1ff1fa40213  host  tools/hwcap/schedsnap.py
 f12f407a2344985d76d9f15103de530fe1fc75c6181ceb0abf487b1eb10de1e7  host  tools/hwcap/timerlat.py

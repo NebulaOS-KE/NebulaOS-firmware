@@ -29,7 +29,8 @@ HWCAP_DIR = os.path.join(FW_ROOT, "tools", "hwcap")
 
 PROBES = ("schedsnap.py", "timerlat.py", "ptyrtt.py", "kduty.py", "adxl_overflows.py", "qualmcu.py",
           "lv_m1.py", "lv_s1.sh", "lv_s2.sh", "lv_g5.sh", "lv_cam.sh", "lv_g6.sh", "lv_g7.sh", "lv_g8.sh", "lv_g9.sh", "lv_g10.sh", "lv_ng1.py", "pf_cam.sh", "fb_ng3.sh", "fb_cam10.sh",
-          "gs_services.sh", "gs_display.sh", "gs_sleep.sh", "gs_bootmode.sh", "gs_wifi.sh")
+          "gs_services.sh", "gs_display.sh", "gs_sleep.sh", "gs_bootmode.sh", "gs_wifi.sh",
+          "provoke.sh")
 # Pinned data files embedded compressed (dropbear refuses a command longer than
 # MAX_CMD_LEN = 9000 bytes, so a whole profile must stay under SCRIPT_LIMIT).
 DATA_FILES = ("klipper-dict-board.json",)
@@ -1446,6 +1447,19 @@ EXERCISE_PROFILES["freeze-soak"] = (
     "[ -x /etc/init.d/S50webcam ] && { pidof ustreamer >/dev/null || /etc/init.d/S50webcam start >/dev/null 2>&1; }",
     _SOAK_SECONDS + 300)
 
+# 2026-11-14: freeze provocation on an idle printer (tools/hwcap/provoke.sh):
+# CPU spin + timer churn on both CPUs, eMMC write/sync/read, four Wi-Fi ping
+# floods, camera stream with restarts, accelerometer stream over the pad's SPI
+# bus and read-only DUMP_TMC queries over the mainboard link. No motion, no
+# heater. A freeze shows as a lost connection; the evidence is then in
+# logs/crash (black box + flight recorder) after the reset.
+_PROVOKE_UNDO = ("pkill -f provoke.sh 2>/dev/null; sleep 2; rm -f /usr/data/.nebulaos-provoke; "
+                 "[ -x /etc/init.d/S50webcam ] && { pidof ustreamer >/dev/null || /etc/init.d/S50webcam start >/dev/null 2>&1; }")
+EXERCISE_PROFILES["freeze-provoke"] = (
+    _IDLE_GUARD + "T=$T sh $T/provoke.sh 36000 all", _PROVOKE_UNDO, 36000 + 300)
+EXERCISE_PROFILES["freeze-provoke-short"] = (
+    _IDLE_GUARD + "T=$T sh $T/provoke.sh 180 all", _PROVOKE_UNDO, 180 + 300)
+
 EXERCISE_PROFILES.update({
     # uart1 framing errors at boot (open observation): which open produces
     # them. The MCU sends a stats message every 5 s with or without a host, so
@@ -1949,7 +1963,8 @@ EXERCISE_PROBES = {"ktimers-ab": ("timerlat.py",), "ttyflip-ab": ("ptyrtt.py",),
                    "gs-display-sleep": ("gs_sleep.sh",),
                    "gs-boot-mode-blank": ("gs_bootmode.sh",),
                    "gs-boot-mode-console": ("gs_bootmode.sh",),
-                   "gs-boot-mode-logo": ("gs_bootmode.sh",)}
+                   "gs-boot-mode-logo": ("gs_bootmode.sh",),
+                   "freeze-provoke": ("provoke.sh",), "freeze-provoke-short": ("provoke.sh",)}
 
 
 def exercise_script(name):

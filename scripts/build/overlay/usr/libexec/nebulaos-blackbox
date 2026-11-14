@@ -65,6 +65,9 @@ RUN_DIR="${NEBULAOS_BLACKBOX_RUN_DIR:-/run/nebulaos}"
 STATE="$RUN_DIR/last-reset"
 PMSG="${NEBULAOS_PMSG:-/dev/pmsg0}"
 PROC="${NEBULAOS_PROC:-/proc}"
+# Kernel flight recorder (kernel CONFIG_NEBULAOS_FLIGHTREC, 2026-11-14): the
+# previous boot's last kernel events per CPU, kept across a watchdog reset.
+FLIGHTREC="${NEBULAOS_FLIGHTREC_PREV:-/proc/nebulaos_flightrec_prev}"
 KEEP_CRASHES=5
 KEEP_HISTORY=100
 INTERVAL="${NEBULAOS_HEARTBEAT_INTERVAL:-10}"
@@ -176,6 +179,12 @@ collect() {
 				for f in "$PSTORE_DIR"/*; do
 					[ -f "$f" ] && cp "$f" "$CRASH_DIR/$stamp-$why-${f##*/}.txt" 2>/dev/null
 				done
+				keep_newest "$CRASH_DIR" "$KEEP_CRASHES"
+			fi
+			# What each CPU did last: kept even when pstore is empty.
+			if [ -r "$FLIGHTREC" ] && ! head -n 1 "$FLIGHTREC" 2>/dev/null | grep -q 'no valid recording'; then
+				mkdir -p "$CRASH_DIR"
+				cp "$FLIGHTREC" "$CRASH_DIR/$stamp-$why-flightrec.txt" 2>/dev/null
 				keep_newest "$CRASH_DIR" "$KEEP_CRASHES"
 			fi ;;
 	esac
