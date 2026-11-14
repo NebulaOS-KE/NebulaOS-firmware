@@ -542,6 +542,18 @@ CAPTURE_PROFILES = {
         "echo '== feeder'; ps -o pid,args | grep '[w]atchdog'; echo \"last-reset=$(cat /run/nebulaos/last-reset 2>&1)\"; "
         "N=/usr/data/nebulaos/logs; tail -n 3 $N/reset-history.log 2>&1",
         False, None, 60),
+    # 2026-11-14: stock-vs-NebulaOS comparison. CPM_EXCLK_DS (0x100000E0)
+    # bit 31/30 = I/O voltage mode of the PE00-05 (SD) / PA (DVP) pad banks
+    # (0 = 3.0 V, 1 = 1.8 V; reset value 0x00000002). Stock 4.4 sets PE to
+    # 1.8 V (gpe_msc_voltage); PE01-03 carry the Wi-Fi/BT wake lines.
+    # CPM is always clocked: a read-only devmem of it is safe.
+    "soc-pad-voltage": ("echo '== now'; date; uptime; uname -v; "
+        "echo \"CPM_EXCLK_DS=$(devmem 0x100000E0 32 2>&1)\"; "
+        "echo '== device tree'; P=$(ls -d /proc/device-tree/*/pinctrl@* 2>/dev/null | head -n 1); echo \"node=$P\"; "
+        "for k in ingenic,gpa_voltage ingenic,gpe_msc_voltage; do echo \"$k=$(od -An -tx1 $P/$k 2>&1 | tr -s ' ')\"; done; "
+        "echo '== GPE pins'; grep -E 'gpio-1(2[89]|3[0-3]) ' /sys/kernel/debug/gpio 2>&1; "
+        "grep -E '^pin 1(2[89]|3[0-3]) ' /sys/kernel/debug/pinctrl/*/pinmux-pins 2>&1",
+        False, None, 60),
     # 2026-11-08: the newest FREEZE/CRASH evidence in full (the 'blackbox'
     # profile shows heads and tails only), the previous boot's system.log
     # and the log files kept from it. Read-only.
