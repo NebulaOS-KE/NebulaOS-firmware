@@ -1557,6 +1557,23 @@ CAPTURE_PROFILES["boot-forensics"] = (
     "echo '== memguard'; tail -n 25 /usr/data/nebulaos/logs/memguard.log 2>/dev/null",
     False, None, 120)
 
+# 2026-11-14: what the printer was doing when the last FREEZE/CRASH hit. The
+# newest dated klippy/moonraker logs (Klipper rotates at midnight, so the
+# freeze night is not in klippy.log) and system.log up to the boot after it.
+CAPTURE_PROFILES["freeze-context"] = (
+    "L=/opt/printer_data/logs; echo '== reset-history (last 5)'; tail -n 5 /usr/data/nebulaos/logs/reset-history.log 2>&1; "
+    "K=$(ls $L/klippy.log.20* 2>/dev/null | tail -n 1); echo \"== $K\"; ls -la $K; "
+    "echo '-- print starts/ends, shutdowns, errors'; grep -nE 'Starting SD card print|Exiting SD card|Finished SD card|Transition to shutdown|Lost communication|Timer too close|Traceback|MCU .* shutdown|Start printer at|nebulaos_power_loss|PLR' $K | tail -n 40 | cut -c1-300; "
+    "echo '-- last 80 non-Stats lines'; grep -v '^Stats ' $K | tail -n 80 | cut -c1-300; "
+    "echo '-- last 12 Stats lines'; grep '^Stats ' $K | tail -n 12 | cut -c1-700; "
+    "M=$(ls $L/moonraker.log.20* 2>/dev/null | tail -n 1); echo \"== $M (last 60)\"; tail -n 60 $M | cut -c1-300; "
+    "S=$L/system.log; b=$(grep -n 'boot after FREEZE\\|boot after CRASH' $S | tail -n 1 | cut -d: -f1); "
+    "echo \"== system.log before the last FREEZE/CRASH boot (line ${b:-none})\"; "
+    "[ -n \"$b\" ] && head -n $b $S | grep -n 'syslogd started\\|Linux version' | tail -n 3; "
+    "[ -n \"$b\" ] && sed -n \"$((b>400 ? b-400 : 1)),${b}p\" $S | grep -v dropbear | grep -viE 'psk|passw' | grep -vE 'kernel: \\[ +[0-9]\\.' | tail -n 90 | cut -c1-300; "
+    "echo '== klippy.log (this boot): start, PLR, prints'; grep -nE 'Start printer at|power_loss|PLR|Starting SD card print|resume|RESUME' $L/klippy.log | head -n 30 | cut -c1-300",
+    False, None, 120)
+
 CAPTURE_PROFILES["cam-state"] = (
     "echo \"marker=$(cat /usr/data/nebulaos/maintenance/camera-idle-mode 2>/dev/null || echo absent) "
     "state_file=$(cat /var/run/nebulaos-camera-idle-state 2>/dev/null || echo absent)\"; "
