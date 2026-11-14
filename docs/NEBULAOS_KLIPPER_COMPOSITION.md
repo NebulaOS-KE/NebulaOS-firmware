@@ -152,6 +152,15 @@ Now:
   persistent checkout) and fails the build if a declared file is missing.
 - 06-verify reads the manifest from the image and fails (REQUIRED) unless every
   declared module is present in `/opt/klipper/klippy/extras/`.
+- The copy's manifest has `composition.require_symlink_resolving_inside_source`
+  set to `false` by 04 (and 06-verify requires it). The fallback holds real files,
+  and with the flag left `true` `nebulaos_compat`'s composition check refused every
+  one of them as "SHADOWED" - the second half of the same halt, found by the
+  1.0.3 release verification (2026-11-14). `nebulaos_compat`'s docstring names
+  this tree as the case for the flag; the persistent checkouts keep the
+  extensions repository's own manifest and the check.
+- `tests/factory-fallback-compat-tests.py` runs 04's staging block against the
+  pinned extensions and `nebulaos_compat.run_preflight` against the result.
 - Factory-fallback is still terminal: `klipper-stack.lock` stays and the
   supervisor does not re-attempt the persistent pair until a human clears it.
   The difference is that the printer runs on the image's own qualified pair

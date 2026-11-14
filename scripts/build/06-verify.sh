@@ -2164,6 +2164,11 @@ for _fb_p in $_fb_modules; do
 	debugfs -R "stat /opt/klipper/klippy/extras/${_fb_p##*/}" ${IMAGES}/rootfs.ext2 2>&1 | grep -q "Inode:" \
 		|| _fb_missing="$_fb_missing ${_fb_p##*/}"
 done
+# ... and its manifest must switch off the symlink-only composition check, or
+# nebulaos_compat refuses the real files as "SHADOWED" (issue #15 follow-up).
+if ! printf '%s\n' "$_fb_manifest" | grep -Eq '"require_symlink_resolving_inside_source"[[:space:]]*:[[:space:]]*false'; then
+	_fb_missing="$_fb_missing (manifest: require_symlink_resolving_inside_source is not false)"
+fi
 if [ "$_fb_count" -gt 0 ] && [ -z "$_fb_missing" ]; then
 	echo "OK   factory-fallback /opt/klipper: all $_fb_count manifest module(s) present"
 else

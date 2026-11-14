@@ -2489,9 +2489,22 @@ class SettingsSnapshotTests(unittest.TestCase):
         killed = os.path.join(self.pdata, ".nebulaos-snapshot-staging", "settings-x")
         for d in (old, killed):
             os.makedirs(d)
+        hour_ago = time.time() - self.s.STALE_STAGING_SECONDS - 60
+        os.utime(killed, (hour_ago, hour_ago))
         self.s.take("changed", db="none", now=1792100000)
         self.assertFalse(os.path.exists(old))
         self.assertFalse(os.path.exists(os.path.dirname(killed)))
+
+    def test_a_snapshot_running_at_the_same_time_keeps_its_staging(self):
+        # verifier 2026-11-14: housekeeping and a manual snapshot at once must
+        # not remove each other's staging folder
+        other = os.path.join(self.pdata, ".nebulaos-snapshot-staging", "settings-20261114-000000-manual")
+        os.makedirs(other)
+        with open(os.path.join(other, "printer.cfg"), "w") as h:
+            h.write("in progress\n")
+        out = self.s.take("changed", db="none", now=1792100000)
+        self.assertEqual(out["result"], "TAKEN")
+        self.assertTrue(os.path.isfile(os.path.join(other, "printer.cfg")))
 
     def test_api_backup_unreachable_is_recorded(self):
         out = self.s.take("manual", db="api", now=1792100000)

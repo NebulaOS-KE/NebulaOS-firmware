@@ -220,7 +220,8 @@ rm -f "$OVERLAY/opt/klipper/klippy/chelper"/*.o "$OVERLAY/opt/klipper/klippy/che
 # file present ... extras/motor_database.cfg"), so a printer that fell back
 # stayed halted. nebulaos_compat no longer needs a git checkout to identify
 # Klipper (it reads the baked chelper verdict and the manifest), so the
-# fallback copy starts when every module is present - 06-verify checks that
+# fallback copy starts when every module is present and the composition
+# check is off (below) - 06-verify checks both
 # against the image's own manifest.
 EXT_SRC="$VENDOR/nebulaos-klipper-extensions"
 if [ -d "$EXT_SRC/extras" ]; then
@@ -252,6 +253,21 @@ if [ -d "$EXT_SRC/extras" ]; then
 	# resolves to klippy/, so the manifest has to sit there for the immutable
 	# copy to be self-describing at all.
 	cp "$EXT_SRC/nebulaos-extensions.json" "$OVERLAY/opt/klipper/klippy/"
+	# The fallback tree holds the modules as real files, not symlinks into an
+	# extensions checkout, so nebulaos_compat's composition-integrity check
+	# (every module a symlink resolving into the repository) must be off for
+	# it - the manifest's own composition.require_symlink_resolving_inside_source,
+	# whose docstring in extras/nebulaos_compat.py names exactly this tree.
+	# Issue #15 follow-up (release verification, 2026-11-14): with the flag left
+	# true the fallback still refused to start ("... is a regular file ... the
+	# module is SHADOWED"). Only this copy changes; the persistent checkouts keep
+	# the extensions repository's own manifest and its check.
+	_ext_manifest="$OVERLAY/opt/klipper/klippy/nebulaos-extensions.json"
+	sed -i -E 's/("require_symlink_resolving_inside_source"[[:space:]]*:[[:space:]]*)true/\1false/' "$_ext_manifest"
+	if ! grep -Eq '"require_symlink_resolving_inside_source"[[:space:]]*:[[:space:]]*false' "$_ext_manifest"; then
+		echo "FATAL: could not set composition.require_symlink_resolving_inside_source to false in the fallback copy's manifest" >&2
+		exit 1
+	fi
 else
 	echo "FATAL: $EXT_SRC/extras not found - 00-fetch-vendor-sources.sh must fetch the extension repository before this stage" >&2
 	exit 1

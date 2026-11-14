@@ -32,6 +32,13 @@ jobs:
           git -C vendor/klipper fetch -q --depth 1 "$KLIPPER_REPO" "$KLIPPER_PIN"
           git -C vendor/klipper checkout -q FETCH_HEAD
           pip install -q --break-system-packages -r vendor/klipper/scripts/klippy-requirements.txt
+      - name: Pinned NebulaOS extensions (vendor/nebulaos-klipper-extensions, for the fallback test)
+        run: |
+          set -euo pipefail
+          . manifests/dependencies.conf
+          git init -q vendor/nebulaos-klipper-extensions
+          git -C vendor/nebulaos-klipper-extensions fetch -q --depth 1 "$KLIPPER_EXTENSIONS_REPO" "$KLIPPER_EXTENSIONS_PIN"
+          git -C vendor/nebulaos-klipper-extensions checkout -q FETCH_HEAD
       - name: Tests
         env:
           NEBULAOS_TEST_LOGS: ${{ runner.temp }}/test-logs

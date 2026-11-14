@@ -51,6 +51,7 @@ PREFIX = "settings-"
 KEEP = 5
 FILES = ("printer.cfg", "moonraker.conf", "songs.conf")
 REASONS = ("new-system", "changed", "manual")
+STALE_STAGING_SECONDS = 3600
 
 
 def _staging_dir():
@@ -161,9 +162,11 @@ def take(reason, db="api", if_changed=False, now=None):
     name = "%s%s-%s" % (PREFIX, stamp, reason)
     final = os.path.join(BACKUPS_DIR, name)
     os.makedirs(BACKUPS_DIR, exist_ok=True)
+    # One subfolder per snapshot name, so a second snapshot running at the
+    # same time (housekeeping and a manual one) never removes this one's.
     staging = _staging_dir()
-    shutil.rmtree(staging, ignore_errors=True)    # left by a run that was killed
     tmp = os.path.join(staging, name)
+    shutil.rmtree(tmp, ignore_errors=True)
     os.makedirs(tmp)
     copied = []
     try:
@@ -185,7 +188,11 @@ def take(reason, db="api", if_changed=False, now=None):
             handle.write("\n".join(lines) + "\n")
         os.rename(tmp, final)
     finally:
-        shutil.rmtree(staging, ignore_errors=True)
+        shutil.rmtree(tmp, ignore_errors=True)
+        try:
+            os.rmdir(staging)        # only when no other snapshot is staging
+        except OSError:
+            pass
     pruned = prune()
     return {"result": "TAKEN", "name": name, "files": len(copied), "database": database,
             "pruned": pruned}
@@ -208,6 +215,19 @@ def prune(keep=KEEP):
         except OSError:
             pass
         gone.append(name)
+    # staging left by a run that was killed (an hour old: none is running)
+    staging = _staging_dir()
+    for stale in (os.listdir(staging) if os.path.isdir(staging) else []):
+        path = os.path.join(staging, stale)
+        try:
+            if time.time() - os.path.getmtime(path) > STALE_STAGING_SECONDS:
+                shutil.rmtree(path, ignore_errors=True)
+        except OSError:
+            pass
+    try:
+        os.rmdir(staging)
+    except OSError:
+        pass
     # leftovers of the staging inside config/backups before issue #11
     for stale in (os.listdir(BACKUPS_DIR) if os.path.isdir(BACKUPS_DIR) else []):
         if stale.startswith("." + PREFIX) and stale.endswith(".part"):
