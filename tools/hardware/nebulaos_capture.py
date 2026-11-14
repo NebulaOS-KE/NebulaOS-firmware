@@ -555,6 +555,19 @@ CAPTURE_PROFILES = {
         "echo '== GPE pins'; grep -E 'gpio-1(2[89]|3[0-3]) ' /sys/kernel/debug/gpio 2>&1; "
         "grep -E '^pin 1(2[89]|3[0-3]) ' /sys/kernel/debug/pinctrl/*/pinmux-pins 2>&1",
         False, None, 60),
+    # 2026-11-14: kernel flight recorder. Its boot line, the live ring and,
+    # if any, the newest copy kept in logs/crash after a FREEZE/CRASH: per CPU
+    # the last 100 events and the last device-register accesses. Read-only.
+    "flightrec": ("echo '== now'; date; uptime; uname -v; dmesg | grep -i flightrec | cut -c1-200; "
+        "ls -la /proc/nebulaos_flightrec /proc/nebulaos_flightrec_prev 2>&1; "
+        "N=/usr/data/nebulaos/logs/crash; ls -la $N 2>&1 | tail -n 8; "
+        "nfr(){ echo \"== $1\"; head -n 2 \"$1\"; grep '^== ' \"$1\"; "
+        "for c in 0 1; do echo \"-- cpu$c last 100 events\"; grep \"^cpu$c \" \"$1\" | grep -v ' MMIO ' | tail -n 100; done; "
+        "echo '-- device register accesses'; grep ' MMIO ' \"$1\"; }; "
+        "F=/tmp/nebulaos-fr.$$; cat /proc/nebulaos_flightrec > $F 2>&1; nfr $F; rm -f $F; "
+        "L=$(ls $N/*-flightrec.txt 2>/dev/null | tail -n 1); [ -n \"$L\" ] && nfr \"$L\"; "
+        "echo '== previous boot (kernel view)'; head -n 2 /proc/nebulaos_flightrec_prev 2>&1",
+        False, None, 90),
     # 2026-11-08: the newest FREEZE/CRASH evidence in full (the 'blackbox'
     # profile shows heads and tails only), the previous boot's system.log
     # and the log files kept from it. Read-only.
