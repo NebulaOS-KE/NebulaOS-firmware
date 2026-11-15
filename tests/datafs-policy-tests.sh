@@ -37,7 +37,11 @@ pass() { PASS=$((PASS + 1)); }
 grep -q 'ndf_precheck' "$S01" && grep -q 'ndf_mount' "$S01" && grep -q 'ndf_record' "$S01" && pass || fail "S01 start does not use the boot policy"
 sed -n '/^case "\$1" in/,/^esac/p' "$S01" | grep -q 'ndf_shutdown' && pass || fail "S01 stop does not run the clean shutdown"
 grep -q 'mount -t ext4 /dev/mmcblk0p10 /usr/data' "$S01" && pass || fail "S01 lost its library-less fallback mount"
-grep -v '^[[:space:]]*#' "$LIB" | grep -qE 'mkfs|has_journal,|\^has_journal' && fail "policy uses mkfs or removes a journal" || pass
+grep -v '^[[:space:]]*#' "$LIB" | grep -qE '\^has_journal' && fail "policy removes a journal" || pass
+# 1.0.4: the filesystem is created in exactly one place (ndf_create), reached only through ndf_is_blank
+[ "$(grep -v '^[[:space:]]*#' "$LIB" | grep -c 'NDF_MKE2FS" -F')" -eq 1 ] && pass || fail "mke2fs must be called exactly once (ndf_create)"
+grep -v '^[[:space:]]*#' "$LIB" | grep -qE '(^|[^_])mkfs\.|mkfs\.ext' && fail "policy calls mkfs.* directly" || pass
+grep -q 'ndf_is_blank; then' "$LIB" && [ "$(grep -c 'ndf_create;' "$LIB")" -eq 1 ] && pass || fail "ndf_create not gated by ndf_is_blank"
 [ "$(grep -v '^[[:space:]]*#' "$LIB" | grep -c -- 'E2FSCK" -fy')" -eq 1 ] && pass || fail "the full repair -fy must appear exactly once (ndf_run_check repair)"
 grep -q '< /dev/null$' "$ROOT/scripts/build/overlay/etc/init.d/rcS" && grep -q '"\$i" start < /dev/null' "$ROOT/scripts/build/overlay/etc/init.d/rcS" && pass || fail "rcS does not give boot scripts stdin from /dev/null"
 grep -qx 'BR2_PACKAGE_E2FSPROGS=y' "$ROOT/br2-external/configs/nebulaos_x2000_defconfig" && pass || fail "defconfig does not ship e2fsprogs"
@@ -181,6 +185,54 @@ if command -v mkfs.ext4 >/dev/null && command -v debugfs >/dev/null && command -
 	grep -q '^DATAFS_MOUNT=rw$' "$W/state" && grep -q '^DATAFS_PREEN_RC=4$' "$W/state" && pass || fail "auto-repair state: $(cat "$W/state")"
 	"$E2" -fn "$I" > /dev/null 2>&1 && pass || fail "image still inconsistent after the full repair"
 	files_ok "$I" && pass || fail "full repair lost the surviving file"
+
+	# 1.0.4: a BLANK partition (.ingenic install erased it) gets a filesystem;
+	# anything not provably blank is never formatted.
+	MK=$(command -v mke2fs)
+	blank_case() { # name fillbyte -> prints the policy result
+		_i="$W/$1.img"
+		head -c 16777216 /dev/zero | tr '\000' "$2" > "$_i"
+		echo "$_i"
+	}
+	for fill in '\000' '\377'; do
+		I=$(blank_case "blank" "$fill"); : > "$W/calls"
+		r=$(policy "$I" NDF_E2FSCK="$B/rec-e2fsck" NDF_DUMPE2FS="$D2" NDF_TUNE2FS="$T2" NDF_MKE2FS="$MK" NDF_JOURNAL_MB=1)
+		[ "$r" = "CREATED rw 8" ] && pass || fail "blank ($fill) partition: got '$r' ($(cat "$W/log"))"
+		grep -q '^DATAFS_RESULT=CREATED$' "$W/state" && grep -q '^DATAFS_MOUNT=rw$' "$W/state" && grep -q '^DATAFS_JOURNAL=present$' "$W/state" && pass || fail "blank ($fill): state $(cat "$W/state")"
+		[ "$(dumpe2fs -h "$I" 2>/dev/null | sed -n 's/^Filesystem state:[[:space:]]*//p')" = clean ] && pass || fail "blank ($fill): created filesystem not clean"
+		f=$(dumpe2fs -h "$I" 2>/dev/null | sed -n 's/^Filesystem features:[[:space:]]*//p')
+		[ "$f" = "has_journal ext_attr resize_inode dir_index filetype sparse_super large_file" ] && pass || fail "blank ($fill): features '$f' are not the stock set + journal"
+		"$E2" -fn "$I" > /dev/null 2>&1 && pass || fail "blank ($fill): created filesystem inconsistent"
+		grep -q 'is BLANK' "$W/log" && grep -q 'created a new ext4' "$W/log" && pass || fail "blank ($fill): creation not logged"
+	done
+	# blank but no mke2fs -> stays read-only, nothing written
+	I=$(blank_case "blank-nomk" '\000'); cp "$I" "$W/blank-nomk.before"
+	r=$(policy "$I" NDF_E2FSCK="$B/rec-e2fsck" NDF_DUMPE2FS="$D2" NDF_MKE2FS=/nonexistent)
+	case "$r" in "CHECK_FAILED ro "*|"UNREPAIRED ro "*) pass ;; *) fail "blank without mke2fs: got '$r'" ;; esac
+	cmp -s "$I" "$W/blank-nomk.before" && pass || fail "blank without mke2fs: image changed"
+	# one non-erased byte in the first MiB -> not blank, never formatted
+	I=$(blank_case "almost" '\000'); printf '\001' | dd of="$I" bs=1 seek=524288 conv=notrunc 2>/dev/null; cp "$I" "$W/almost.before"
+	r=$(policy "$I" NDF_E2FSCK="$B/rec-e2fsck" NDF_DUMPE2FS="$D2" NDF_MKE2FS="$MK" NDF_JOURNAL_MB=1)
+	case "$r" in "CHECK_FAILED ro "*|"UNREPAIRED ro "*) pass ;; *) fail "almost-blank partition: got '$r'" ;; esac
+	cmp -s "$I" "$W/almost.before" && pass || fail "almost-blank partition was written"
+	# random content (not a filesystem, not erased) -> never formatted
+	I="$W/random.img"; head -c 16777216 /dev/urandom > "$I"; cp "$I" "$W/random.before"
+	r=$(policy "$I" NDF_E2FSCK="$B/rec-e2fsck" NDF_DUMPE2FS="$D2" NDF_MKE2FS="$MK" NDF_JOURNAL_MB=1)
+	case "$r" in "CREATED"*) fail "random-content partition was formatted" ;; *) pass ;; esac
+	cmp -s "$I" "$W/random.before" && pass || fail "random-content partition was written"
+	# a real filesystem whose first MiB was destroyed: e2fsck uses a backup
+	# superblock; never formatted, the data survives
+	I=$(img firstmib); head -c 1048576 /dev/zero | dd of="$I" bs=1048576 conv=notrunc 2>/dev/null
+	r=$(policy "$I" NDF_E2FSCK="$B/rec-e2fsck" NDF_DUMPE2FS="$D2" NDF_MKE2FS="$MK" NDF_JOURNAL_MB=1)
+	case "$r" in "CREATED"*) fail "filesystem with a destroyed first MiB was formatted: '$r'" ;; *) pass ;; esac
+	# the check must not be skipped: a blank partition is tested only after e2fsck failed
+	I=$(blank_case "order" '\000'); : > "$W/calls"
+	r=$(policy "$I" NDF_E2FSCK="$B/rec-e2fsck" NDF_DUMPE2FS="$D2" NDF_MKE2FS="$MK" NDF_JOURNAL_MB=1)
+	grep -q "e2fsck -p $I" "$W/calls" && grep -q "e2fsck -fy $I" "$W/calls" && pass || fail "blank partition created without the check running first"
+	# a timeout never leads to creation
+	I=$(blank_case "tmo" '\000'); cp "$I" "$W/tmo.before"
+	r=$(policy "$I" NDF_E2FSCK="$B/slow-e2fsck" NDF_DUMPE2FS="$D2" NDF_MKE2FS="$MK" NDF_CHECK_TIMEOUT=1)
+	[ "$r" = "TIMEOUT ro 124" ] && cmp -s "$I" "$W/tmo.before" && pass || fail "blank + checker timeout: got '$r'"
 else
 	echo "NOTE: host e2fsprogs missing - disposable image tests skipped"
 fi

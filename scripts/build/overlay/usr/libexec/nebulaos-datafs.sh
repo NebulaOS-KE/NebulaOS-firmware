@@ -17,7 +17,25 @@
 #           exit has 8|16|32|128   -> mount READ-ONLY                  CHECK_FAILED
 #       still running at the bound -> stopped, mount READ-ONLY         TIMEOUT
 #   e2fsck/dumpe2fs missing        -> mount rw as before               TOOL_MISSING
-# Never mkfs.
+#   read-only result AND the partition is provably BLANK (below)
+#                                  -> create ext4, mount rw            CREATED
+# mkfs only in that one case (ndf_create), never on anything else.
+#
+# 1.0.4 (2026-11-15): a BLANK data partition. Every .ingenic (USB recovery)
+# install erases the whole eMMC except sn_mac, /usr/data included, and writes
+# no filesystem there. Creality's first boot creates one; NebulaOS used to
+# "never mkfs", so a NebulaOS .ingenic install booted with no /usr/data at all
+# and the screen never came up (issue #8: a retail pad "hangs on the boot
+# logo"; early alpha users "had to boot stock first"). The check policy above
+# still runs first: e2fsck finds a damaged filesystem through its backup
+# superblocks and repairs it. Only when that ends READ-ONLY is the partition
+# tested for blank: no ext2/3/4 magic AND its first NDF_BLANK_BYTES (1 MiB:
+# boot block, superblock, group descriptors, bitmaps, inode table start) all
+# one byte value, 0x00 or 0xFF - what an erased eMMC reads as. A filesystem
+# whose first MiB was destroyed but whose backup superblocks e2fsck could use
+# never reaches this; anything not provably blank keeps the read-only mount.
+# The new filesystem has the stock /usr/data feature set (ext2-era features
+# that Creality's 4.4 kernel slot mounts) plus the G75 journal.
 #
 # G75 (Run 12, 2026-10-18): a journal on /usr/data. Pulling the power is how
 # this printer is switched off; without a journal that can leave the
@@ -65,6 +83,12 @@ NDF_E2FSCK="${NDF_E2FSCK:-$(PATH=$NDF_PATH command -v e2fsck 2>/dev/null)}"
 NDF_DUMPE2FS="${NDF_DUMPE2FS:-$(PATH=$NDF_PATH command -v dumpe2fs 2>/dev/null)}"
 NDF_TUNE2FS="${NDF_TUNE2FS:-$(PATH=$NDF_PATH command -v tune2fs 2>/dev/null)}"
 NDF_JOURNAL_MB="${NDF_JOURNAL_MB:-16}"
+NDF_MKE2FS="${NDF_MKE2FS:-$(PATH=$NDF_PATH command -v mke2fs 2>/dev/null)}"
+NDF_BLANK_BYTES="${NDF_BLANK_BYTES:-1048576}"
+# Stock /usr/data features (dumpe2fs of a Creality-initialised partition)
+# plus the journal. Explicit, so a newer mke2fs default (metadata_csum,
+# orphan_file, ...) can never produce a filesystem the stock slot refuses.
+NDF_MKFS_FEATURES="${NDF_MKFS_FEATURES:-none,has_journal,ext_attr,resize_inode,dir_index,filetype,sparse_super,large_file}"
 NDF_MOUNT="${NDF_MOUNT:-mount}"
 NDF_UMOUNT="${NDF_UMOUNT:-umount}"
 NDF_FUSER="${NDF_FUSER:-fuser}"
@@ -146,8 +170,26 @@ ndf_run_check() {
 	NDF_RC=$?
 }
 
+# 0 = the partition is provably blank: its first NDF_BLANK_BYTES are all
+# 0x00 or all 0xFF (an erased eMMC), so there is no ext2/3/4 magic either.
+ndf_is_blank() {
+	_len=$(head -c "$NDF_BLANK_BYTES" "$NDF_DEV" 2>/dev/null | wc -c)
+	[ "$_len" -eq "$NDF_BLANK_BYTES" ] 2>/dev/null || return 1
+	[ "$(head -c "$NDF_BLANK_BYTES" "$NDF_DEV" 2>/dev/null | tr -d '\000' | wc -c)" -eq 0 ] && return 0
+	[ "$(head -c "$NDF_BLANK_BYTES" "$NDF_DEV" 2>/dev/null | tr -d '\377' | wc -c)" -eq 0 ] && return 0
+	return 1
+}
+
+# Creates the filesystem on a blank partition. 0 = created and it checks clean.
+ndf_create() {
+	[ -n "$NDF_MKE2FS" ] && [ -x "$NDF_MKE2FS" ] || { ndf_log "blank $NDF_DEV but mke2fs is missing - cannot create the data filesystem"; return 1; }
+	"$NDF_MKE2FS" -F -q -t ext4 -O "$NDF_MKFS_FEATURES" -J size="$NDF_JOURNAL_MB" "$NDF_DEV" > "${NDF_CHECK_OUT:-/run/nebulaos/data-fs.e2fsck.log}.mkfs" 2>&1 < /dev/null \
+		&& [ "$(ndf_fs_state)" = clean ]
+}
+
 # Decides how to mount. Sets NDF_RESULT and NDF_MOUNT_OPTS (rw|ro) and writes
-# $NDF_STATE. Never modifies the filesystem except through e2fsck.
+# $NDF_STATE. Never modifies the filesystem except through e2fsck - or, on a
+# provably blank partition only, ndf_create.
 ndf_precheck() {
 	NDF_RC=
 	NDF_PREEN_RC=
@@ -179,6 +221,15 @@ ndf_precheck() {
 				NDF_RESULT=REPAIRED NDF_MOUNT_OPTS=rw
 			else
 				NDF_RESULT=CHECKED_OK NDF_MOUNT_OPTS=rw
+			fi
+			if [ "$NDF_MOUNT_OPTS" = ro ] && [ "$NDF_RESULT" != TIMEOUT ] && ndf_is_blank; then
+				ndf_log "$NDF_DEV is BLANK (no filesystem, first $NDF_BLANK_BYTES bytes erased - a USB recovery install) - creating the data filesystem"
+				if ndf_create; then
+					NDF_RESULT=CREATED NDF_MOUNT_OPTS=rw
+					ndf_log "created a new ext4 data filesystem on $NDF_DEV"
+				else
+					ndf_log "could not create a filesystem on blank $NDF_DEV - mounting READ-ONLY"
+				fi
 			fi
 		fi
 	fi
