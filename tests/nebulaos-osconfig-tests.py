@@ -3060,6 +3060,7 @@ class ImageTests(unittest.TestCase):
         write_exe(os.path.join(self.e.bin, "swap"), 'echo "swap $1" >> "%s"\n' % self.calls)
         write_exe(os.path.join(self.e.bin, "reboot"), 'echo reboot >> "%s"\n' % self.calls)
         os.environ.update({"FAKE_7Z_PASSWORD": self.i.ENVELOPE_PASSWORD})
+        self.i._ENVELOPE_CACHE.clear()
         m = self.i
         m.SEVENZA, m.UPLOAD_DIR, m.DEV_DIR, m.SYS_BLOCK = self.fake, self.upload, self.dev, self.sys
         m.PROC_MOUNTS, m.SLOT_SWAP, m.REBOOT = self.mounts, os.path.join(self.e.bin, "swap"), os.path.join(self.e.bin, "reboot")
@@ -3227,6 +3228,28 @@ class ImageTests(unittest.TestCase):
         for bad in ("../x.img", "upload/../../etc/passwd", "usb/x", "", None):
             with self.assertRaises(self.e.common.OsConfigError):
                 self.i.resolve(bad)
+
+    def test_retail_nebula_envelope_checks_and_installs(self):
+        # 1.0.4: the same payloads in the retail Nebula Pad's envelope (board
+        # NEBULA) - NebulaOS on either pad must open and install it.
+        neb = dict(self.i.ENVELOPE_PASSWORDS)["NEBULA"]
+        self.assertEqual(neb, "$1$cxswfile$XG7ANbYX3bq2H2xmmwrka.")
+        os.environ["FAKE_7Z_PASSWORD"] = neb
+        archive, kernel, rootfs = self.package()
+        self.assertEqual(self.i.envelope_password(archive), neb)
+        c = self.i.check("upload/nebula.img")
+        self.assertEqual((c["result"], c["version"], c["system"]), ("OK", "9.9", "nebulaos"))
+        self.i.run_job("upload/nebula.img", self.i.sha256_file(archive))
+        self.assertEqual(json.load(open(self.i.JOB_STATE))["state"], "restarting")
+        self.assertEqual(open(os.path.join(self.dev, "mmcblk0p5"), "rb").read(len(kernel)), kernel)
+        self.assertEqual(open(os.path.join(self.dev, "mmcblk0p7"), "rb").read(len(rootfs)), rootfs)
+
+    def test_unknown_envelope_refused(self):
+        os.environ["FAKE_7Z_PASSWORD"] = "$1$cxswfile$r0Sze9JiJi/gMJjYmSBkx."   # N001: neither board
+        archive, _, _ = self.package()
+        self.assertIsNone(self.i.envelope_password(archive))
+        with self.assertRaises(self.e.common.OsConfigError):
+            self.i.check("upload/nebula.img")
 
     def test_install_writes_inactive_slot_and_arms_trial(self):
         archive, kernel, rootfs = self.package()

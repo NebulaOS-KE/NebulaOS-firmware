@@ -143,6 +143,56 @@ else
       "$(vimg "$IMG" 2>&1 | grep '^FAIL' | head -3 | tr '\n' ' ')"
 fi
 
+# 1.0.4: the retail Nebula Pad (board NEBULA) - same payloads, its own envelope.
+NEB_SECRET='$1$cxswfile$XG7ANbYX3bq2H2xmmwrka.'
+NIMG="$WORK/NebulaOS-test-NEBULA_ota_img_V9.9.9.1.img"
+if python3 "$PKG/build-img.py" --board NEBULA --ximage "$XIMAGE" --rootfs "$ROOTFS" --manifest "$MANIFEST" \
+     --out "$NIMG" --rtos "$RTOS" --source-head "$HEAD_SHA" --source-date-epoch 1790442459 \
+     --ota-version 9.9.9.1 >/dev/null 2>&1 \
+   && python3 "$PKG/validate-img.py" --board NEBULA --img "$NIMG" --ximage "$XIMAGE" --rootfs "$ROOTFS" \
+     --rtos "$RTOS" >/dev/null 2>&1; then
+  ok "NEBULA .img packages and validates (reassemble-and-compare gate)"
+else
+  bad "NEBULA .img packages and validates" \
+      "$(python3 "$PKG/validate-img.py" --board NEBULA --img "$NIMG" --ximage "$XIMAGE" --rootfs "$ROOTFS" --rtos "$RTOS" 2>&1 | grep '^FAIL' | head -3 | tr '\n' ' ')"
+fi
+if 7z t -p"$NEB_SECRET" "$NIMG" >/dev/null 2>&1 && ! 7z t -p"$SECRET" "$NIMG" >/dev/null 2>&1 \
+   && ! 7z t -p"$NEB_SECRET" "$IMG" >/dev/null 2>&1; then
+  ok "NEBULA .img opens only with the NEBULA secret, F005 .img only with the F005 one"
+else
+  bad "NEBULA .img opens only with the NEBULA secret, F005 .img only with the F005 one"
+fi
+NX="$WORK/neb-x"; FX="$WORK/f005-x"; mkdir -p "$NX" "$FX"
+7z x -y -p"$NEB_SECRET" -o"$NX" "$NIMG" >/dev/null 2>&1; 7z x -y -p"$SECRET" -o"$FX" "$IMG" >/dev/null 2>&1
+if grep -qx 'board=NEBULA' "$NX"/*/ota_config.in && grep -qx 'board=F005' "$FX"/*/ota_config.in \
+   && grep -qx 'IMG_BOARD=NEBULA' "$NIMG.manifest.txt" && grep -qx 'IMG_BOARD=F005' "$IMG.manifest.txt"; then
+  ok "ota_config.in and the manifest name each envelope's board"
+else
+  bad "ota_config.in and the manifest name each envelope's board"
+fi
+if diff -r "$NX"/*/ota_v9.9.9.1 "$FX"/*/ota_v9.9.9.1 >/dev/null 2>&1; then
+  ok "NEBULA and F005 packages carry byte-identical payload directories (one build, two envelopes)"
+else
+  bad "NEBULA and F005 packages carry byte-identical payload directories" \
+      "$(diff -rq "$NX"/*/ota_v9.9.9.1 "$FX"/*/ota_v9.9.9.1 2>&1 | head -3 | tr '\n' ' ')"
+fi
+if ! python3 "$PKG/validate-img.py" --board F005 --img "$NIMG" --ximage "$XIMAGE" --rootfs "$ROOTFS" \
+     --rtos "$RTOS" >/dev/null 2>&1; then
+  ok "validating a NEBULA package as F005 fails"
+else
+  bad "validating a NEBULA package as F005 fails"
+fi
+out=$(python3 -c "
+import importlib.util
+spec = importlib.util.spec_from_file_location('m', '$PKG/build-img.py')
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+print(m.derive_archive_secret('NEBULA'))" 2>&1)
+if [ "$out" = "$NEB_SECRET" ]; then
+  ok "the NEBULA envelope secret derives to the known-good value"
+else
+  bad "the NEBULA envelope secret derives to the known-good value" "got $out"
+fi
+
 # REGRESSION: the vendor ota_update.in lists THREE payloads (FIRMWARE.md, from
 # extracting Creality's real V1.1.0.12 package). An earlier version emitted two
 # and its validator asserted "exactly the two expected images" - builder and

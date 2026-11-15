@@ -55,6 +55,15 @@ SEVENZA = os.environ.get("NEBULAOS_7ZA", "/usr/bin/7za")
 # The published F005 envelope password (mkpasswd -m md5 "F005C3_7e_bz" -S
 # cxswfile, see scripts/package/build-img.py): a format detail, not a secret.
 ENVELOPE_PASSWORD = "$1$cxswfile$ZFd0RWFYkJQugbtKVGL9y0"
+# 1.0.4 (issue #8): the separately sold ("retail") Nebula Pad is the same
+# hardware with board name NEBULA, and every release also ships the same
+# payloads in a NEBULA envelope ("NEBULA"C3_7e_bz). NebulaOS installs either,
+# on either pad. Tried in this order; the first that opens the archive wins.
+ENVELOPE_PASSWORDS = (
+    ("F005", ENVELOPE_PASSWORD),
+    ("NEBULA", "$1$cxswfile$XG7ANbYX3bq2H2xmmwrka."),
+)
+_ENVELOPE_CACHE = {}
 UPLOAD_DIR = os.environ.get("NEBULAOS_IMAGE_UPLOAD_DIR", "/opt/printer_data/config/uploads/system-image")  # G62/G63
 USB_DIR = os.environ.get("NEBULAOS_MCU_USB_DIR", "/opt/printer_data/gcodes/USB")
 # G79: ota.run_download writes the verified .img here (one at a time).
@@ -417,10 +426,39 @@ def sha256_file(path):
 
 # -- the package -------------------------------------------------------------------
 
-def _7za(args, timeout):
+def envelope_password(path):
+    """The envelope password (F005 or NEBULA) that opens this package, found by
+    listing it with each (header encryption: a wrong one cannot list). Cached
+    on path, size and mtime. None when neither opens it."""
+    try:
+        st = os.stat(path)
+        key = (path, st.st_size, int(st.st_mtime))
+    except OSError:
+        key = (path, -1, -1)
+    if key in _ENVELOPE_CACHE:
+        return _ENVELOPE_CACHE[key]
     if not os.access(SEVENZA, os.X_OK):
         raise OsConfigError("NO_7ZA", "7-Zip is not installed in this image")
-    return common.run([SEVENZA] + args + ["-p" + ENVELOPE_PASSWORD, "-y"], timeout)
+    found = None
+    for _board, password in ENVELOPE_PASSWORDS:
+        rc, _, _ = common.run([SEVENZA, "l", "-slt", path, "-p" + password, "-y"], 120)
+        if rc == 0:
+            found = password
+            break
+    if found is not None:
+        _ENVELOPE_CACHE[key] = found
+    return found
+
+
+def _7za(args, timeout):
+    """7za <cmd> [options] <archive> [members...] with the archive's own
+    envelope password (the first argument after the command that is not an
+    option is the archive)."""
+    if not os.access(SEVENZA, os.X_OK):
+        raise OsConfigError("NO_7ZA", "7-Zip is not installed in this image")
+    archive = next((a for a in args[1:] if not a.startswith("-")), None)
+    password = (envelope_password(archive) if archive else None) or ENVELOPE_PASSWORD
+    return common.run([SEVENZA] + args + ["-p" + password, "-y"], timeout)
 
 
 def list_members(path):
@@ -436,7 +474,8 @@ def _member_head(path, member, size=64):
     """The first bytes of one member, streamed (7za x -so) and cut off there."""
     if not os.access(SEVENZA, os.X_OK):
         raise OsConfigError("NO_7ZA", "7-Zip is not installed in this image")
-    proc = subprocess.Popen([SEVENZA, "x", "-so", path, member, "-p" + ENVELOPE_PASSWORD, "-y"],
+    password = envelope_password(path) or ENVELOPE_PASSWORD
+    proc = subprocess.Popen([SEVENZA, "x", "-so", path, member, "-p" + password, "-y"],
                             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                             stderr=subprocess.DEVNULL)
     try:

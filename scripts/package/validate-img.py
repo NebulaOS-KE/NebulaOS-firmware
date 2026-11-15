@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate a NebulaOS Creality F005 OTA .img by taking it apart again.
+"""Validate a NebulaOS Creality OTA .img (F005 or NEBULA envelope) by taking it apart again.
 
 A packaging command that exits 0 proves only that it did not crash. This opens
 the archive the way the stock updater would, walks the chunk chain exactly as
@@ -9,7 +9,8 @@ SHA-256 against the canonical core.
 
 Checks, in the order a failure is most informative:
 
-  1. the archive opens with the derived envelope secret
+  1. the archive opens with the derived envelope secret of --board, and
+     ota_config.in names that board
   2. the expected top-level directory, ota_config.in, ota_update.in and the
      .ok version marker are present
   3. ota_update.in declares the right sizes and full-image MD5s
@@ -111,8 +112,10 @@ def report():
 
 
 def main(argv):
-    parser = argparse.ArgumentParser(description="Validate a NebulaOS Creality F005 OTA .img")
+    parser = argparse.ArgumentParser(description="Validate a NebulaOS Creality OTA .img")
     parser.add_argument("--img", required=True)
+    parser.add_argument("--board", default="F005",
+                        help="the envelope's Creality board: F005 (KE pad, default) or NEBULA (retail pad)")
     parser.add_argument("--ximage", required=True, help="canonical xImage to compare against")
     parser.add_argument("--rootfs", required=True, help="canonical rootfs.squashfs to compare against")
     parser.add_argument("--rtos", help="stock zero.bin, if the package carries an rtos record")
@@ -136,13 +139,13 @@ def main(argv):
     if args.rtos:
         canonical["zero.bin"] = (sha256_file(args.rtos), os.path.getsize(args.rtos), args.rtos)
 
-    print("=== .img (Creality F005 OTA) validation: %s ===" % args.img)
+    print("=== .img (Creality %s OTA) validation: %s ===" % (args.board, args.img))
     for name, (sha, size, _) in canonical.items():
         print("CANONICAL_%s_SHA256=%s size=%d" % (name.upper().replace(".", "_"), sha, size))
     print()
 
-    secret = packer.derive_archive_secret()
-    ok("the OTA envelope secret derives to the expected MD5-crypt value")
+    secret = packer.derive_archive_secret(args.board)
+    ok("the %s OTA envelope secret derives to the expected MD5-crypt value" % args.board)
 
     work = tempfile.mkdtemp(prefix="nebulaos-img-validate.", dir=os.environ.get("TMPDIR") or None)
     try:
@@ -181,9 +184,17 @@ def main(argv):
         current_version = None
         if os.path.isfile(config_path):
             ok("ota_config.in is present")
+            config_board = None
             for line in open(config_path, encoding="utf-8"):
                 if line.startswith("current_version="):
                     current_version = line.split("=", 1)[1].strip()
+                if line.startswith("board="):
+                    config_board = line.split("=", 1)[1].strip()
+            if config_board == args.board:
+                ok("ota_config.in names board=%s, the envelope's board" % args.board)
+            else:
+                bad("ota_config.in names the envelope's board",
+                    "board=%s, envelope %s" % (config_board, args.board))
             if current_version:
                 ok("ota_config.in names current_version (%s)" % current_version)
             else:

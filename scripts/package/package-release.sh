@@ -17,6 +17,10 @@
 #     NebulaOS-Ender3V3KE-F005_ota_img_V9.<ver>.img  the same payloads, named for
 #                                        stock Creality's touchscreen USB updater
 #     (+ .sha256, .manifest.txt)
+#     NebulaOS-NebulaPad-NEBULA_ota_img_V9.<ver>.img  the same payloads in the
+#                                        envelope of the separately sold
+#                                        ("retail") Nebula Pad, board NEBULA
+#     (+ .sha256, .manifest.txt)
 #     NebulaOS-Ender3V3KE-<ver>.ingenic  Ingenic Cloner recovery package
 #     NebulaOS-Ender3V3KE-<ver>.ingenic.sha256
 #     NebulaOS-Ender3V3KE-<ver>.ingenic.manifest.txt
@@ -123,6 +127,16 @@ if printf '%s' "$OTA_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
   STOCK_BASE="NebulaOS-Ender3V3KE-F005_ota_img_V$STOCK_VERSION"
 fi
 STOCK_IMG=${STOCK_BASE:+$OUT/$STOCK_BASE.img}
+# 1.0.4 (2026-11-15, issue #8): the Nebula Pad sold separately is the same
+# hardware as the KE's built-in pad, but its stock software is board NEBULA,
+# not F005, and Creality's updater derives the package password from its own
+# board name - an F005 package cannot be opened there. So the release also
+# ships the SAME payloads in a NEBULA envelope (build-img.py --board NEBULA).
+RETAIL_BASE=""
+if [ -n "$STOCK_VERSION" ]; then
+  RETAIL_BASE="NebulaOS-NebulaPad-NEBULA_ota_img_V$STOCK_VERSION"
+fi
+RETAIL_IMG=${RETAIL_BASE:+$OUT/$RETAIL_BASE.img}
 ING="$OUT/$BASE.ingenic"
 
 printf 'PACKAGE_RELEASE=STARTING\nSOURCE_HEAD=%s\nBUILD_MODE=%s\nBUILD_RUN=%s\nOUT=%s\n\n' \
@@ -194,6 +208,23 @@ if [ -n "$STOCK_BASE" ]; then
   echo "  validation: $(grep '^IMG_VALIDATED=' "$OUT/$STOCK_BASE.img.validation.txt")"
 else
   echo "== no stock-touchscreen .img: '$OTA_VERSION' is not a plain x.y.z version =="
+fi
+
+# --- B3. the same payloads for the separately sold (retail) Nebula Pad -----
+echo
+if [ -n "$RETAIL_BASE" ]; then
+  echo "== .img for the retail Nebula Pad, board NEBULA ($RETAIL_BASE.img) =="
+  python3 "$SCRIPT_DIR/build-img.py" --board NEBULA \
+    --ximage "$XIMAGE" --rootfs "$ROOTFS" --manifest "$MANIFEST" --rtos "$RTOS" \
+    --out "$RETAIL_IMG" --source-head "$SOURCE_HEAD" \
+    --source-date-epoch "$SOURCE_DATE_EPOCH" --ota-version "$STOCK_VERSION" \
+    || die "retail Nebula Pad .img packaging failed"
+  python3 "$SCRIPT_DIR/validate-img.py" --board NEBULA --img "$RETAIL_IMG" --ximage "$XIMAGE" --rootfs "$ROOTFS" --rtos "$RTOS" \
+    > "$OUT/$RETAIL_BASE.img.validation.txt" 2>&1 \
+    || { tail -20 "$OUT/$RETAIL_BASE.img.validation.txt" >&2; die "retail Nebula Pad .img validation failed - see $OUT/$RETAIL_BASE.img.validation.txt"; }
+  echo "  validation: $(grep '^IMG_VALIDATED=' "$OUT/$RETAIL_BASE.img.validation.txt")"
+else
+  echo "== no retail Nebula Pad .img: '$OTA_VERSION' is not a plain x.y.z version =="
 fi
 
 # --- C. Ingenic Cloner .ingenic -------------------------------------------
@@ -275,6 +306,19 @@ PKG_COMMIT=$(git -C "$FW" rev-parse HEAD 2>/dev/null || echo unknown)
     echo "STOCK_IMG_ARTIFACT=none"
   fi
   echo
+  echo "# --- B3. the same payloads in the retail Nebula Pad's envelope (board NEBULA) ---"
+  if [ -n "$RETAIL_BASE" ]; then
+    echo "RETAIL_IMG_ARTIFACT=$RETAIL_BASE.img"
+    echo "RETAIL_IMG_BOARD=NEBULA"
+    echo "RETAIL_IMG_OTA_VERSION=$STOCK_VERSION"
+    echo "RETAIL_IMG_SHA256=$(sha256sum "$RETAIL_IMG" | cut -d' ' -f1)"
+    echo "RETAIL_IMG_SIZE=$(stat -c %s "$RETAIL_IMG")"
+    echo "RETAIL_IMG_VALIDATED=$(grep -m1 '^IMG_VALIDATED=' "$OUT/$RETAIL_BASE.img.validation.txt" | cut -d= -f2)"
+    echo "RETAIL_IMG_CONSUMER=stock software of the separately sold Nebula Pad (board NEBULA), USB updater"
+  else
+    echo "RETAIL_IMG_ARTIFACT=none"
+  fi
+  echo
   echo "# --- C. Ingenic Cloner recovery package ---"
   echo "INGENIC_ARTIFACT=$BASE.ingenic"
   echo "INGENIC_SHA256=$ING_SHA"
@@ -295,9 +339,9 @@ PKG_COMMIT=$(git -C "$FW" rev-parse HEAD 2>/dev/null || echo unknown)
 
 rm -f "$STOCK_RTOS" "$OUT/.zero2.bin"
 
-( cd "$OUT" && sha256sum "$BASE.img" ${STOCK_BASE:+"$STOCK_BASE.img"} "$BASE.ingenic" \
+( cd "$OUT" && sha256sum "$BASE.img" ${STOCK_BASE:+"$STOCK_BASE.img"} ${RETAIL_BASE:+"$RETAIL_BASE.img"} "$BASE.ingenic" \
     xImage rootfs.squashfs build-manifest.txt > SHA256SUMS ) || die "cannot write SHA256SUMS"
 
 echo
-printf 'PACKAGE_RELEASE=COMPLETE\nRELEASE_DIR=%s\nSOURCE_HEAD=%s\nXIMAGE_SHA256=%s\nROOTFS_SQUASHFS_SHA256=%s\nIMG_SHA256=%s\nINGENIC_SHA256=%s\nSTOCK_IMG=%s\nALL_FORMATS_SAME_CANONICAL_CORE=YES\n' \
-  "$OUT" "$SOURCE_HEAD" "$X_SHA" "$R_SHA" "$IMG_SHA" "$ING_SHA" "${STOCK_BASE:+$STOCK_BASE.img}"
+printf 'PACKAGE_RELEASE=COMPLETE\nRELEASE_DIR=%s\nSOURCE_HEAD=%s\nXIMAGE_SHA256=%s\nROOTFS_SQUASHFS_SHA256=%s\nIMG_SHA256=%s\nINGENIC_SHA256=%s\nSTOCK_IMG=%s\nRETAIL_IMG=%s\nALL_FORMATS_SAME_CANONICAL_CORE=YES\n' \
+  "$OUT" "$SOURCE_HEAD" "$X_SHA" "$R_SHA" "$IMG_SHA" "$ING_SHA" "${STOCK_BASE:+$STOCK_BASE.img}" "${RETAIL_BASE:+$RETAIL_BASE.img}"

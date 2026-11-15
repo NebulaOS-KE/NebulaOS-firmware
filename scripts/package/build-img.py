@@ -60,11 +60,21 @@ THE ARCHIVE PASSWORD
 
 Derived, not hardcoded:
 
-    mkpasswd -m md5 "F005C3_7e_bz" -S cxswfile
+    mkpasswd -m md5 "<BOARD>C3_7e_bz" -S cxswfile
 
 computed here through the same MD5-crypt algorithm and then asserted against the
 known-good result, so a wrong algorithm is caught at build time rather than by a
 printer refusing to open the package.
+
+ONE PAYLOAD, TWO ENVELOPES (1.0.4, 2026-11-15)
+
+Creality's updater derives the password from its OWN board name, so a package
+opens only on the pad it names. The KE's built-in pad is F005; the Nebula Pad
+sold separately ("retail", the same hardware with different software) is
+NEBULA - an F005 package cannot even be opened there (found by Hazok652, issue
+#8; his working NEBULA package was checked byte for byte on 2026-11-15). --board
+selects the envelope: password, ota_config.in board= and the file name the
+release gives it. The payloads are identical for both - one build, two wrappers.
 
 VERIFICATION IS A HARD GATE
 
@@ -99,16 +109,24 @@ CHUNK_BYTES = 1048576
 DICTIONARY = "16m"
 DICTIONARY_MAX_BYTES = 16 * 1024 * 1024
 BOARD_SHORT_NAME = "F005"
-SECRET_INPUT = "%sC3_7e_bz" % BOARD_SHORT_NAME
 SECRET_SALT = "cxswfile"
-EXPECTED_SECRET = "$1$cxswfile$ZFd0RWFYkJQugbtKVGL9y0"
+# Known-good envelope secrets per Creality board name (md5crypt of
+# "<board>C3_7e_bz", salt cxswfile). F005 = the KE's built-in pad; NEBULA =
+# the separately sold Nebula Pad (verified against a package that installs on
+# retail 1.1.0.26 and 1.1.0.30). image.py on the printer accepts both.
+BOARD_SECRETS = {
+    "F005": "$1$cxswfile$ZFd0RWFYkJQugbtKVGL9y0",
+    "NEBULA": "$1$cxswfile$XG7ANbYX3bq2H2xmmwrka.",
+}
+SECRET_INPUT = "%sC3_7e_bz" % BOARD_SHORT_NAME
+EXPECTED_SECRET = BOARD_SECRETS[BOARD_SHORT_NAME]
 
 
-def derive_archive_secret():
+def derive_archive_secret(board=BOARD_SHORT_NAME):
     """MD5-crypt of the board string under the vendor salt.
 
-    Equivalent to `mkpasswd -m md5 "F005C3_7e_bz" -S cxswfile`. This is a
-    PUBLISHED, derivable value used by every tool that builds F005 packages -
+    Equivalent to `mkpasswd -m md5 "<board>C3_7e_bz" -S cxswfile`. This is a
+    PUBLISHED, derivable value used by every tool that builds these packages -
     it is an envelope format detail, not a secret, which is why it may appear
     in a process argument list where the attestation key never may.
 
@@ -116,23 +134,28 @@ def derive_archive_secret():
     build without crypt(3), or a different algorithm, fails here rather than
     producing an archive the stock updater silently refuses to open.
     """
+    if board not in BOARD_SECRETS:
+        sys.exit("FATAL: unknown board %r (known: %s)" % (board, ", ".join(sorted(BOARD_SECRETS))))
+    secret_input = "%sC3_7e_bz" % board
+    expected = BOARD_SECRETS[board]
     got = None
     try:
         import crypt  # removed in Python 3.13; present on most build hosts
-        got = crypt.crypt(SECRET_INPUT, "$1$%s" % SECRET_SALT)
+        got = crypt.crypt(secret_input, "$1$%s" % SECRET_SALT)
     except Exception:
-        if shutil.which("mkpasswd"):
-            proc = subprocess.run(
-                ["mkpasswd", "-m", "md5", SECRET_INPUT, "-S", SECRET_SALT],
-                capture_output=True, text=True,
-            )
+        for cmd in (["mkpasswd", "-m", "md5", secret_input, "-S", SECRET_SALT],
+                    ["openssl", "passwd", "-1", "-salt", SECRET_SALT, secret_input]):
+            if not shutil.which(cmd[0]):
+                continue
+            proc = subprocess.run(cmd, capture_output=True, text=True)
             if proc.returncode == 0:
                 got = proc.stdout.strip()
-    if got != EXPECTED_SECRET:
+                break
+    if got != expected:
         sys.exit(
             "FATAL: OTA envelope secret derivation produced %r, expected %r.\n"
             "       Install `mkpasswd` (whois package) or use a Python with crypt(3).\n"
-            "       Refusing to build a package the stock updater cannot open." % (got, EXPECTED_SECRET)
+            "       Refusing to build a package the stock updater cannot open." % (got, expected)
         )
     return got
 
@@ -234,7 +257,8 @@ def build(args):
         sys.exit("FATAL: rootfs.squashfs is %d bytes, exceeds the rootfs partition capacity %d"
                  % (r_size, sizes["rootfs"]))
 
-    secret = derive_archive_secret()
+    board = args.board
+    secret = derive_archive_secret(board)
     if not shutil.which("7z"):
         sys.exit("FATAL: 7z is required to build the OTA envelope and was not found")
 
@@ -347,7 +371,7 @@ def build(args):
                     "current_version=%s" % version,
                     "ota_version=%s" % version,
                     "ota_dir=%s" % inner,
-                    "board=%s" % BOARD_SHORT_NAME,
+                    "board=%s" % board,
                     "",
                 ]))
             config_provenance = "SYNTHESISED_NO_VENDOR_TEMPLATE"
@@ -395,9 +419,10 @@ def build(args):
 
     img_sha = sha256_file(out)
     lines = [
-        "# NebulaOS .img (Creality F005 OTA package) manifest",
+        "# NebulaOS .img (Creality %s OTA package) manifest" % board,
         "# Built from an already-built canonical core. Nothing was compiled here.",
-        "IMG_FORMAT=creality-f005-ota",
+        "IMG_FORMAT=creality-%s-ota" % board.lower(),
+        "IMG_BOARD=%s" % board,
         "IMG_TOP_DIR=%s" % top,
         "IMG_OTA_VERSION=%s" % version,
         "IMG_OTA_CONFIG_PROVENANCE=%s" % config_provenance,
@@ -437,6 +462,7 @@ def build(args):
     print("IMG_SHA256=%s" % img_sha)
     print("IMG_SIZE=%d" % os.path.getsize(out))
     print("IMG_OTA_VERSION=%s" % version)
+    print("IMG_BOARD=%s" % board)
     print("IMG_XIMAGE_CHUNKS=%d IMG_ROOTFS_CHUNKS=%d IMG_RTOS_CHUNKS=%d"
           % (len(x_chunks), len(r_chunks), len(rtos_chunks)))
     print("IMG_RTOS_INCLUDED=%s" % ("YES" if args.rtos else "NO"))
@@ -457,6 +483,9 @@ def main(argv):
                         help="OTA version namespace; must exceed the stock version the updater knows")
     parser.add_argument("--ota-config-template",
                         help="a vendor ota_config.in to copy instead of synthesising one")
+    parser.add_argument("--board", default=BOARD_SHORT_NAME, choices=sorted(BOARD_SECRETS),
+                        help="the Creality board the envelope is for: F005 (KE built-in pad, default) "
+                             "or NEBULA (separately sold Nebula Pad). Same payloads either way.")
     parser.add_argument("--rtos",
                         help="the RTOS zero.bin: stock, or stock with the NebulaOS logo. The real vendor ota_update.in lists three "
                              "payloads; omitting this produces a two-record manifest that does "
