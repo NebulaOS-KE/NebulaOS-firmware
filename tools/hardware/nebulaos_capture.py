@@ -1468,6 +1468,37 @@ EXERCISE_PROFILES["freeze-soak"] = (
 # logs/crash (black box + flight recorder) after the reset.
 _PROVOKE_UNDO = ("pkill -f provoke.sh 2>/dev/null; sleep 2; rm -f /usr/data/.nebulaos-provoke; "
                  "[ -x /etc/init.d/S50webcam ] && { pidof ustreamer >/dev/null || /etc/init.d/S50webcam start >/dev/null 2>&1; }")
+# Flight recorder register log (kernel 519771ca+): its cost and the barrier
+# A/B. /proc/nebulaos_flightrec takes mmio=0/1; the state lasts until the
+# next boot (default on). flightrec-mmio-ab: idle printer, five 60 s phases
+# on/off/on/off/on - CPU busy % per CPU, IRQ 9 rate, and the time to read
+# 128 MB of the running rootfs partition with the page cache dropped (eMMC
+# controller register traffic). Ends with the register log on.
+_FR = "F=/proc/nebulaos_flightrec; [ -w $F ] || { echo NO_FLIGHTREC; exit 3; }; "
+_FR_MMIO_CHECK = ("echo mmio=1 > $F 2>/dev/null || "
+                  "{ echo NO_MMIO_SWITCH_KERNEL_TOO_OLD; exit 3; }; ")
+EXERCISE_PROFILES["flightrec-mmio-ab"] = (
+    _IDLE_GUARD + _FR + _FR_MMIO_CHECK +
+    "R=$(sed -n 's/.*root=\\([^ ]*\\).*/\\1/p' /proc/cmdline); echo \"rootdev=$R\"; "
+    "st(){ awk '/^cpu[01] /{printf \"%s %d %d \", $1, $2+$3+$4+$7+$8, $2+$3+$4+$5+$6+$7+$8}' /proc/stat; }; "
+    "for v in 1 0 1 0 1; do echo mmio=$v > $F; sleep 2; "
+    "a=$(st); i0=$(awk '$1==\"9:\"{print $2+$3}' /proc/interrupts); sleep 60; b=$(st); i1=$(awk '$1==\"9:\"{print $2+$3}' /proc/interrupts); "
+    "set -- $a $b; echo \"== register_log=$v cpu0_busy_pct=$(awk -v a=$2 -v t=$3 -v b=$8 -v u=$9 'BEGIN{printf \"%.2f\", 100*(b-a)/(u-t)}') "
+    "cpu1_busy_pct=$(awk -v a=$5 -v t=$6 -v b=${11} -v u=${12} 'BEGIN{printf \"%.2f\", 100*(b-a)/(u-t)}') irq9_per_s=$(( (i1-i0)/60 ))\"; "
+    "sync; echo 3 > /proc/sys/vm/drop_caches; t0=$(cut -d' ' -f1 /proc/uptime); head -c 134217728 $R > /dev/null; "
+    "t1=$(cut -d' ' -f1 /proc/uptime); echo \"   read_128MB_s=$(awk -v a=$t0 -v b=$t1 'BEGIN{printf \"%.2f\", b-a}')\"; done; "
+    "dmesg | grep 'register log' | tail -n 6; echo FLIGHTREC_MMIO_AB_RESULT=DONE",
+    "echo mmio=1 > /proc/nebulaos_flightrec 2>/dev/null; true",
+    600)
+# The barrier A/B: register log (and its barrier per device access) off or
+# back on, until the next boot. Event recording stays on either way.
+EXERCISE_PROFILES["flightrec-mmio-off"] = (
+    _FR + "echo mmio=0 > $F || { echo NO_MMIO_SWITCH_KERNEL_TOO_OLD; exit 3; }; head -n 1 $F; dmesg | grep 'register log' | tail -n 1; "
+    "echo FLIGHTREC_MMIO_OFF_RESULT=DONE", "true", 60)
+EXERCISE_PROFILES["flightrec-mmio-on"] = (
+    _FR + "echo mmio=1 > $F || { echo NO_MMIO_SWITCH_KERNEL_TOO_OLD; exit 3; }; head -n 1 $F; dmesg | grep 'register log' | tail -n 1; "
+    "echo FLIGHTREC_MMIO_ON_RESULT=DONE", "true", 60)
+
 EXERCISE_PROFILES["freeze-provoke"] = (
     _IDLE_GUARD + "T=$T sh $T/provoke.sh 36000 all", _PROVOKE_UNDO, 36000 + 300)
 EXERCISE_PROFILES["freeze-provoke-short"] = (
@@ -1597,15 +1628,19 @@ CAPTURE_PROFILES["boot-forensics"] = (
     False, None, 120)
 
 # 2026-11-14: what the printer was doing when the last FREEZE/CRASH hit. The
-# newest dated klippy/moonraker logs (Klipper rotates at midnight, so the
-# freeze night is not in klippy.log) and system.log up to the boot after it.
+# The klippy/moonraker logs of the day of the last FREEZE/CRASH (its
+# last_heartbeat date): the dated log once Klipper has rotated at midnight,
+# otherwise klippy.log itself - not simply the newest dated log, which misses
+# a freeze on the current day. And system.log up to the boot after it.
 CAPTURE_PROFILES["freeze-context"] = (
-    "L=/opt/printer_data/logs; echo '== reset-history (last 5)'; tail -n 5 /usr/data/nebulaos/logs/reset-history.log 2>&1; "
-    "K=$(ls $L/klippy.log.20* 2>/dev/null | tail -n 1); echo \"== $K\"; ls -la $K; "
+    "L=/opt/printer_data/logs; H=/usr/data/nebulaos/logs/reset-history.log; echo '== reset-history (last 5)'; tail -n 5 $H 2>&1; "
+    "D=$(grep -E 'boot after (FREEZE|CRASH)' $H 2>/dev/null | tail -n 1 | sed -n 's/.*last_heartbeat=\\([0-9-]\\{10\\}\\).*/\\1/p'); "
+    "echo \"== freeze day: ${D:-unknown}\"; "
+    "K=$L/klippy.log.$D; [ -n \"$D\" ] && [ -f $K ] || K=$L/klippy.log; echo \"== $K\"; ls -la $K; "
     "echo '-- print starts/ends, shutdowns, errors'; grep -nE 'Starting SD card print|Exiting SD card|Finished SD card|Transition to shutdown|Lost communication|Timer too close|Traceback|MCU .* shutdown|Start printer at|nebulaos_power_loss|PLR' $K | tail -n 40 | cut -c1-300; "
     "echo '-- last 80 non-Stats lines'; grep -v '^Stats ' $K | tail -n 80 | cut -c1-300; "
     "echo '-- last 12 Stats lines'; grep '^Stats ' $K | tail -n 12 | cut -c1-700; "
-    "M=$(ls $L/moonraker.log.20* 2>/dev/null | tail -n 1); echo \"== $M (last 60)\"; tail -n 60 $M | cut -c1-300; "
+    "M=$L/moonraker.log.$D; [ -n \"$D\" ] && [ -f $M ] || M=$L/moonraker.log; echo \"== $M (last 60)\"; tail -n 60 $M | cut -c1-300; "
     "S=$L/system.log; b=$(grep -n 'boot after FREEZE\\|boot after CRASH' $S | tail -n 1 | cut -d: -f1); "
     "echo \"== system.log before the last FREEZE/CRASH boot (line ${b:-none})\"; "
     "[ -n \"$b\" ] && head -n $b $S | grep -n 'syslogd started\\|Linux version' | tail -n 3; "
