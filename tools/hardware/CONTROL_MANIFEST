@@ -7,7 +7,7 @@
 # tools/hardware/nebulaos_control.py at control commit C.
 
 6fe0496042b0cf3c0b81d5687ba7fd288c67250f0e3e20045f613895279b77d4  on-device  scripts/flash-spare-slot.sh
-8109104f40d2ecced05226a5fb86d606dc2222ad8eeb11a03c97e9428a7cd6b9  on-device  scripts/build/overlay/usr/libexec/nebulaos-datafs.sh
+c6708273c02c0c5794ebaa72e845059ddc287489d3b227e2ec33f75b3ddb25bc  on-device  scripts/build/overlay/usr/libexec/nebulaos-datafs.sh
 099a8433ac8e50194f55429169605107e05dc501bceb30c94629930fd854a161  host  scripts/package/assets/nebulaos-rtos-logo.jpg
 188490dd44677373935002f0944006e039eb956132444c1d7ea47d3c980c5ea7  host  scripts/package/rtos_logo.py
 9690c4b144d80abb028a8f4e45db8fbf6527590c23a54a23aee714d8a81a13e5  host  tools/attest/nebulaos-attest.py
