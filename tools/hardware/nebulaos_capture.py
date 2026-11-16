@@ -30,7 +30,7 @@ HWCAP_DIR = os.path.join(FW_ROOT, "tools", "hwcap")
 PROBES = ("schedsnap.py", "timerlat.py", "ptyrtt.py", "kduty.py", "adxl_overflows.py", "qualmcu.py",
           "lv_m1.py", "lv_s1.sh", "lv_s2.sh", "lv_g5.sh", "lv_cam.sh", "lv_g6.sh", "lv_g7.sh", "lv_g8.sh", "lv_g9.sh", "lv_g10.sh", "lv_ng1.py", "pf_cam.sh", "fb_ng3.sh", "fb_cam10.sh",
           "gs_services.sh", "gs_display.sh", "gs_sleep.sh", "gs_bootmode.sh", "gs_wifi.sh",
-          "provoke.sh")
+          "provoke.sh", "qstatus.py")
 # Pinned data files embedded compressed (dropbear refuses a command longer than
 # MAX_CMD_LEN = 9000 bytes, so a whole profile must stay under SCRIPT_LIMIT).
 DATA_FILES = ("klipper-dict-board.json",)
@@ -2034,3 +2034,20 @@ def exercise_script(name):
     if len(s) > SCRIPT_LIMIT:
         raise CaptureError("exercise %s is %d bytes, over the %d-byte command limit" % (name, len(s), SCRIPT_LIMIT))
     return s, timeout
+
+# Issue #19 (2026-11-16): host stalls during load-cell homing ("Timer too
+# close"). What one Klipper status answer costs per object (tools/hwcap/
+# qstatus.py: objects/list + objects/query on Klippy's API socket only), who
+# is connected, and the reactor stalls Klipper logged ("Reactor ... busy for",
+# upstream garbage_collection.py) with the callbacks it blamed. Read-only.
+CAPTURE_PROFILES["status-cost"] = (
+    "L=/opt/printer_data/logs; echo \"== now $(date) up $(cut -d' ' -f1 /proc/uptime) load $(cut -d' ' -f1-3 /proc/loadavg)\"; "
+    "echo \"== moonraker: $(wget -q -T 10 -O - http://127.0.0.1:7125/server/info 2>/dev/null | python3 -c 'import json,sys; r=json.load(sys.stdin)[\"result\"]; print(\"websocket_count=%s klippy_state=%s\" % (r.get(\"websocket_count\"), r.get(\"klippy_state\")))' 2>&1)\"; "
+    "echo \"== moonraker cmdline: $(tr '\\0' ' ' < /proc/$(cat /var/run/moonraker.pid 2>/dev/null)/cmdline 2>/dev/null)\"; "
+    "echo \"== log level: $(cat /usr/data/nebulaos/system/log-level 2>&1)\"; "
+    "echo '== klippy: Klipper version'; grep -m1 'Git version' $L/klippy.log; "
+    "python3 $T/qstatus.py; "
+    "for f in $L/klippy.log $L/klippy.log.1; do [ -f $f ] || continue; "
+    "echo \"== $f: stalls $(grep -c 'busy for' $f) total, $(grep -oE 'busy for [0-9.]+' $f | awk '$3>=0.1' | wc -l) >= 0.1 s, max $(grep -oE 'busy for [0-9.]+' $f | awk '$3>m{m=$3} END{print m+0}') s\"; "
+    "grep -A3 'busy for' $f | grep \"^- '\" | sed -E 's/:[0-9]+\\)/)/; s/,$//' | sort | uniq -c | sort -rn | head -n 12; done",
+    False, "qstatus.py", 300)

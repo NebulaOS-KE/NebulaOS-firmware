@@ -51,6 +51,7 @@ HOST=(
   tools/hwcap/gs_sleep.sh
   tools/hwcap/gs_wifi.sh
   tools/hwcap/kduty.py
+  tools/hwcap/qstatus.py
   tools/hwcap/lv_cam.sh
   tools/hwcap/lv_g10.sh
   tools/hwcap/lv_g5.sh
