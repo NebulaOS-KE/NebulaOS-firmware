@@ -108,6 +108,7 @@ GENERATION_FILE="${GENERATION_FILE:-$NEBULAOS_ROOT/system/app-generation.json}"
 POLL_INTERVAL="${POLL_INTERVAL:-20}"
 STABILIZE_SAMPLES="${STABILIZE_SAMPLES:-6}"
 STABILIZE_INTERVAL="${STABILIZE_INTERVAL:-10}"
+STABILIZE_RECOVERIES="${STABILIZE_RECOVERIES:-2}"
 RESTART_GRACE_PERIOD="${RESTART_GRACE_PERIOD:-25}"
 READY_POLL_TRIES="${READY_POLL_TRIES:-18}"
 READY_POLL_INTERVAL="${READY_POLL_INTERVAL:-10}"
@@ -346,24 +347,44 @@ wait_for_initial_ready() {
 }
 
 # Confirms health STAYS true for a short window after first becoming
-# ready - fails fast on any bad sample here, since by this point the
-# system has already proven it can start; a failure now is a real
-# regression, not startup timing.
-# Same return codes as wait_for_initial_ready (a sample that sees a print
-# returns 3/4 at once).
+# ready. Same return codes as wait_for_initial_ready (a sample that sees a
+# print returns 3/4 at once).
+#
+# Issue #21 (2026-11-16): a bad sample here used to be final. On a real
+# printer it is most often a restart from OUTSIDE the update being judged:
+# Mainsail's "Update all" updating Moonraker right after Klipper ("Moonraker
+# not responding"), or Klipper restarted by Moonraker/the screen
+# (klippy_state='startup'). Both rolled a good update back, and a reboot in
+# that window left Klipper on the image copy, which Mainsail shows as
+# INVALID "?". So a bad sample now waits - tolerantly, as at the start -
+# for the stack to become ready again and re-runs the whole window, up to
+# STABILIZE_RECOVERIES times. A real regression still fails: one that
+# never becomes ready again times out in wait_for_initial_ready, and one
+# that keeps falling over uses up the recoveries.
 stabilized_stage2() {
-	wait_for_initial_ready
-	_ss2=$?
-	[ "$_ss2" -eq 0 ] || return "$_ss2"
-	i=0
-	while [ "$i" -lt "$STABILIZE_SAMPLES" ]; do
-		sleep "$STABILIZE_INTERVAL"
-		"$HEALTHCHECK" stage2
+	_ss2_rec=0
+	while :; do
+		wait_for_initial_ready
 		_ss2=$?
 		[ "$_ss2" -eq 0 ] || return "$_ss2"
-		i=$((i + 1))
+		i=0
+		_ss2_bad=0
+		while [ "$i" -lt "$STABILIZE_SAMPLES" ]; do
+			sleep "$STABILIZE_INTERVAL"
+			"$HEALTHCHECK" stage2
+			_ss2=$?
+			case "$_ss2" in
+				0) ;;
+				3|4) return "$_ss2" ;;
+				*) _ss2_bad=1; break ;;
+			esac
+			i=$((i + 1))
+		done
+		[ "$_ss2_bad" -eq 0 ] && return 0
+		[ "$_ss2_rec" -ge "$STABILIZE_RECOVERIES" ] && return "$_ss2"
+		_ss2_rec=$((_ss2_rec + 1))
+		log "stage 2: a check failed after the stack was ready (often a restart from outside: Moonraker updating itself, a firmware restart) - waiting for it to be ready again before judging ($_ss2_rec/$STABILIZE_RECOVERIES)"
 	done
-	return 0
 }
 
 # Stage 2 verdict for Moonraker: a running print seen through Moonraker with
@@ -1344,6 +1365,30 @@ restore_known_good_pair() {
 # back, preserve evidence, factory-fallback if the previous pair is also
 # unhealthy - with the single difference that every step operates on two
 # commits instead of one.
+# Issue #21 (2026-11-16): a reboot while a pair is being checked boots with
+# the stack lock held, so S05nebulaos-activate leaves /opt/klipper on the
+# image's built-in copy (Mainsail: klipper and nebulaos_klipper_extensions
+# INVALID "?"). The supervisor then re-checks the pair - but restarting
+# Klipper there only ran the built-in copy again: the check tested the wrong
+# code, and even a passed pair stayed unused until the next reboot. Before
+# Klipper is restarted for a check, /opt/klipper must therefore be the
+# persistent stack. Only called after recompose_klipper_stack() proved the
+# pair (composition + c_helper.so) - the same gates S05 applies before its
+# own bind. Factory-fallback (deliberately unbound) never reaches here.
+PROC_MOUNTS="${PROC_MOUNTS:-/proc/mounts}"
+ensure_klipper_stack_bind() {
+	_ekb_opt=$(component_info "$KLIPPER_APP" | cut -d'|' -f3)
+	if awk -v t="$_ekb_opt" '$2==t {found=1} END{exit !found}' "$PROC_MOUNTS"; then
+		return 0
+	fi
+	if mount --bind "$NEBULAOS_ROOT/apps/$KLIPPER_APP" "$_ekb_opt"; then
+		log "$STACK_NAME: Klipper was running from the built-in copy (this boot started during an unfinished update) - $_ekb_opt now uses the installed stack, so the check tests what was installed"
+		return 0
+	fi
+	log "$STACK_NAME: WARNING - could not switch $_ekb_opt to the installed stack; the check runs on the built-in copy"
+	return 1
+}
+
 validate_klipper_stack() {
 	new_k=$(stack_head "$KLIPPER_APP")
 	new_e=$(stack_head "$EXTENSIONS_APP")
@@ -1378,6 +1423,13 @@ validate_klipper_stack() {
 	"$HEALTHCHECK" stage1 "$KLIPPER_APP" "$NEBULAOS_ROOT/apps/$KLIPPER_APP" || stage1_ok=false
 
 	if [ "$stage1_ok" = "true" ]; then
+		# Never bind/restart under a print (the busy check inside
+		# restart_component would defer the restart, but not the bind).
+		if _pkb=$(klipper_busy_reason); then
+			stack_defer_validation "$kg_k" "$kg_e" "restart_deferred"
+			return
+		fi
+		ensure_klipper_stack_bind
 		if ! restart_component "$KLIPPER_APP"; then
 			stack_defer_validation "$kg_k" "$kg_e" "restart_deferred"
 			return

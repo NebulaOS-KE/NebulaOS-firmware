@@ -52,6 +52,32 @@ CLEANUP_TIMEOUT = 600.
 # downloads the wheels to resolve them) on the MIPS board.
 READINESS_TIMEOUT = 1800.
 READINESS_WARNING = "nebulaos_update_readiness"
+# Issue #21 (2026-11-16): when S05nebulaos-activate keeps Klipper on the
+# image's built-in copy (no .git), Mainsail's update page shows klipper and
+# nebulaos_klipper_extensions as INVALID "?" with nothing to say why. This
+# warning says why and what to do. Read once when Moonraker starts (S05 runs
+# before it), from the state S05 writes.
+DEFAULT_ACTIVATION_STATE = "/usr/data/nebulaos/system/activation-state.json"
+KLIPPER_SOURCE_WARNING = "nebulaos_klipper_builtin"
+
+
+def klipper_source_warning(state: Dict[str, Any]) -> Optional[str]:
+    """-> the warning text when Klipper runs from the built-in copy, else None."""
+    if not isinstance(state, dict) or state.get("klipper_bind_active") != "no":
+        return None
+    decisions = state.get("decisions") or {}
+    reason = str(decisions.get("klipper_stack") or decisions.get("klipper") or "")
+    if reason.endswith("update_in_progress"):
+        return ("NebulaOS: a Klipper update is still being checked, so Klipper "
+                "runs from the built-in copy until the check is done. The Update "
+                "page shows klipper and nebulaos_klipper_extensions as INVALID "
+                "meanwhile. Nothing to do: leave the printer on for a few minutes, "
+                "the check finishes or rolls back by itself.")
+    detail = reason.split(":", 1)[-1].replace("_", " ") if reason else "unknown"
+    return ("NebulaOS: Klipper runs from the built-in copy (" + detail + "), so the "
+            "Update page shows klipper and nebulaos_klipper_extensions as INVALID. "
+            "The printer works. To repair: on the Update page choose Hard recovery "
+            "for klipper, then for nebulaos_klipper_extensions, and restart.")
 # G82 stage 3: NebulaScreen reports which build runs (machine.nebulaos.screen.
 # report, sent once connected). The update supervisor reads this file as
 # health stage 2 of a downloaded release. On tmpfs: a report never outlives
@@ -116,6 +142,7 @@ class NebulaOS:
         self.uploads_dir = config.get("uploads_dir", DEFAULT_UPLOADS_DIR)
         self.boot_upload_dir = os.path.join(self.uploads_dir, "boot-logo")
         self.screen_report = config.get("screen_report", DEFAULT_SCREEN_REPORT)
+        self.activation_state = config.get("activation_state", DEFAULT_ACTIVATION_STATE)
         for sub in ("boot-logo", "mainboard-firmware", "system-image"):
             try:
                 os.makedirs(os.path.join(self.uploads_dir, sub), exist_ok=True)
@@ -609,7 +636,20 @@ class NebulaOS:
         elif result.get("result") in ("READY", "NO_UPDATES", "UNKNOWN"):
             self.server.remove_warning(READINESS_WARNING)
 
+    def _sync_klipper_source_warning(self) -> None:
+        try:
+            with open(self.activation_state) as fh:
+                msg = klipper_source_warning(json.load(fh))
+        except (OSError, ValueError) as exc:
+            logging.info(f"nebulaos: activation state not read: {exc}")
+            return
+        if msg:
+            self.server.add_warning(msg, KLIPPER_SOURCE_WARNING, log=True)
+        else:
+            self.server.remove_warning(KLIPPER_SOURCE_WARNING)
+
     async def component_init(self) -> None:
+        self._sync_klipper_source_warning()
         try:
             self._sync_readiness_warning(await self._read("updates", "readiness"))
         except Exception as exc:

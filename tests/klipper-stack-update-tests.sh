@@ -59,13 +59,33 @@ cat > "$WORK/healthcheck.sh" <<'EOF'
 stage="$1"
 case "$stage" in
 	stage1) f=/dev/null; want=$(cat "$HEALTH_DIR/stage1" 2>/dev/null) ;;
-	stage2) want=$(cat "$HEALTH_DIR/stage2" 2>/dev/null) ;;
+	stage2)
+		# A stage2-seq file gives one verdict per call, in order (the last
+		# line repeats), for a stack that changes state during the check.
+		if [ -s "$HEALTH_DIR/stage2-seq" ]; then
+			want=$(head -n 1 "$HEALTH_DIR/stage2-seq")
+			if [ "$(wc -l < "$HEALTH_DIR/stage2-seq")" -gt 1 ]; then
+				sed -i 1d "$HEALTH_DIR/stage2-seq"
+			fi
+		else
+			want=$(cat "$HEALTH_DIR/stage2" 2>/dev/null)
+		fi ;;
 	*)      want=ok ;;
 esac
 echo "healthcheck $stage -> ${want:-ok}" >> "$HEALTH_DIR/calls.log"
 [ "${want:-ok}" = "ok" ]
 EOF
 chmod +x "$WORK/healthcheck.sh"
+
+# A stubbed mount: records the bind and adds it to the fake /proc/mounts
+# (PROC_MOUNTS), so ensure_klipper_stack_bind (issue #21) can be observed.
+cat > "$WORK/mount" <<'EOF'
+#!/bin/sh
+echo "mount $*" >> "$HEALTH_DIR/mounts.log"
+[ "$1" = "--bind" ] && echo "fake $3 none rw,bind 0 0" >> "$PROC_MOUNTS"
+exit 0
+EOF
+chmod +x "$WORK/mount"
 
 # A stubbed S55klipper that only records that it was asked to act. The real
 # one starts a Python process against a real MCU; nothing here should ever
@@ -89,7 +109,7 @@ export KLIPPER_FIXTURE="$WORK/root/apps/klipper"
 export EXTENSIONS_FIXTURE="$WORK/root/apps/nebulaos-klipper-extensions"
 
 set_health() { mkdir -p "$HEALTH_DIR"; echo "$1" > "$HEALTH_DIR/stage1"; echo "$2" > "$HEALTH_DIR/stage2"; }
-reset_logs() { mkdir -p "$HEALTH_DIR"; : > "$HEALTH_DIR/calls.log"; : > "$HEALTH_DIR/restarts.log"; }
+reset_logs() { mkdir -p "$HEALTH_DIR"; : > "$HEALTH_DIR/calls.log"; : > "$HEALTH_DIR/restarts.log"; : > "$HEALTH_DIR/mounts.log"; }
 
 make_klipper() {
 	d="$1"; content="$2"
@@ -157,7 +177,7 @@ sup() {
 		NEBULAOS_ROOT="$ROOT" LOCKDIR="$LOCKS" \
 		HEALTHCHECK="$WORK/healthcheck.sh" \
 		COMPOSE_LIB="$COMPOSE_LIB" CHELPER_LIB="$CHELPER_LIB" \
-		HEALTH_DIR="$HEALTH_DIR" \
+		HEALTH_DIR="$HEALTH_DIR" PROC_MOUNTS="$WORK/proc-mounts" \
 		KLIPPER_FIXTURE="$KDIR" EXTENSIONS_FIXTURE="$EDIR" \
 		MOONRAKER_URL="http://127.0.0.1:9" \
 		RESTART_GRACE_PERIOD=0 STABILIZE_SAMPLES=1 STABILIZE_INTERVAL=0 \
@@ -658,6 +678,80 @@ else
 fi
 
 unset NEBULAOS_PYTHON_ABI_FILE NEBULAOS_CHELPER_URL_FILE NEBULAOS_CHELPER_FETCH NEBULAOS_CHELPER_IMAGE_RECORD
+
+# --- Issue #21: a restart from outside during stage 2 ----------------------
+# The user's printer rolled back two good updates: once Klipper was caught
+# restarting (klippy_state='startup'), once Moonraker was mid-update ("not
+# responding"). One bad sample after the stack was ready must make the check
+# wait for ready again, not roll back. A stack that never becomes ready
+# again, or keeps falling over, must still be rolled back.
+
+seq_health() { mkdir -p "$HEALTH_DIR"; echo ok > "$HEALTH_DIR/stage1"; printf '%s\n' "$@" > "$HEALTH_DIR/stage2-seq"; }
+
+setup_stack
+kg_k=$(khead); kg_e=$(ehead)
+bump_klipper v21; new_k=$(khead)
+reset_logs; seq_health ok fail ok ok
+sup poll_klipper_stack_once > "$WORK/s21a.log" 2>&1
+rm -f "$HEALTH_DIR/stage2-seq"
+if [ "$(stack_field state)" = "healthy" ] && [ "$(stack_field known_good_klipper_commit)" = "$new_k" ] && \
+   [ "$(khead)" = "$new_k" ] && [ ! -e "$LOCKS/klipper-stack.lock" ] && grep -q "waiting for it to be ready again" "$WORK/s21a.log"; then
+	pass "issue #21: one failed sample after ready (an outside restart) waits for ready again - the good update is kept"
+else
+	fail "issue #21: an outside restart during stage 2 rolled a good update back (state=$(stack_field state))"; cat "$WORK/s21a.log"
+fi
+
+setup_stack
+kg_k=$(khead); kg_e=$(ehead)
+bump_klipper broken21
+reset_logs; seq_health ok fail fail
+sup poll_klipper_stack_once > "$WORK/s21b.log" 2>&1
+rm -f "$HEALTH_DIR/stage2-seq"
+if [ "$(khead)" = "$kg_k" ] && [ "$(ehead)" = "$kg_e" ]; then
+	pass "issue #21: a stack that never becomes ready again after a failed sample is still rolled back"
+else
+	fail "issue #21: a stack that stayed broken was kept"; cat "$WORK/s21b.log"
+fi
+
+setup_stack
+kg_k=$(khead); kg_e=$(ehead)
+bump_klipper flapping21
+reset_logs; seq_health ok fail ok fail ok fail ok ok
+sup poll_klipper_stack_once > "$WORK/s21c.log" 2>&1
+rm -f "$HEALTH_DIR/stage2-seq"
+if [ "$(khead)" = "$kg_k" ] && grep -q "(2/2)" "$WORK/s21c.log"; then
+	pass "issue #21: a stack that keeps falling over uses up its recoveries and is rolled back"
+else
+	fail "issue #21: a flapping stack was kept or not retried as designed"; cat "$WORK/s21c.log"
+fi
+
+# Issue #21: a boot during an unfinished check left /opt/klipper on the
+# built-in copy; the re-check must switch it to the installed stack BEFORE
+# Klipper restarts, so it tests what was installed (and keeps using it).
+setup_stack
+bump_klipper v21bind; new_k=$(khead)
+: > "$WORK/proc-mounts"
+reset_logs; set_health ok ok
+sup poll_klipper_stack_once > "$WORK/s21d.log" 2>&1
+if grep -q "mount --bind $KDIR $WORK/optklipper" "$HEALTH_DIR/mounts.log" && \
+   [ "$(stack_field known_good_klipper_commit)" = "$new_k" ] && grep -q "now uses the installed stack" "$WORK/s21d.log"; then
+	pass "issue #21: a check that starts on the built-in copy binds the installed stack first"
+else
+	fail "issue #21: the installed stack was not bound before the check"; cat "$WORK/s21d.log"; cat "$HEALTH_DIR/mounts.log"
+fi
+if [ -n "$(awk '/mount --bind/{print NR; exit}' "$HEALTH_DIR/mounts.log")" ] && [ -s "$HEALTH_DIR/restarts.log" ]; then
+	pass "issue #21: ... and Klipper is restarted after the bind (onto the installed stack)"
+else
+	fail "issue #21: no restart after the bind"
+fi
+bump_klipper v21bind2
+reset_logs; set_health ok ok
+sup poll_klipper_stack_once > "$WORK/s21e.log" 2>&1
+if [ ! -s "$HEALTH_DIR/mounts.log" ]; then
+	pass "issue #21: an already-bound /opt/klipper is never mounted twice"
+else
+	fail "issue #21: /opt/klipper was mounted again"; cat "$HEALTH_DIR/mounts.log"
+fi
 
 # --- summary --------------------------------------------------------------
 
