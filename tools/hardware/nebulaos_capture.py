@@ -568,6 +568,21 @@ CAPTURE_PROFILES = {
         "L=$(ls $N/*-flightrec.txt 2>/dev/null | tail -n 1); [ -n \"$L\" ] && nfr \"$L\"; "
         "echo '== previous boot (kernel view)'; head -n 2 /proc/nebulaos_flightrec_prev 2>&1",
         False, None, 90),
+    # 2026-11-19: freeze-investigation test build (kernel recorder v3,
+    # interrupt migration off). Boot lines, where each interrupt is handled,
+    # and a compact check of the live recording: register entries with values
+    # and done marks, DMA cache events, the previous boot's header. Read-only.
+    "freeze-v3": ("echo '== now'; date; uptime; uname -v; cat /proc/cmdline; "
+        "dmesg | grep -iE 'flightrec|interrupt migration' | cut -c1-200; "
+        "echo '== interrupts'; cat /proc/interrupts | tr -s ' '; "
+        "F=/tmp/nebulaos-fr3.$$; cat /proc/nebulaos_flightrec > $F 2>&1; "
+        "echo '== live recording'; head -n 5 $F; grep '^== ' $F; "
+        "for c in 0 1; do echo \"-- cpu$c\"; "
+        "echo \"register entries: $(grep -c \"^cpu$c MMIO \" $F)  with val=: $(grep \"^cpu$c MMIO \" $F | grep -c ' val=')  NOT DONE: $(grep \"^cpu$c MMIO \" $F | grep -c 'NOT DONE')\"; "
+        "grep \"^cpu$c MMIO \" $F | tail -n 8; "
+        "echo \"DMA cache events: $(grep -c \"^cpu$c .* DMAC> \" $F)\"; grep \"^cpu$c .* DMAC[<>] \" $F | tail -n 4; done; "
+        "rm -f $F; echo '== previous boot (kernel view)'; head -n 5 /proc/nebulaos_flightrec_prev 2>&1",
+        False, None, 90),
     # 2026-11-08: the newest FREEZE/CRASH evidence in full (the 'blackbox'
     # profile shows heads and tails only), the previous boot's system.log
     # and the log files kept from it. Read-only.
