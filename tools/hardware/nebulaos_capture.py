@@ -987,7 +987,7 @@ CAPTURE_PROFILES = {
 # Defined by the plan as reversible state changes: TOOL-02 `exercise`, never `capture`.
 EXERCISE_ONLY = ("camera-resume", "camera-states", "memexercise", "sof-filter-ab", "storage-autosuspend",
                  "cpu-load", "camera-viewer", "wifi-load", "usb-storage-io", "ktimers-ab", "ttyflip-ab",
-                 "memexercise-sw100", "watchdog-arm", "watchdog-fire", "camera-resolution-trial", "nebula-camera-sweep", "nebula-camera-sweep2", "nebula-camera-sweep3", "nebula-camera-set-defaults")
+                 "memexercise-sw100", "watchdog-arm", "watchdog-fire", "camera-resolution-trial", "nebula-camera-sweep", "nebula-camera-sweep2", "nebula-camera-sweep3", "nebula-camera-set-defaults", "nebula-camera-hue-sweep")
 
 
 class CaptureError(Exception):
@@ -1348,6 +1348,33 @@ _CAM_SWEEP3 = (
     ("final_b125c155s145sh110", '{"brightness":125,"contrast":155,"saturation":145,"sharpness":110,"power_line":"off"}'),
 )
 EXERCISE_PROFILES["nebula-camera-sweep3"] = _cam_sweep_osconfig(_CAM_SWEEP3)
+
+# #29 (2026-11-21): hue is never written by NebulaOS and reads 50, the bottom
+# of the camera's 50-160 range (its reported default is garbage). One snapshot
+# per hue value; the hue read at the start is written back at the end and in
+# the cleanup. Camera image only; nothing saved.
+_HUE_SWEEP = (50, 80, 105, 128, 160)
+EXERCISE_PROFILES["nebula-camera-hue-sweep"] = (
+    "DEV=; for n in /sys/class/video4linux/video*; do "
+    "[ \"$(cat $n/index 2>/dev/null)\" = 0 ] && [ \"$(cat $n/device/../idVendor 2>/dev/null)\" = a108 ] "
+    "&& { DEV=/dev/${n##*/}; break; }; done; [ -n \"$DEV\" ] || { echo NO_NEBULA_CAMERA; exit 3; }; "
+    "command -v ffmpeg >/dev/null || { echo NO_FFMPEG; exit 3; }; "
+    "H0=$(v4l2-ctl -d $DEV --get-ctrl=hue 2>/dev/null | sed -n 's/^hue: //p'); [ -n \"$H0\" ] || { echo NO_HUE; exit 3; }; "
+    "echo \"$H0\" > /tmp/nebulaos-hue.keep; echo \"== $DEV hue at start: $H0\"; "
+    "curl -s -o /dev/null --max-time 120 http://127.0.0.1:8080/stream & V=$!; sleep 6; "
+    "shot(){ v4l2-ctl -d $DEV --set-ctrl=hue=$1 2>&1 | head -1; sleep 3; "
+    "curl -s -o /dev/null --max-time 5 http://127.0.0.1:8080/snapshot; sleep 1; "
+    "curl -s -o /tmp/nebulaos-sweep.jpg --max-time 5 http://127.0.0.1:8080/snapshot; "
+    "ffmpeg -loglevel error -y -i /tmp/nebulaos-sweep.jpg -vf scale=960:-2 -q:v 3 /tmp/nebulaos-sweep-s.jpg "
+    "|| cp /tmp/nebulaos-sweep.jpg /tmp/nebulaos-sweep-s.jpg; "
+    "echo \"IMG hue$1 read=$(v4l2-ctl -d $DEV --get-ctrl=hue 2>&1)\"; base64 /tmp/nebulaos-sweep-s.jpg; echo END; }; "
+    + "; ".join("shot %d" % h for h in _HUE_SWEEP) + "; "
+    "kill $V 2>/dev/null; V=; rm -f /tmp/nebulaos-sweep.jpg /tmp/nebulaos-sweep-s.jpg; "
+    "v4l2-ctl -d $DEV --set-ctrl=hue=$H0; rm -f /tmp/nebulaos-hue.keep; echo \"restored: $(v4l2-ctl -d $DEV --get-ctrl=hue 2>&1)\"",
+    "[ -n \"${V:-}\" ] && kill $V 2>/dev/null; rm -f /tmp/nebulaos-sweep.jpg /tmp/nebulaos-sweep-s.jpg; "
+    "[ -f /tmp/nebulaos-hue.keep ] && [ -n \"${DEV:-}\" ] && v4l2-ctl -d $DEV --set-ctrl=hue=$(cat /tmp/nebulaos-hue.keep) "
+    "&& rm -f /tmp/nebulaos-hue.keep",
+    180)
 
 # Saves the chosen image defaults (camera.py default_config, Run 23) on a
 # printer that already has saved camera settings, through the product path.
