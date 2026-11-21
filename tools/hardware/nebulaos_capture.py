@@ -583,6 +583,24 @@ CAPTURE_PROFILES = {
         "echo \"DMA cache events: $(grep -c \"^cpu$c .* DMAC> \" $F)\"; grep \"^cpu$c .* DMAC[<>] \" $F | tail -n 4; done; "
         "rm -f $F; echo '== previous boot (kernel view)'; head -n 5 /proc/nebulaos_flightrec_prev 2>&1",
         False, None, 90),
+    # 2026-11-21 (#27 test build 2): klippy's CPU pinning (applied state and
+    # the live Cpus_allowed_list), the newest load.log lines, the system log
+    # level next to the screen's, and klippy stall/timer warnings this boot.
+    # Read-only.
+    "test2-checks": ("echo '== now'; date; uptime; uname -v; "
+        "echo '== klippy-cpus setting'; cat /usr/data/nebulaos/system/klippy-cpus 2>&1; "
+        "echo '== klippy-cpus applied'; cat /run/nebulaos/klippy-cpus 2>&1; "
+        "for p in /proc/[0-9]*; do grep -q 'klippy.py' $p/cmdline 2>/dev/null || continue; "
+        "echo \"== klippy pid ${p#/proc/}: $(tr '\\0' ' ' < $p/cmdline | cut -c1-200)\"; "
+        "grep -E 'Cpus_allowed_list' $p/status; for t in $p/task/*; do "
+        "echo \"  thread ${t##*/} $(cat $t/comm) last_cpu=$(cut -d' ' -f39 $t/stat) $(grep Cpus_allowed_list $t/status)\"; done; done; "
+        "echo '== load.log'; L=/usr/data/nebulaos/logs/load.log; ls -la $L* 2>&1; tail -n 6 $L 2>&1 | cut -c1-600; "
+        "echo '== system log level'; cat /usr/data/nebulaos/system/log-level 2>&1; "
+        "echo '== screen log level'; grep -n 'log_level' /opt/printer_data/config/nebulascreen/nebulascreen.json 2>&1; "
+        "echo '== interrupts'; cat /proc/interrupts | tr -s ' '; "
+        "K=/opt/printer_data/logs/klippy.log; echo \"== klippy stalls this log: busy=$(grep -c 'busy for' $K) timer-too-close=$(grep -c -i 'timer too close' $K)\"; "
+        "grep -E 'busy for|[Tt]imer too close' $K | tail -n 10 | cut -c1-200",
+        False, None, 90),
     # 2026-11-08: the newest FREEZE/CRASH evidence in full (the 'blackbox'
     # profile shows heads and tails only), the previous boot's system.log
     # and the log files kept from it. Read-only.
