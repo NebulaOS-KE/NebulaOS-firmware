@@ -612,6 +612,18 @@ CAPTURE_PROFILES = {
         "echo '== link'; iw dev wlan0 link 2>&1 | head -n 12; iw dev wlan0 get power_save 2>&1; "
         "echo '== dmesg wifi'; dmesg | grep -iE 'brcm|wlan|mmc1' | tail -n 30 | cut -c1-200",
         False, None, 90),
+    # 2026-11-21 (#29, colours off): the camera's current controls, the saved
+    # NebulaOS camera settings and one snapshot from the running stream
+    # (base64, decoded on the host). Read-only: v4l2-ctl only lists.
+    "cam-look": ("echo '== now'; date; "
+        "echo '== camera.json'; cat /usr/data/nebulaos/camera/camera.json 2>&1; echo; "
+        "for v in /sys/class/video4linux/video*; do echo \"== $v $(cat $v/name)\"; done; "
+        "for d in /dev/video*; do echo \"== ctrls $d\"; v4l2-ctl -d $d --list-ctrls 2>&1 | head -n 40; "
+        "v4l2-ctl -d $d --get-fmt-video 2>&1 | head -n 8; done; "
+        "echo '== ustreamer'; ps -o pid,args | grep '[u]streamer' | cut -c1-300; "
+        "echo '== snapshot-base64-begin'; curl -sf --max-time 10 http://127.0.0.1:8080/snapshot | base64; "
+        "echo '== snapshot-base64-end'",
+        False, None, 60),
     # 2026-11-08: the newest FREEZE/CRASH evidence in full (the 'blackbox'
     # profile shows heads and tails only), the previous boot's system.log
     # and the log files kept from it. Read-only.
