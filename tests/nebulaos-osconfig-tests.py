@@ -2294,6 +2294,14 @@ class LogsTests(unittest.TestCase):
         self.l.EXTRA_LOG_DIRS = [os.path.join(t, "nlogs")]
         self.l.RUN_FILES = ()
         self.l.EXTRA_FILES = [os.path.join(t, "retention.log")]
+        # #27 limits and the screen hook: defaults, and nothing outside tmp
+        self.l.SAVE_DEADLINE = 240.0
+        self.l.LOG_BUDGET = 25 * 1024 * 1024
+        self.l.CRASH_BUDGET = 20 * 1024 * 1024
+        self.l.TAIL_BYTES = 5 * 1024 * 1024
+        self.l.SCREEN_CONFIG = os.path.join(t, "no-screen.json")
+        self.l.SCREEN_INIT = os.path.join(t, "no-S58")
+        self.l.PRINT_ACTIVE = os.path.join(t, "no-print-active")
         os.makedirs(self.l.LOGS_DIR)
         os.makedirs(os.path.join(self.l.CONFIG_DIR, "backups"))
         os.makedirs(self.l.EXTRA_LOG_DIRS[0])
@@ -2391,6 +2399,186 @@ class LogsTests(unittest.TestCase):
                         "== network ==", "== wi-fi ==", "== processes =="):
             self.assertIn(section, state)
 
+
+    # -- #27 (test build 2) ---------------------------------------------------
+
+    def _screen(self, level="debug"):
+        self.l.SCREEN_CONFIG = os.path.join(self.e.tmp, "nebulascreen.json")
+        self.l.SCREEN_INIT = os.path.join(self.e.bin, "S58nebulascreen")
+        write_exe(self.l.SCREEN_INIT, 'echo "screen $1" >> "%s"\n' % self.calls)
+        self.l.PRINT_ACTIVE = os.path.join(self.e.tmp, "print-active")
+        json.dump({"default_printer": "p", "printers": {"p": {"log_level": level, "x": 1}}},
+                  open(self.l.SCREEN_CONFIG, "w"))
+
+    def _screen_level(self):
+        return json.load(open(self.l.SCREEN_CONFIG))["printers"]["p"]["log_level"]
+
+    def _calls(self):
+        return open(self.calls).read() if os.path.exists(self.calls) else ""
+
+    def test_screen_follows_the_level(self):
+        """#27: WizardKnight's screen stayed on debug while the level said
+        Info. The screen's config now follows the one level."""
+        self._screen("debug")
+        out = self.l.sync_screen_level()
+        self.assertEqual((out["screen"], out["screen_config"]), ("info", "APPLIED"))
+        self.assertEqual(self._screen_level(), "info")
+        self.assertEqual(json.load(open(self.l.SCREEN_CONFIG))["printers"]["p"]["x"], 1)
+        self.assertEqual(self.l.sync_screen_level()["screen_config"], "UNCHANGED")
+        open(self.l.LEVEL_FILE, "w").write("warning\n")
+        self.l.sync_screen_level()
+        self.assertEqual(self._screen_level(), "warn")          # spdlog's name
+        os.unlink(self.l.SCREEN_CONFIG)
+        self.assertEqual(self.l.sync_screen_level()["screen_config"], "MISSING")
+        open(self.l.SCREEN_CONFIG, "w").write("{broken")
+        self.assertEqual(self.l.sync_screen_level()["screen_config"], "MISSING")
+
+    def test_housekeeping_fixes_a_screen_left_on_debug(self):
+        self._screen("debug")
+        open(self.l.PRINT_ACTIVE, "w").close()
+        out = self.l.expire_debug(now=1792100000)
+        self.assertEqual((out["level"], out["screen_restart"]), ("info", "after the print"))
+        self.assertEqual(self._screen_level(), "info")
+        self.assertNotIn("screen restart", self._calls())
+        self._screen("debug")
+        os.unlink(self.l.PRINT_ACTIVE)
+        out = self.l.expire_debug(now=1792100000)
+        self.assertEqual(out["screen_restart"], "done")
+        self.assertIn("screen restart", self._calls())
+        out = self.l.expire_debug(now=1792100000)                # in step: nothing to do
+        self.assertNotIn("screen_restart", out)
+
+    def test_expired_debug_takes_the_screen_along(self):
+        self._screen("debug")
+        open(self.l.LEVEL_FILE, "w").write("debug\n")
+        open(self.l.DEBUG_SINCE_FILE, "w").write("1792100000\n")
+        out = self.l.expire_debug(now=1792100000 + 86400)
+        self.assertEqual((out["result"], self._screen_level()), ("EXPIRED", "info"))
+        self.assertEqual(out["screen_restart"], "done")
+
+    def test_sync_screen_never_waits_for_the_logs_lock(self):
+        """S58 runs it at every screen start - also during a log save and
+        from expire-debug's own screen restart, which both hold the lock."""
+        import threading
+        self._screen("debug")
+        lock = self.e.common.Lock("logs")
+        lock.__enter__()
+        result = {}
+        def call():
+            out, old = io.StringIO(), sys.stdout
+            sys.stdout = out
+            try:
+                result["rc"] = self.e.cli.main(["logs", "sync-screen"])
+            finally:
+                sys.stdout = old
+        t = threading.Thread(target=call, daemon=True)
+        t.start()
+        t.join(5)
+        finished_under_lock = not t.is_alive()
+        lock.__exit__(None, None, None)
+        t.join(5)
+        self.assertTrue(finished_under_lock, "sync-screen waited for the logs lock")
+        self.assertEqual(result.get("rc"), 0)
+        self.assertEqual(self._screen_level(), "info")
+
+    def test_redact_block_is_redact_per_line(self):
+        lines = ["psk=hunter2", '  password: "x y"', "api_key = abc", "bypass: 3",
+                 "PASS  install check 17/17", "tokenizer loaded", "psk=", "psk=\r",
+                 "token:\tabc def", "Secret_Key: v", "psk =   ", "x psk=1 psk=2", "", "\r",
+                 "unicode ü password=é", "auth_token=a=b",
+                 "\u017fecret=1", "\u212aey=2", "no words at all here"]
+        text = "\n".join(lines) + "\n"
+        want = "".join(self.l.redact(l) + "\n" for l in lines)
+        self.assertEqual(self.l.redact_block(text.encode()).decode(), want)
+
+    def _usb(self):
+        os.makedirs(os.path.join(self.l.USB_DIR, "sda1"), exist_ok=True)
+
+    def _open_zip(self, out):
+        import zipfile
+        return zipfile.ZipFile(os.path.join(self.l.USB_DIR, "sda1", out["file"]))
+
+    def test_zip_puts_evidence_first_and_keeps_to_limits(self):
+        """#27: a large or slow save still has what a freeze needs, in a
+        bounded size; run/omitted.txt says what was left out."""
+        self._usb()
+        lg, nl = self.l.LOGS_DIR, self.l.EXTRA_LOG_DIRS[0]
+        crash = os.path.join(self.e.tmp, "crash")
+        os.makedirs(crash)
+        self.l.EXTRA_LOG_DIRS = [nl, crash]
+        self.l.TAIL_BYTES = 1000
+        self.l.LOG_BUDGET = 3000
+        self.l.CRASH_BUDGET = 2500
+        big = "".join("line %05d psk=s%d\n" % (i, i) for i in range(400))     # ~9 KB
+        open(os.path.join(lg, "klippy.log"), "w").write(big)
+        for i, n in enumerate(("klippy.log.2", "klippy.log.1", "nebulascreen.1.log",
+                               "klippy.log.2026-11-19")):
+            p = os.path.join(lg, n)
+            open(p, "w").write("x" * 900 + "\n")
+            os.utime(p, (1792100000 + i * 100, 1792100000 + i * 100))
+        open(os.path.join(nl, "reset-history.log"), "w").write("boot after FREEZE\n")
+        for stamp in ("20261119T001937Z", "20261120T144725Z", "20261118T070055Z"):
+            open(os.path.join(crash, stamp + "-FREEZE-flightrec.txt"), "w").write("f" * 1200 + "\n")
+        open(os.path.join(self.l.CONFIG_DIR, "printer.cfg"), "w").write("[printer]\n")
+        out = self.l.save_logs()
+        self.assertFalse(out["partial"])
+        z = self._open_zip(out)
+        names = z.namelist()
+        pos = names.index
+        self.assertEqual(names[0], "logs/nebulaos-state.txt")
+        self.assertLess(pos("run/dmesg.txt"), pos("nebulaos/nlogs/reset-history.log"))
+        newest, middle = ("nebulaos/crash/%s-FREEZE-flightrec.txt" % s
+                          for s in ("20261120T144725Z", "20261119T001937Z"))
+        self.assertLess(pos(newest), pos(middle))
+        self.assertNotIn("nebulaos/crash/20261118T070055Z-FREEZE-flightrec.txt", names)  # black box limit
+        self.assertLess(pos(middle), pos("config/printer.cfg"))
+        self.assertLess(pos("config/printer.cfg"), pos("logs/klippy.log"))
+        # rotated newest first, within the budget; spdlog's nebulascreen.1.log counts as rotated
+        rotated = [n for n in names if n.startswith("logs/") and n not in
+                   ("logs/klippy.log", "logs/nebulaos-state.txt")]
+        self.assertEqual(rotated[:2], ["logs/klippy.log.2026-11-19", "logs/nebulascreen.1.log"])
+        self.assertNotIn("logs/klippy.log.2", names)
+        self.assertGreater(pos("logs/klippy.log.2026-11-19"), pos("logs/klippy.log"))
+        klippy = z.read("logs/klippy.log").decode()
+        self.assertTrue(klippy.startswith("[Save logs: the first "))
+        self.assertIn("line 00399 psk=[redacted]", klippy)        # the end is kept
+        self.assertNotIn("line 00000", klippy)
+        self.assertNotIn("psk=s399", klippy)
+        omitted = z.read("run/omitted.txt").decode()
+        self.assertIn("logs/klippy.log: first", omitted)
+        self.assertIn("logs/klippy.log.2: 901 bytes (log size limit)", omitted)
+        self.assertIn("20261118T070055Z-FREEZE-flightrec.txt: 1201 bytes (black box limit)", omitted)
+        self.assertEqual(out["omitted"], len(omitted.strip().split("\n")) - 1)
+
+    def test_time_limit_still_gives_a_valid_zip(self):
+        self._usb()
+        open(os.path.join(self.l.LOGS_DIR, "klippy.log"), "w").write("a\n")
+        open(os.path.join(self.l.CONFIG_DIR, "printer.cfg"), "w").write("[printer]\n")
+        self.l.SAVE_DEADLINE = 0
+        out = self.l.save_logs()
+        self.assertTrue(out["partial"])
+        z = self._open_zip(out)
+        self.assertEqual(z.namelist(), ["run/omitted.txt"])
+        omitted = z.read("run/omitted.txt").decode()
+        self.assertIn("stopped early: time limit", omitted)
+        self.assertIn("logs/klippy.log (time limit)", omitted)
+        self.assertEqual([n for n in os.listdir(os.path.join(self.l.USB_DIR, "sda1"))
+                          if n.endswith(".part")], [])
+
+    def test_cpu_per_process(self):
+        proc = os.path.join(self.e.tmp, "proc")
+        os.makedirs(os.path.join(proc, "7"))
+        os.makedirs(os.path.join(proc, "8"))
+        open(os.path.join(proc, "uptime"), "w").write("1100.0 50.0\n")
+        hz = os.sysconf("SC_CLK_TCK")
+        rest = ["S"] + ["0"] * 10 + [str(30 * hz), str(20 * hz)] + ["0"] * 6 + [str(100 * hz), "0"]
+        open(os.path.join(proc, "7", "stat"), "w").write("7 (python3 x) " + " ".join(rest) + "\n")
+        open(os.path.join(proc, "7", "status"), "w").write("Name:\tpython3\nCpus_allowed_list:\t1\n")
+        open(os.path.join(proc, "8", "stat"), "w").write("8 (idle) " + " ".join(["S"] + ["0"] * 20) + "\n")
+        out = self.l._cpu_per_process(proc)
+        self.assertIn("5.0% ", out)                      # 50 s over 1000 s
+        self.assertIn("cpus=1 python3 x", out)
+        self.assertNotIn("idle", out)
 
 class SettingsSnapshotTests(unittest.TestCase):
     """G65 (2026-10-16): copies of the user's settings in config/backups; the

@@ -25,6 +25,7 @@
 #   nebulaos-osconfig boot-display set-mode --mode logo
 #   nebulaos-osconfig logs status | set-level --level info|warning|debug | write-state | save
 #   nebulaos-osconfig logs expire-debug        (housekeeping: Debug ends after 24 h)
+#   nebulaos-osconfig logs sync-screen         (S58: the screen's config follows the level)
 #   nebulaos-osconfig settings status
 #   nebulaos-osconfig settings snapshot --reason new-system|changed|manual
 #                                       [--db api|file|none] [--if-changed]
@@ -90,7 +91,7 @@ READ_ONLY = {("system", "info"), ("network", "status"),
 # polls them), nor is anything from stdin (the Wi-Fi password arrives there).
 # Display sleep/wake run at every screen timeout, so only failures of those.
 _QUIET_OK = {("display", "sleep"), ("display", "wake"), ("boot-display", "render"),
-             ("logs", "write-state"), ("logs", "expire-debug"),
+             ("logs", "write-state"), ("logs", "expire-debug"), ("logs", "sync-screen"),
              ("updates", "check-readiness"), ("camera", "apply"),
              ("image", "trial-count")}
 # Read-only verbs that ARE the domain's status/info function.
@@ -201,6 +202,13 @@ def _dispatch(argv):
         # Its own non-blocking lock: a second flash is refused, never queued.
         opts = _opts(rest, {"file": True, "sha256": True})
         return mcu.flash(opts.get("file"), opts.get("sha256"))
+    if (domain, verb) == ("logs", "sync-screen"):
+        # #27: no domain lock - S58 runs it at every screen start, also while
+        # a log save holds the logs lock, and from expire-debug's own screen
+        # restart (which holds it). It only rewrites the screen's config
+        # atomically.
+        _opts(rest, {})
+        return logs.sync_screen_level()
     with common.Lock(domain):
         if domain == "ota":
             if verb == "check":

@@ -244,8 +244,14 @@ class NebulaOS:
         try:
             out, err = await asyncio.wait_for(proc.communicate(stdin), timeout)
         except asyncio.TimeoutError:
-            proc.kill()
-            await proc.wait()
+            # #27: ask first (the log save closes a valid partial zip on
+            # SIGTERM), kill only if it does not end within 15 s.
+            proc.terminate()
+            try:
+                await asyncio.wait_for(proc.wait(), 15.)
+            except asyncio.TimeoutError:
+                proc.kill()
+                await proc.wait()
             raise self.server.error(
                 f"nebulaos-osconfig {' '.join(args[:2])} timed out", 504)
         try:

@@ -324,5 +324,55 @@ mg_reset_markers
 [ ! -e "$MG_RUN/shed/nebulascreen" ] && [ ! -e "$MG_RUN/shed/camera" ] && grep -q 'S58 start' "$WORK/svc.calls" \
 	&& pass "restart clears stale sheds and restarts NebulaScreen" || fail "stale sheds not cleared"
 
+
+# --- #27: once-a-minute load line -------------------------------------------
+export MG_LOAD_LOG="$WORK/log/load.log"
+lr_stat() { # cpu0 user sys idle irq softirq iowait / cpu1 same
+	printf 'cpu  0 0 0 0 0 0 0 0 0 0\ncpu0 %s 0 %s %s %s %s %s 0 0 0\ncpu1 %s 0 %s %s %s %s %s 0 0 0\nintr 1\n' \
+		"$1" "$2" "$3" "$6" "$4" "$5" "$7" "$8" "$9" "${12}" "${10}" "${11}" > "$MG_PROC/stat"
+}
+lr_pstat() { # pid comm utime stime
+	mkdir -p "$MG_PROC/$1"
+	echo "$1 ($2) S 1 1 1 0 -1 0 0 0 0 0 $3 $4 0 0 20 0 1 0 100 0 0" > "$MG_PROC/$1/stat"
+}
+for _x in "$MG_PROC"/[0-9]*; do rm -rf "$_x"; done
+rm -f "$MG_PIDDIR"/*.pid
+mkdir -p "$MG_PROC/net"
+lr_pstat 300 python3 1000 500; echo 300 > "$MG_PIDDIR/klippy.pid"
+printf 'Name:\tpython3\nCpus_allowed_list:\t1\n' > "$MG_PROC/300/status"
+lr_pstat 301 ustreamer 10 10; echo 301 > "$MG_PIDDIR/ustreamer.pid"
+lr_pstat 400 "kworker/0:1-events" 5 5
+lr_pstat 401 "irq/9-13500000." 0 100
+lr_pstat 402 nginx 1 1
+lr_stat 1000 1000 8000 0 0 0   500 500 9000 0 0 0
+printf '           CPU0       CPU1\n  9:     100000          0  INTC   9  otg\n 44:       5000          0  INTC  44  mmc1\nLOC:       100        200   timer\nERR:          0\n' > "$MG_PROC/interrupts"
+printf 'Inter-|   Receive\n face |bytes    packets\n    lo: 5 1 0 0 0 0 0 0 5 1 0 0 0 0 0 0\n wlan0: 1048576 10 0 0 0 0 0 0 2097152 20 0 0 0 0 0 0\n' > "$MG_PROC/net/dev"
+printf '  sl  local_address rem_address   st\n   0: 0100007F:1F90 0100007F:A000 01 x\n   1: 0100007F:A000 0100007F:1F90 01 x\n   2: 00000000:0050 00000000:0000 0A x\n   3: 9B0FA8C0:0050 160FA8C0:C000 01 x\n' > "$MG_PROC/net/tcp"
+MG_LOAD_PRIMED=0
+mg_load_record
+[ ! -e "$MG_LOAD_LOG" ] && pass "load: the first call only takes the baseline" || fail "load: first call wrote a line"
+# one minute later: cpu0 6000 jiffies (60 s at 100 Hz): us 1200 sy 600 irq 1800 si 600 io 0 idle 1800
+lr_stat 2200 1600 9800 1800 600 0   800 700 14000 0 0 0
+lr_pstat 300 python3 2200 800     # +1500 jiffies = 25 % of one CPU
+lr_pstat 301 ustreamer 130 10      # +120 = 2 %
+lr_pstat 400 "kworker/0:1-events" 305 5
+lr_pstat 401 "irq/9-13500000." 0 700
+printf '           CPU0       CPU1\n  9:     580000          0  INTC   9  otg\n 44:       5000          0  INTC  44  mmc1\nLOC:       6100       6200   timer\nERR:          0\n' > "$MG_PROC/interrupts"
+printf 'Inter-|   Receive\n face |bytes    packets\n wlan0: 2097152 10 0 0 0 0 0 0 7340032 20 0 0 0 0 0 0\n' > "$MG_PROC/net/dev"
+mg_load_record
+LINE=$(cat "$MG_LOAD_LOG" 2>/dev/null)
+for want in "load cpu0=20,10,30,10,0,30" "cpu1=" "klippy=25" "ustreamer=2" "kworker=5" "irq/9=10" \
+	"int=9:480000/0,LOC:6000/6000" "wlan0=tx5120k/rx1024k" "cam=1 web=1" "kcpu=1"; do
+	case "$LINE" in *"$want"*) pass "load line has '$want'" ;; *) fail "load line lacks '$want': $LINE" ;; esac
+done
+case "$LINE" in *"44:"*) fail "load line lists an IRQ that did not fire" ;; *) pass "load line skips silent IRQs" ;; esac
+case "$LINE" in *moonraker=*) fail "load line lists a process that is not running" ;; *) pass "load line skips absent processes" ;; esac
+# a new klippy pid starts from a fresh baseline, never a huge or negative value
+lr_pstat 310 python3 50 50; echo 310 > "$MG_PIDDIR/klippy.pid"
+printf 'Cpus_allowed_list:\t0-1\n' > "$MG_PROC/310/status"
+mg_load_record
+LINE=$(tail -1 "$MG_LOAD_LOG")
+case "$LINE" in *" klippy=0 "*"kcpu=0-1"*) pass "restarted klippy: fresh baseline" ;; *) fail "restarted klippy: $LINE" ;; esac
+grep -q "load" "$MG_LOG" && fail "load line went to memguard.log" || pass "load line stays out of memguard.log"
 echo "nebulaos-memguard-tests: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

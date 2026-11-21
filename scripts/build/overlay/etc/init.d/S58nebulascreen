@@ -32,6 +32,11 @@ start() {
 			/usr/share/nebulaos/nebulascreen/release_info.json
 		ns_activate "$NS_APP" "$NS_DIR" "$NS_UPDATE_STATE"
 	fi
+	# #27 (test build 2): the screen reads its log level from its own config
+	# at start; write the one NebulaOS level there first, so a screen can no
+	# longer stay on debug while Report a problem says Info. Best effort.
+	NS_OSCONFIG="${NS_OSCONFIG:-/usr/libexec/nebulaos/nebulaos-osconfig}"
+	[ -x "$NS_OSCONFIG" ] && "$NS_OSCONFIG" logs sync-screen >/dev/null 2>&1
 	# OOM priority at birth (MEM-T07): expendable UI tier, explicit 0.
 	nebulaos_start_with_adj "$NEBULAOS_ADJ_NEBULASCREEN" \
 		start-stop-daemon -S -b -m -p "$PIDFILE" \

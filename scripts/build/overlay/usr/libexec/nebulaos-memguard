@@ -316,6 +316,152 @@ mg_snapshot() {
 	MG_SYSLOG_PRIORITY=
 }
 
+# #27 (test build 2): once a minute, what used the processors. One line in
+# MG_LOAD_LOG (not the system log), deltas over the last minute:
+#   cpuN=us,sy,irq,si,io,id    % of that CPU (user+nice, system, hard irq,
+#                              soft irq, iowait, idle) from /proc/stat
+#   klippy=.. moonraker=..     % of one CPU per process (utime+stime)
+#   kworker= ksoftirqd= irq/N= kernel threads (irq/N = threaded handlers)
+#   int=N:c0/c1,..             interrupts per IRQ and CPU (only those that fired)
+#   wlan0=txK/rxK              kB sent/received
+#   cam= web=                  open connections to ustreamer :8080 / nginx :80
+#   kcpu=                      CPUs klippy may run on
+# The first call after start only takes the baseline. Everything is read
+# with the `read` builtin (no forks); the /proc walk is the same one
+# mg_enforce_adj does every 5 s.
+MG_LOAD_LOG="${MG_LOAD_LOG:-/usr/data/nebulaos/logs/load.log}"
+MG_LOAD_LOG_MAX=262144
+
+mg_load_log() {
+	[ -n "$MG_LOAD_LOG" ] || return 0
+	[ -d "${MG_LOAD_LOG%/*}" ] || mkdir -p "${MG_LOAD_LOG%/*}" 2>/dev/null || return 0
+	echo "$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null) $*" >> "$MG_LOAD_LOG" 2>/dev/null || return 0
+	_sz=$(wc -c < "$MG_LOAD_LOG" 2>/dev/null)
+	[ "${_sz:-0}" -gt "$MG_LOAD_LOG_MAX" ] && mv -f "$MG_LOAD_LOG" "$MG_LOAD_LOG.1" 2>/dev/null
+	return 0
+}
+
+# _d = value - previous value stored in LR_<key>; stores the new value.
+# A counter that went backwards (restart, new pid) reads as 0.
+mg_lr_delta() { # key value
+	eval "_o=\${LR_$1:-}"
+	eval "LR_$1=\$2"
+	if [ -z "$_o" ] || [ "$2" -lt "$_o" ] 2>/dev/null; then _d=0; else _d=$(($2 - _o)); fi
+}
+
+mg_lr_pct() { # part total -> _pc (integer %)
+	if [ "${2:-0}" -gt 0 ]; then _pc=$(($1 * 100 / $2)); else _pc=0; fi
+}
+
+mg_load_record() {
+	_l="load"
+	_wall=0
+	while read -r _c _us _ni _sy _id _io _ir _si _rest; do
+		case "$_c" in cpu[0-9]*) ;; *) continue ;; esac
+		mg_lr_delta "${_c}_us" $((_us + _ni)); _dus=$_d
+		mg_lr_delta "${_c}_sy" "$_sy"; _dsy=$_d
+		mg_lr_delta "${_c}_ir" "$_ir"; _dir=$_d
+		mg_lr_delta "${_c}_si" "$_si"; _dsi=$_d
+		mg_lr_delta "${_c}_io" "$_io"; _dio=$_d
+		mg_lr_delta "${_c}_id" "$_id"; _did=$_d
+		_tot=$((_dus + _dsy + _dir + _dsi + _dio + _did))
+		[ "$_tot" -gt "$_wall" ] && _wall=$_tot
+		_f=
+		for _v in $_dus $_dsy $_dir $_dsi $_dio $_did; do
+			mg_lr_pct "$_v" "$_tot"; _f="$_f,$_pc"
+		done
+		_l="$_l $_c=${_f#,}"
+	done < "$MG_PROC/stat"
+
+	# named processes
+	for _e in klippy moonraker nebulascreen ustreamer klipper_mcu; do
+		mg_pid_of "$_e.pid"
+		_t=
+		if [ -n "$_p" ] && read -r _st < "$MG_PROC/$_p/stat" 2>/dev/null; then
+			# shellcheck disable=SC2086
+			set -- ${_st##*) }
+			_t=$((${12} + ${13}))
+			mg_lr_delta "p_${_e}_pid" "$_p"
+			[ "$_d" = 0 ] || unset "LR_p_${_e}"
+		fi
+		[ -n "$_t" ] || continue
+		mg_lr_delta "p_${_e}" "$_t"; mg_lr_pct "$_d" "$_wall"
+		_l="$_l $_e=$_pc"
+	done
+
+	# kernel threads and nginx, by name
+	_kw=0 _ks=0 _ng=0 _irq=
+	for _dd in "$MG_PROC"/[0-9]*; do
+		read -r _st < "$_dd/stat" 2>/dev/null || continue
+		_cm=${_st#*(}; _cm=${_cm%%)*}
+		case "$_cm" in kworker*|ksoftirqd*|irq/*|nginx) ;; *) continue ;; esac
+		# shellcheck disable=SC2086
+		set -- ${_st##*) }
+		_t=$((${12} + ${13}))
+		case "$_cm" in
+		kworker*) _kw=$((_kw + _t)) ;;
+		ksoftirqd*) _ks=$((_ks + _t)) ;;
+		nginx) _ng=$((_ng + _t)) ;;
+		irq/*)
+			_n=${_cm#irq/}; _n=${_n%%-*}
+			case "$_n" in *[!0-9]*|"") continue ;; esac
+			mg_lr_delta "t_irq$_n" "$_t"
+			[ "$_d" -gt 0 ] && { mg_lr_pct "$_d" "$_wall"; _irq="$_irq irq/$_n=$_pc"; }
+			;;
+		esac
+	done
+	mg_lr_delta k_kworker "$_kw"; mg_lr_pct "$_d" "$_wall"; _l="$_l kworker=$_pc"
+	mg_lr_delta k_ksoftirqd "$_ks"; mg_lr_pct "$_d" "$_wall"; _l="$_l ksoftirqd=$_pc"
+	mg_lr_delta k_nginx "$_ng"; mg_lr_pct "$_d" "$_wall"; _l="$_l nginx=$_pc"
+	_l="$_l$_irq"
+
+	# interrupts per IRQ and CPU
+	_int=
+	while read -r _n _c0 _c1 _rest; do
+		case "$_n" in *:) _n=${_n%:} ;; *) continue ;; esac
+		case "$_n" in *[!A-Za-z0-9]*|"") continue ;; esac
+		case "$_c0$_c1" in *[!0-9]*|"") continue ;; esac
+		mg_lr_delta "i0_$_n" "$_c0"; _d0=$_d
+		mg_lr_delta "i1_$_n" "$_c1"; _d1=$_d
+		[ $((_d0 + _d1)) -gt 0 ] && _int="$_int,$_n:$_d0/$_d1"
+	done < "$MG_PROC/interrupts"
+	_l="$_l int=${_int#,}"
+
+	# Wi-Fi traffic
+	while read -r _a _b; do
+		case "$_a" in wlan0:*) ;; *) continue ;; esac
+		_r="${_a#wlan0:} $_b"
+		# shellcheck disable=SC2086
+		set -- $_r
+		mg_lr_delta n_rx "$1"; _rx=$((_d / 1024))
+		mg_lr_delta n_tx "$9"; _tx=$((_d / 1024))
+		_l="$_l wlan0=tx${_tx}k/rx${_rx}k"
+	done < "$MG_PROC/net/dev"
+
+	# open camera / web connections (ESTABLISHED = st 01)
+	_cam=0 _web=0
+	for _tf in "$MG_PROC/net/tcp" "$MG_PROC/net/tcp6"; do
+		[ -r "$_tf" ] || continue
+		while read -r _sl _la _ra _stt _rest; do
+			[ "$_stt" = 01 ] || continue
+			case "$_la" in *:1F90) _cam=$((_cam + 1)) ;; *:0050) _web=$((_web + 1)) ;; esac
+		done < "$_tf"
+	done
+	_l="$_l cam=$_cam web=$_web"
+
+	mg_pid_of klippy.pid
+	if [ -n "$_p" ]; then
+		while read -r _k _v; do
+			[ "$_k" = Cpus_allowed_list: ] && { _l="$_l kcpu=$_v"; break; }
+		done < "$MG_PROC/$_p/status"
+	fi
+
+	if [ "${MG_LOAD_PRIMED:-0}" = 1 ]; then
+		mg_load_log "$_l"
+	fi
+	MG_LOAD_PRIMED=1
+}
+
 # MEM-T14 conditions. "zram nearly full" only counts when a limit is set.
 mg_enter_cond() { # level
 	_ma=$((MA / 1024))
@@ -533,6 +679,7 @@ mg_tick() {
 	if [ $((NOW - ${MG_LAST_SNAPSHOT:--1000})) -ge "$MG_SNAPSHOT_EVERY" ]; then
 		MG_LAST_SNAPSHOT=$NOW
 		mg_snapshot
+		mg_load_record
 	fi
 }
 
