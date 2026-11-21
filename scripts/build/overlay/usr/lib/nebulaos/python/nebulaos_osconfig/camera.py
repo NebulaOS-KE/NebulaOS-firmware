@@ -24,8 +24,10 @@
 # camera turns into a mass-storage device) is not in it and cannot be sent: no
 # command-line or HTTP parameter carries a selector number.
 #
-# Flip stays in Mainsail. Gamma, hue, backlight compensation and focus
-# (fixed lens) are never written.
+# Flip stays in Mainsail. Gamma, backlight compensation and focus (fixed
+# lens) are never written. Hue is not a setting but is always written as HUE
+# (#29): the camera starts at 50, the bottom of its 50-160 range, which turns
+# red orange and white purple.
 import array
 import errno
 import fcntl
@@ -61,6 +63,12 @@ RANGES = {"brightness": (50, 160), "contrast": (50, 160), "saturation": (50, 160
 # off showed no banding (50 Hz would band in 60 Hz countries). Night mode
 # defaults to colour: the camera's own automatic switch (threshold fixed in
 # its firmware) went black-and-white in normal room light (owner: colour).
+# Hue: the middle of the camera's 50-160 range. A sweep on ke-dev (2026-11-21,
+# exercise nebula-camera-hue-sweep, red print, white wall): 50 orange/purple,
+# 80 red-orange, 105 red and a neutral wall, 128 pinkish/blue, 160 magenta.
+HUE = 105
+
+
 def default_config():
     return {"schema": SCHEMA, "ir_mode": "color", "power_line": "off",
             "brightness": 125, "contrast": 155, "saturation": 145, "sharpness": 110,
@@ -167,6 +175,7 @@ def ioc_readwrite(type_char, nr, size, mips=None):
 
 V4L2_CTRL = struct.Struct("=Ii")                       # struct v4l2_control
 CID = {"brightness": 0x00980900, "contrast": 0x00980901, "saturation": 0x00980902,
+       "hue": 0x00980903,
        "wb_auto": 0x0098090c, "power_line": 0x00980918, "wb_temperature": 0x0098091a,
        "sharpness": 0x0098091b, "exposure_auto": 0x009a0901,
        "exposure_time": 0x009a0902, "zoom": 0x009a090d}
@@ -279,6 +288,7 @@ def _apply(cfg, cam, ioctl=None):
         steps += [(k, cfg[k]) for k in ("brightness", "contrast", "saturation", "sharpness",
                                         "zoom")]
         steps.append(("power_line", POWER_LINE[cfg["power_line"]]))
+        steps.append(("hue", HUE))
         for name, value in steps:
             try:
                 dev.set_ctrl(name, value)

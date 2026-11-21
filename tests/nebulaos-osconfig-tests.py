@@ -1310,6 +1310,20 @@ class CameraTests(unittest.TestCase):
         src = open(self.c.__file__).read()
         self.assertEqual(src.count('ioc_readwrite("u", 0x21'), 2)   # only Device.xu*
 
+    def test_hue_always_written_as_the_middle_of_its_range(self):
+        # #29: the camera starts at hue 50 (red looks orange); every apply sets 105.
+        self.plug()
+        fake = FakeCameraIoctl(self.c)
+        self.assertEqual(self.c.apply(ioctl=fake)["result"], "APPLIED")
+        self.assertIn(("ctrl", "hue", 105), fake.calls)
+        self.assertEqual(self.c.HUE, 105)
+        self.assertNotIn("hue", self.c.default_config())          # not a user setting
+        fake = FakeCameraIoctl(self.c)
+        self.c.set_settings({"brightness": 140}, fake)
+        self.assertIn(("ctrl", "hue", 105), fake.calls)
+        with self.assertRaises(self.e.common.OsConfigError):
+            self.c.set_settings({"hue": 80}, FakeCameraIoctl(self.c))
+
     def test_apply_order_auto_manual_rest_ir(self):
         self.plug()
         self.c._persist(dict(self.c.default_config(), wb_auto=False, wb_temperature=500,
