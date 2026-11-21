@@ -601,6 +601,17 @@ CAPTURE_PROFILES = {
         "K=/opt/printer_data/logs/klippy.log; echo \"== klippy stalls this log: busy=$(grep -c 'busy for' $K) timer-too-close=$(grep -c -i 'timer too close' $K)\"; "
         "grep -E 'busy for|[Tt]imer too close' $K | tail -n 10 | cut -c1-200",
         False, None, 90),
+    # 2026-11-21: why the dev printer's Wi-Fi went silent while the system
+    # kept running - Wi-Fi/DHCP/driver lines from every kept system log,
+    # the network watchdog's own log and the current link. Read-only.
+    "wifi-history": ("echo '== now'; date; uptime; "
+        "for S in $(ls -tr /opt/printer_data/logs/system.log* 2>/dev/null); do echo \"== $S\"; "
+        "grep -iE 'wlan|brcm|wpa_|udhcpc|dhcp|carrier|deauth|disassoc|assoc|nebulaos-net|wifi|mmc1|syslogd started|kernel: \\[ +0\\.0' $S "
+        "| grep -v dropbear | tail -n 120 | cut -c1-220; done; "
+        "for L in /usr/data/nebulaos/logs/*net* /usr/data/nebulaos/logs/*wifi*; do [ -f $L ] && { echo \"== $L\"; tail -n 60 $L | cut -c1-220; }; done; "
+        "echo '== link'; iw dev wlan0 link 2>&1 | head -n 12; iw dev wlan0 get power_save 2>&1; "
+        "echo '== dmesg wifi'; dmesg | grep -iE 'brcm|wlan|mmc1' | tail -n 30 | cut -c1-200",
+        False, None, 90),
     # 2026-11-08: the newest FREEZE/CRASH evidence in full (the 'blackbox'
     # profile shows heads and tails only), the previous boot's system.log
     # and the log files kept from it. Read-only.
