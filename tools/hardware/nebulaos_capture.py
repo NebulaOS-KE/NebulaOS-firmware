@@ -1704,6 +1704,14 @@ EXERCISE_PROFILES.update({
         "tail -5 $T/batch.log",
         ":",
         1500),
+    # #27 (2026-11-23): freeze soak with Klipper's own print computation and
+    # no printing. klippy-batch's preparation, then the same 300k-line batch
+    # pass in a loop on each hardware thread (nice 10) for KBS_SECONDS (8 h):
+    # the kinematics/step code of a print at ~27x print speed, no MCU port,
+    # no motion, no heater. A freeze here = the trigger is the computation;
+    # none in 8 h = it needs the physical print (heaters/motors).
+    # Minute marks in /proc/nebulaos_flightrec, one line per pass.
+    "klippy-batch-soak": None,
     # Boot forensics: the cost of the checks S04/S05 repeat on every normal
     # boot, cold (page cache dropped, as at boot) and warm; plus the evidence
     # behind the per-boot migrate findings. The checks only import modules and
@@ -2134,6 +2142,31 @@ EXERCISE_PROFILES["gs-boot-mode-logo-direct"] = (
     ":", 60)
 
 # Exercises that embed a tracked hwcap probe, the same way captures do.
+def _klippy_batch_soak():
+    base = EXERCISE_PROFILES["klippy-batch"][0]
+    base = base.replace("mkfifo $T/in.gcode; ", "").replace(
+        "head -n 300000 \"$G\" > $T/in.gcode & ", "")
+    prep = base[:base.index('echo "before:')]
+    loop = (
+        "D=${KBS_SECONDS:-28800}; end=$(($(cut -d. -f1 /proc/uptime) + D)); "
+        "echo \"soak: seconds=$D boot_id=$(cat /proc/sys/kernel/random/boot_id)\"; "
+        "for c in 0 1; do ( n=0; while [ $(cut -d. -f1 /proc/uptime) -lt $end ]; do n=$((n + 1)); "
+        "head -n 300000 \"$G\" | taskset -c $c nice -n 10 $PY /opt/klipper/klippy/klippy.py $T/batch.cfg "
+        "-i /dev/stdin -o /dev/null -d $T/board.json -d rpi=$T/host.json -l $T/b$c.log >/dev/null 2>&1; "
+        "echo \"cpu$c pass=$n rc=$? up=$(cut -d' ' -f1 /proc/uptime)\"; done ) & done; "
+        "m=0; while [ $(cut -d. -f1 /proc/uptime) -lt $end ]; do sleep 60; m=$((m + 1)); "
+        "{ echo $m > /proc/nebulaos_flightrec; } 2>/dev/null; "
+        "echo \"== m=$m up=$(cut -d' ' -f1 /proc/uptime) load=$(cut -d' ' -f1-3 /proc/loadavg)\"; done; wait; "
+        "echo \"errors=$(cat $T/b0.log $T/b1.log 2>/dev/null | grep -c '^!!')\"; tail -3 $T/b1.log")
+    return _IDLE_GUARD + prep + loop
+
+
+EXERCISE_PROFILES["klippy-batch-soak"] = (
+    _klippy_batch_soak(),
+    "pkill -f 'batch.cfg -i /dev/stdin' 2>/dev/null; :",
+    28800 + 900)
+
+
 EXERCISE_PROBES = {"ktimers-ab": ("timerlat.py",), "ttyflip-ab": ("ptyrtt.py",),
                    "uart-fe-probe": ("qualmcu.py",), "mcu-link-bench": ("qualmcu.py",),
                    "mcu-identify-repeat": ("qualmcu.py",), "live-m1-identify": ("lv_m1.py",),
