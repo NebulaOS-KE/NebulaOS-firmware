@@ -628,6 +628,18 @@ CAPTURE_PROFILES = {
         "echo \"CPM+$o=$(devmem $((0x10000000 + o)) 32 2>&1)\"; done; sleep 2; done; "
         "echo '== clk'; grep -iE 'ddr|cpu|apll|mpll|epll|l2|ahb|apb|h0|h2|pclk' /sys/kernel/debug/clk/clk_summary 2>&1 | head -n 40",
         False, None, 60),
+    # 2026-11-22: the END of every section of the newest FREEZE/CRASH flight
+    # recording (blackbox-full is cut at ~1 MB, before the ends), plus the
+    # newest heartbeat lines. Read-only.
+    "freeze-tails": ("N=/usr/data/nebulaos/logs/crash; F=$(ls -t $N/*-flightrec.txt 2>/dev/null | head -n 1); "
+        "echo \"== $F\"; head -n 4 \"$F\"; "
+        "grep -n '^== ' \"$F\" | while IFS=: read n rest; do echo \"$n\"; done > /tmp/nfr-sec.$$; "
+        "echo $(($(wc -l < \"$F\") + 1)) >> /tmp/nfr-sec.$$; "
+        "p=; while read n; do if [ -n \"$p\" ]; then sed -n \"${p}p\" \"$F\"; "
+        "s=$((n - 120)); [ $s -le $p ] && s=$((p + 1)); sed -n \"${s},$((n - 1))p\" \"$F\"; fi; p=$n; done < /tmp/nfr-sec.$$; "
+        "rm -f /tmp/nfr-sec.$$; P=$(ls -t $N/*-pmsg-ramoops-0.txt 2>/dev/null | head -n 1); "
+        "echo \"== $P (last 15)\"; tail -n 15 \"$P\" | cut -c1-400",
+        False, None, 120),
     # 2026-11-21 (#29, colours off): the camera's current controls, the saved
     # NebulaOS camera settings and one snapshot from the running stream
     # (base64, decoded on the host). Read-only: v4l2-ctl only lists.
