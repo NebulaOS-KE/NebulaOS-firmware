@@ -30,7 +30,7 @@ HWCAP_DIR = os.path.join(FW_ROOT, "tools", "hwcap")
 PROBES = ("schedsnap.py", "timerlat.py", "ptyrtt.py", "kduty.py", "adxl_overflows.py", "qualmcu.py",
           "lv_m1.py", "lv_s1.sh", "lv_s2.sh", "lv_g5.sh", "lv_cam.sh", "lv_g6.sh", "lv_g7.sh", "lv_g8.sh", "lv_g9.sh", "lv_g10.sh", "lv_ng1.py", "pf_cam.sh", "fb_ng3.sh", "fb_cam10.sh",
           "gs_services.sh", "gs_display.sh", "gs_sleep.sh", "gs_bootmode.sh", "gs_wifi.sh",
-          "provoke.sh", "qstatus.py")
+          "provoke.sh", "qstatus.py", "ddrchurn.gz.b64")
 # Pinned data files embedded compressed (dropbear refuses a command longer than
 # MAX_CMD_LEN = 9000 bytes, so a whole profile must stay under SCRIPT_LIMIT).
 DATA_FILES = ("klipper-dict-board.json",)
@@ -1015,7 +1015,8 @@ CAPTURE_PROFILES = {
 # Defined by the plan as reversible state changes: TOOL-02 `exercise`, never `capture`.
 EXERCISE_ONLY = ("camera-resume", "camera-states", "memexercise", "sof-filter-ab", "storage-autosuspend",
                  "cpu-load", "camera-viewer", "wifi-load", "usb-storage-io", "ktimers-ab", "ttyflip-ab",
-                 "memexercise-sw100", "watchdog-arm", "watchdog-fire", "camera-resolution-trial", "nebula-camera-sweep", "nebula-camera-sweep2", "nebula-camera-sweep3", "nebula-camera-set-defaults", "nebula-camera-hue-sweep")
+                 "memexercise-sw100", "watchdog-arm", "watchdog-fire", "camera-resolution-trial", "nebula-camera-sweep", "nebula-camera-sweep2", "nebula-camera-sweep3", "nebula-camera-set-defaults", "nebula-camera-hue-sweep",
+                 "ddr-churn-30m", "ddr-churn-cam-30m")
 
 
 class CaptureError(Exception):
@@ -1612,6 +1613,27 @@ EXERCISE_PROFILES["flightrec-mmio-on"] = (
 
 EXERCISE_PROFILES["freeze-provoke"] = (
     _IDLE_GUARD + "T=$T sh $T/provoke.sh 36000 all", _PROVOKE_UNDO, 36000 + 300)
+# 2026-11-22 (#27): DDR power-down churn on an idle printer. tools/hwcap/
+# ddrchurn.c (built with the 2c017c5 Buildroot toolchain: mipsel-linux-gcc -Os
+# -s -pthread, stripped, gzip -9 -n, base64 = ddrchurn.gz.b64): random
+# read-modify-writes over 32 MB with 0..400-turn pauses on both hardware
+# threads, nice 10, so the RAM enters and leaves automatic power-down as often
+# as possible. No device access, no motion, no heater. -cam adds a local
+# reader of the camera stream (USB DMA + cache invalidates, as at ke-dev's
+# 11-22 13:14 freeze). A freeze shows as the 10 s lines stopping and a lost
+# connection; evidence then in logs/crash after the reset. Prints DDRC_CTRL
+# and DLP first (power-down on/off).
+_CHURN = ("python3 -c \"import base64,gzip,sys; sys.stdout.buffer.write(gzip.decompress(base64.b64decode(open('$T/ddrchurn.gz.b64').read())))\" "
+          "> $T/ddrchurn && chmod +x $T/ddrchurn || exit 4; "
+          "echo \"DDRC_CTRL=$(devmem 0x134f0010 32) DDRC_DLP=$(devmem 0x134f0020 32) kernel=$(uname -v)\"; ")
+_CHURN_UNDO = "pkill -f $T/ddrchurn 2>/dev/null; pkill -f 'nebulaos-churn-cam' 2>/dev/null; true"
+EXERCISE_PROFILES["ddr-churn-30m"] = (
+    _IDLE_GUARD + _CHURN + "nice -n 10 $T/ddrchurn 1800 400", _CHURN_UNDO, 1800 + 300)
+EXERCISE_PROFILES["ddr-churn-cam-30m"] = (
+    _IDLE_GUARD + _CHURN +
+    "pidof ustreamer >/dev/null || { echo NO_CAMERA_STREAM; exit 3; }; "
+    "sh -c ': nebulaos-churn-cam; while :; do curl -s --max-time 600 -o /dev/null http://127.0.0.1:8080/stream; sleep 1; done' & "
+    "nice -n 10 $T/ddrchurn 1800 400", _CHURN_UNDO, 1800 + 300)
 EXERCISE_PROFILES["freeze-provoke-short"] = (
     _IDLE_GUARD + "T=$T sh $T/provoke.sh 180 all", _PROVOKE_UNDO, 180 + 300)
 
@@ -2123,7 +2145,8 @@ EXERCISE_PROBES = {"ktimers-ab": ("timerlat.py",), "ttyflip-ab": ("ptyrtt.py",),
                    "gs-boot-mode-blank": ("gs_bootmode.sh",),
                    "gs-boot-mode-console": ("gs_bootmode.sh",),
                    "gs-boot-mode-logo": ("gs_bootmode.sh",),
-                   "freeze-provoke": ("provoke.sh",), "freeze-provoke-short": ("provoke.sh",)}
+                   "freeze-provoke": ("provoke.sh",), "freeze-provoke-short": ("provoke.sh",),
+                   "ddr-churn-30m": ("ddrchurn.gz.b64",), "ddr-churn-cam-30m": ("ddrchurn.gz.b64",)}
 
 
 def exercise_script(name):
