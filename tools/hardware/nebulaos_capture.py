@@ -987,7 +987,7 @@ CAPTURE_PROFILES = {
 # Defined by the plan as reversible state changes: TOOL-02 `exercise`, never `capture`.
 EXERCISE_ONLY = ("camera-resume", "camera-states", "memexercise", "sof-filter-ab", "storage-autosuspend",
                  "cpu-load", "camera-viewer", "wifi-load", "usb-storage-io", "ktimers-ab", "ttyflip-ab",
-                 "memexercise-sw100", "watchdog-arm", "watchdog-fire", "camera-resolution-trial", "nebula-camera-sweep", "nebula-camera-sweep2", "nebula-camera-sweep3", "nebula-camera-set-defaults", "nebula-camera-hue-sweep")
+                 "memexercise-sw100", "watchdog-arm", "watchdog-fire", "camera-resolution-trial", "nebula-camera-sweep", "nebula-camera-sweep2", "nebula-camera-sweep3", "nebula-camera-set-defaults", "nebula-camera-hue-sweep", "usb-dma-check")
 
 
 class CaptureError(Exception):
@@ -1375,6 +1375,47 @@ EXERCISE_PROFILES["nebula-camera-hue-sweep"] = (
     "[ -f /tmp/nebulaos-hue.keep ] && [ -n \"${DEV:-}\" ] && v4l2-ctl -d $DEV --set-ctrl=hue=$(cat /tmp/nebulaos-hue.keep) "
     "&& rm -f /tmp/nebulaos-hue.keep",
     180)
+
+# #27 (2026-11-22): small-buffer USB DMA data check. The X2600 stale-L2 bug
+# showed in tiny USB control transfers; the Nebula Camera's vendor reads
+# (UVCIOC_CTRL_QUERY GET_CUR, selectors 15 = firmware string and 16 = IR
+# payload, 60 bytes each, never cached by uvcvideo) are the same kind. They
+# are read alternately; a read that returns the OTHER selector's bytes is a
+# stale buffer, anything else that differs is corruption. Reads only (the
+# camera.py allow-list), nothing is set; the stream keeps running. N pairs
+# (default 20000) - about 40000 control transfers.
+EXERCISE_PROFILES["usb-dma-check"] = (
+    "python3 - <<'PY'\n"
+    "import os, sys, time\n"
+    "sys.path.insert(0, '/usr/lib/nebulaos/python')\n"
+    "from nebulaos_osconfig import camera as c\n"
+    "cam = c.find_camera()\n"
+    "if cam is None:\n"
+    "    print('NO_NEBULA_CAMERA'); sys.exit(3)\n"
+    "dev = c.Device(cam)\n"
+    "rd = lambda sel: bytes(dev.xu(sel, c.UVC_GET_CUR, c.IR_PAYLOAD))\n"
+    "base = {15: rd(15), 16: rd(16)}\n"
+    "print('firmware=%r' % base[15].split(bytes(1), 1)[0])\n"
+    "if base[15] == base[16]:\n"
+    "    print('SAME_PAYLOADS_CANNOT_DETECT_STALE'); sys.exit(3)\n"
+    "n = 20000; stale = other = err = 0; t0 = time.time()\n"
+    "for i in range(2 * n):\n"
+    "    sel = 15 if i % 2 == 0 else 16\n"
+    "    try:\n"
+    "        got = rd(sel)\n"
+    "    except OSError as e:\n"
+    "        err += 1\n"
+    "        if err <= 5: print('ERROR i=%d sel=%d %s' % (i, sel, e))\n"
+    "        continue\n"
+    "    if got != base[sel]:\n"
+    "        if got == base[31 - sel]: stale += 1\n"
+    "        else: other += 1\n"
+    "        if stale + other <= 20: print('MISMATCH i=%d sel=%d got=%s' % (i, sel, got.hex()))\n"
+    "dev.close()\n"
+    "print('USB_DMA_CHECK transfers=%d stale=%d other=%d errors=%d seconds=%.1f' % (2 * n, stale, other, err, time.time() - t0))\n"
+    "PY",
+    "true",
+    600)
 
 # Saves the chosen image defaults (camera.py default_config, Run 23) on a
 # printer that already has saved camera settings, through the product path.
