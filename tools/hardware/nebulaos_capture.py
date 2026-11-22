@@ -612,6 +612,22 @@ CAPTURE_PROFILES = {
         "echo '== link'; iw dev wlan0 link 2>&1 | head -n 12; iw dev wlan0 get power_save 2>&1; "
         "echo '== dmesg wifi'; dmesg | grep -iE 'brcm|wlan|mmc1' | tail -n 30 | cut -c1-200",
         False, None, 90),
+    # 2026-11-22 (#27): DDR controller + CPM power/clock state at runtime -
+    # is automatic DDR power-down / self-refresh / dynamic clock gating on?
+    # Read-only devmem of configuration registers only (DDRC 0x134f0000:
+    # STATUS CFG CTRL LMR DLP AUTOSR_EN REFCNT TIMING1-6 MMAP0/1; DDRC APB
+    # 0x13012000: DWCFG DWSTATUS CCHC0/1/3/5/6 CGUC0/1; CPM 0x10000000:
+    # CPCCR LCR CLKGR OPCR CLKGR1 DDRCDR), twice 2 s apart, plus clk_summary.
+    "ddr-state": ("echo '== now'; date; uptime; uname -v; cat /proc/cmdline; "
+        "for P in 1 2; do echo \"== pass $P\"; "
+        "for o in 0x00 0x08 0x10 0x18 0x20 0x28 0x38 0x40 0x48 0x50 0x58 0x60 0x68 0x78 0x80; do "
+        "echo \"DDRC+$o=$(devmem $((0x134f0000 + o)) 32 2>&1)\"; done; "
+        "for o in 0x00 0x04 0x20 0x24 0x2c 0x34 0x38 0x64 0x68; do "
+        "echo \"DDRAPB+$o=$(devmem $((0x13012000 + o)) 32 2>&1)\"; done; "
+        "for o in 0x00 0x04 0x20 0x24 0x28 0x2c; do "
+        "echo \"CPM+$o=$(devmem $((0x10000000 + o)) 32 2>&1)\"; done; sleep 2; done; "
+        "echo '== clk'; grep -iE 'ddr|cpu|apll|mpll|epll|l2|ahb|apb|h0|h2|pclk' /sys/kernel/debug/clk/clk_summary 2>&1 | head -n 40",
+        False, None, 60),
     # 2026-11-21 (#29, colours off): the camera's current controls, the saved
     # NebulaOS camera settings and one snapshot from the running stream
     # (base64, decoded on the host). Read-only: v4l2-ctl only lists.
