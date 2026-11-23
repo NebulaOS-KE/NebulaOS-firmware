@@ -30,7 +30,7 @@ HWCAP_DIR = os.path.join(FW_ROOT, "tools", "hwcap")
 PROBES = ("schedsnap.py", "timerlat.py", "ptyrtt.py", "kduty.py", "adxl_overflows.py", "qualmcu.py",
           "lv_m1.py", "lv_s1.sh", "lv_s2.sh", "lv_g5.sh", "lv_cam.sh", "lv_g6.sh", "lv_g7.sh", "lv_g8.sh", "lv_g9.sh", "lv_g10.sh", "lv_ng1.py", "pf_cam.sh", "fb_ng3.sh", "fb_cam10.sh",
           "gs_services.sh", "gs_display.sh", "gs_sleep.sh", "gs_bootmode.sh", "gs_wifi.sh",
-          "provoke.sh", "qstatus.py", "ddrchurn.gz.b64")
+          "provoke.sh", "qstatus.py", "ddrchurn.gz.b64", "mcusoak.gz.b64")
 # Pinned data files embedded compressed (dropbear refuses a command longer than
 # MAX_CMD_LEN = 9000 bytes, so a whole profile must stay under SCRIPT_LIMIT).
 DATA_FILES = ("klipper-dict-board.json",)
@@ -1016,7 +1016,7 @@ CAPTURE_PROFILES = {
 EXERCISE_ONLY = ("camera-resume", "camera-states", "memexercise", "sof-filter-ab", "storage-autosuspend",
                  "cpu-load", "camera-viewer", "wifi-load", "usb-storage-io", "ktimers-ab", "ttyflip-ab",
                  "memexercise-sw100", "watchdog-arm", "watchdog-fire", "camera-resolution-trial", "nebula-camera-sweep", "nebula-camera-sweep2", "nebula-camera-sweep3", "nebula-camera-set-defaults", "nebula-camera-hue-sweep",
-                 "ddr-churn-30m", "ddr-churn-cam-30m")
+                 "ddr-churn-30m", "ddr-churn-cam-30m", "print-load-soak")
 
 
 class CaptureError(Exception):
@@ -1629,6 +1629,29 @@ _CHURN = ("python3 -c \"import base64,gzip,sys; sys.stdout.buffer.write(gzip.dec
 _CHURN_UNDO = "pkill -f $T/ddrchurn 2>/dev/null; pkill -f 'nebulaos-churn-cam' 2>/dev/null; true"
 EXERCISE_PROFILES["ddr-churn-30m"] = (
     _IDLE_GUARD + _CHURN + "nice -n 10 $T/ddrchurn 1800 400", _CHURN_UNDO, 1800 + 300)
+# #27 (2026-11-23): a print's load without printing. The K1 developer
+# (Ingenic-community/linux#1, 2026-01-11) saw Ingenic 5.x/6.x kernels freeze
+# the X2000 "when the UART is used a lot"; ours freezes only while printing.
+# Klippy stopped; from CPU1 (klippy's thread) the MCU link near saturation
+# (qualmcu.py soak: debug_nop bursts + debug_ping, nothing that moves or
+# heats), a floating-point load on CPU1, the camera stream; PLS_SECONDS (4 h).
+_HELD = "ls -l /proc/[0-9]*/fd 2>/dev/null | grep -q ttyS1"
+EXERCISE_PROFILES["print-load-soak"] = (
+    _IDLE_GUARD + "KS=1; /etc/init.d/S55klipper stop; i=0; while " + _HELD + " && [ $i -lt 30 ]; do sleep 1; "
+    "i=$((i + 1)); done; " + _HELD + " && { echo PORT_STILL_HELD; exit 4; }; "
+    "python3 -c \"import base64,gzip; open('$T/mcusoak.py','wb').write(gzip.decompress(base64.b64decode("
+    "open('$T/mcusoak.gz.b64').read())))\" || exit 4; "
+    "D=${PLS_SECONDS:-14400}; echo \"soak: seconds=$D boot_id=$(cat /proc/sys/kernel/random/boot_id) "
+    "kernel=$(uname -v) sof_filter=$(cat /sys/module/dwc2/parameters/sof_filter)\"; "
+    "taskset -c 1 nice -n 10 python3 -c '# nebulaos-soak-spin\nx=1.0\nwhile 1:\n x=x*1.0000001+0.5\n if x>1e9: x=1.0' & "
+    "sh -c ': nebulaos-soak-cam; while :; do curl -s --max-time 600 -o /dev/null http://127.0.0.1:8080/stream; sleep 1; done' & "
+    "sh -c ': nebulaos-soak-mark; m=0; while :; do sleep 60; m=$((m + 1)); echo $m > /proc/nebulaos_flightrec; done' 2>/dev/null & "
+    "taskset -c 1 python3 $T/mcusoak.py $D; rc=$?; "
+    "pkill -f nebulaos-soak-spin; pkill -f nebulaos-soak-cam; pkill -f nebulaos-soak-mark; echo \"soak_rc=$rc\"",
+    "pkill -f mcusoak.py; pkill -f nebulaos-soak-spin; pkill -f nebulaos-soak-cam; pkill -f nebulaos-soak-mark; "
+    + _KLIPPY_RESTORE.replace(_QM + " snap klippy-restarted; ", ""),
+    14400 + 900)
+
 EXERCISE_PROFILES["ddr-churn-cam-30m"] = (
     _IDLE_GUARD + _CHURN +
     "pidof ustreamer >/dev/null || { echo NO_CAMERA_STREAM; exit 3; }; "
@@ -2168,7 +2191,7 @@ EXERCISE_PROFILES["klippy-batch-soak"] = (
 
 
 EXERCISE_PROBES = {"ktimers-ab": ("timerlat.py",), "ttyflip-ab": ("ptyrtt.py",),
-                   "uart-fe-probe": ("qualmcu.py",), "mcu-link-bench": ("qualmcu.py",),
+                   "uart-fe-probe": ("qualmcu.py",), "mcu-link-bench": ("qualmcu.py",), "print-load-soak": ("mcusoak.gz.b64",),
                    "mcu-identify-repeat": ("qualmcu.py",), "live-m1-identify": ("lv_m1.py",),
                    "live-s1-s03": ("lv_s1.sh",), "live-s2-s97": ("lv_s2.sh",), "live-g5-debugfs": ("lv_g5.sh",),
                    "live-s3-s4-camera": ("lv_cam.sh",), "live-g6-dhcp": ("lv_g6.sh",), "live-g7-klippy": ("lv_g7.sh",),

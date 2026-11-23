@@ -13,7 +13,7 @@ c6708273c02c0c5794ebaa72e845059ddc287489d3b227e2ec33f75b3ddb25bc  on-device  scr
 9690c4b144d80abb028a8f4e45db8fbf6527590c23a54a23aee714d8a81a13e5  host  tools/attest/nebulaos-attest.py
 90d32f860de4c3fe3b08c2aaa7c5a633340f041cf236b0b28625bd19d0aee461  host  tools/emmc/nebulaos_layout.py
 c86ad71f1e541e7db93a1b8565a0f55be1bac921fba79eafe5b1ce4611176663  host  tools/hardware/nebulaos_agent.py
-8d4b67b8b42352622fa2ec3f7ae3c27db2ad37eeee20d4b072f47733d413f021  host  tools/hardware/nebulaos_capture.py
+42512b24094fbd06d261903a78ed8109e4b8e7af26f6dbc0e6910fa2b8dd0fa1  host  tools/hardware/nebulaos_capture.py
 6c22308c8d8e04d1b4cafdfb4a35085be137eff980f92a4f34aa72f820d22dcc  host  tools/hardware/nebulaos_control.py
 2bca0ff5f6bf60992d5bb8eb867a4d15374d9b4ac088b3a7e8812b47d646c749  host  tools/hardware/nebulaos_device.py
 aef1b5fc8cf52522b29a583c6453a75b15d54e5381e2e402c9cc9e4ccee9e273  host  tools/hardware/nebulaos_evidence.py
@@ -26,6 +26,8 @@ fdda3a22c35cdb4e3546e8264e19a4675001edd4ad9e44c1fefb6e5d22ed6ca8  host  tools/ha
 9c0730d5f59e5f62862a126368ccf9ae862f57d6a5b0fef410d640deb063fe1e  host  tools/hardware/nebulaos_target.py
 2002f11048220c61080b2d12ab827cb9fa255e61351ba473e9f1e6a80ed3d30b  host  tools/hardware/nebulaos_verify.py
 c0131b14e0917f4740ebb2827c971828cbe7b9ad9b3d1f4e17de27f766511dc8  host  tools/hwcap/adxl_overflows.py
+0007246f47f6cf4c86e11a982455d2c31a194586777950a7331b6262aa45d98a  host  tools/hwcap/ddrchurn.gz.b64
+426210c1c55d9bb6de80e7997ffc077ad6b372b26a8d345271869639dbd0cf13  host  tools/hwcap/mcusoak.gz.b64
 808a598b41e8768ea5997ddf5e671dbe088055b3e2971c0939216ba891b7b406  host  tools/hwcap/klipper-dict-board.json
 19f336c5f89f6086b72ec66ccdecc6a2876a8c3245c30c92276e3639b65aac82  host  tools/hwcap/fb_cam10.sh
 27d09732bd0699d3d2ced39c3d080548abe5d062a1e10453ad9a8c1983fa4131  host  tools/hwcap/fb_ng3.sh
@@ -53,4 +55,3 @@ a9b1e4742cda36859a1996b058732e9c731df131bb7b0b3b70f4c42bf913cd54  host  tools/hw
 ea54969056611f4e23e39af9a28a83bea0d17897827a847212e1aa736ab4c05a  host  tools/hwcap/qualmcu.py
 c0665faba25581dd313227e138deb1ef58cdfeea6a5cc27075cbb1ff1fa40213  host  tools/hwcap/schedsnap.py
 f12f407a2344985d76d9f15103de530fe1fc75c6181ceb0abf487b1eb10de1e7  host  tools/hwcap/timerlat.py
-0007246f47f6cf4c86e11a982455d2c31a194586777950a7331b6262aa45d98a  host  tools/hwcap/ddrchurn.gz.b64
