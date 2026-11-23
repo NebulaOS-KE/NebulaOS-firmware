@@ -1,0 +1,116 @@
+#!/bin/sh
+#
+# NebulaOS #27 (test build 5): apply the mid-print freeze test switches at
+# boot, before Klipper (S55) and the screen (S58) start, so each candidate
+# can be tested on its own on one printer without a rebuild.
+#
+# Settings: /usr/data/nebulaos/system/freeze-switches, one key=value per
+# line. A missing file, a missing key, an unknown key or a bad value means
+# the default. Only values that differ from the default are written.
+#
+#   threads=2        1 = second hardware thread (CPU1) off
+#   l2_pre_iob=1     0 = no uncached load before the L2 invalidate ops
+#   l2_prefetch=1    0 = L2 hardware prefetcher off
+#   idle_poll=0      1 = idle threads spin instead of WAIT
+#   cpu_mhz=1200     750 = CPU at 750 MHz (L2 at half)
+#   fb_cca=1         0 = screen memory mapped as stock 4.4 (write-through)
+#   blackbox=1       0 = flight recorder paused
+#
+# Applied state: /run/nebulaos/freeze-switches (key=value as read back from
+# the kernel) and one line in the kernel log.
+
+SETTINGS="${FZ_SETTINGS:-/usr/data/nebulaos/system/freeze-switches}"
+STATE="${FZ_STATE:-/run/nebulaos/freeze-switches}"
+SYS="${FZ_SYS:-/sys}"
+KMSG="${FZ_KMSG:-/dev/kmsg}"
+PARAM="$SYS/module/nebulaos_freeze/parameters"
+FB_PARAM="$SYS/module/ingenic_fb_stage/parameters/fb_cca"
+CPU1="$SYS/devices/system/cpu/cpu1/online"
+
+KEYS="threads l2_pre_iob l2_prefetch idle_poll cpu_mhz fb_cca blackbox"
+
+default_of() {
+	case "$1" in
+	threads) echo 2 ;;
+	l2_pre_iob|l2_prefetch|fb_cca|blackbox) echo 1 ;;
+	idle_poll) echo 0 ;;
+	cpu_mhz) echo 1200 ;;
+	esac
+}
+
+valid() { # key value
+	case "$1=$2" in
+	threads=1|threads=2) return 0 ;;
+	l2_pre_iob=[01]|l2_prefetch=[01]|idle_poll=[01]|fb_cca=[01]|blackbox=[01]) return 0 ;;
+	cpu_mhz=1200|cpu_mhz=750) return 0 ;;
+	esac
+	return 1
+}
+
+requested() { # key -> value from the settings file, or the default
+	_v=""
+	if [ -r "$SETTINGS" ]; then
+		_v=$(sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*\([^[:space:]#]*\).*/\1/p" "$SETTINGS" | tail -n 1)
+	fi
+	if [ -n "$_v" ] && valid "$1" "$_v"; then
+		echo "$_v"
+	else
+		default_of "$1"
+	fi
+}
+
+target_of() { # key -> sysfs file
+	case "$1" in
+	threads) echo "$CPU1" ;;
+	fb_cca) echo "$FB_PARAM" ;;
+	*) echo "$PARAM/$1" ;;
+	esac
+}
+
+apply_one() { # key value
+	_t=$(target_of "$1")
+	if [ "$1" = threads ]; then
+		_w=$([ "$2" = 1 ] && echo 0 || echo 1)
+	else
+		_w=$2
+	fi
+	[ -w "$_t" ] || { echo "error"; return; }
+	if echo "$_w" > "$_t" 2>/dev/null; then echo "ok"; else echo "error"; fi
+}
+
+readback() { # key -> value now in effect
+	_t=$(target_of "$1")
+	_r=$(cut -d' ' -f1 "$_t" 2>/dev/null | head -n 1)
+	case "$1" in
+	threads) [ "$_r" = 0 ] && echo 1 || echo 2 ;;
+	l2_pre_iob|idle_poll|blackbox) case "$_r" in Y|1) echo 1 ;; N|0) echo 0 ;; *) echo "?" ;; esac ;;
+	*) echo "${_r:-?}" ;;
+	esac
+}
+
+start() {
+	mkdir -p "$(dirname "$STATE")" 2>/dev/null
+	: > "$STATE.tmp" 2>/dev/null
+	line=""
+	for k in $KEYS; do
+		want=$(requested "$k")
+		res="default"
+		if [ "$want" != "$(default_of "$k")" ]; then
+			res=$(apply_one "$k" "$want")
+		fi
+		now=$(readback "$k")
+		echo "$k=$now requested=$want $res" >> "$STATE.tmp"
+		line="$line $k=$now"
+		[ "$res" = error ] && line="$line(error)"
+	done
+	mv -f "$STATE.tmp" "$STATE" 2>/dev/null
+	echo "nebulaos-freeze-switches:$line" > "$KMSG" 2>/dev/null
+	echo "nebulaos-freeze-switches:$line"
+}
+
+case "$1" in
+	start) start ;;
+	stop|restart|reload) ;;
+	*) echo "Usage: $0 start" >&2; exit 2 ;;
+esac
+exit 0
