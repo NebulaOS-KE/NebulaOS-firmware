@@ -30,7 +30,8 @@ HWCAP_DIR = os.path.join(FW_ROOT, "tools", "hwcap")
 PROBES = ("schedsnap.py", "timerlat.py", "ptyrtt.py", "kduty.py", "adxl_overflows.py", "qualmcu.py",
           "lv_m1.py", "lv_s1.sh", "lv_s2.sh", "lv_g5.sh", "lv_cam.sh", "lv_g6.sh", "lv_g7.sh", "lv_g8.sh", "lv_g9.sh", "lv_g10.sh", "lv_ng1.py", "pf_cam.sh", "fb_ng3.sh", "fb_cam10.sh",
           "gs_services.sh", "gs_display.sh", "gs_sleep.sh", "gs_bootmode.sh", "gs_wifi.sh",
-          "provoke.sh", "qstatus.py", "ddrchurn.gz.b64", "mcusoak.gz.b64", "fbwc.gz.b64")
+          "provoke.sh", "qstatus.py", "ddrchurn.gz.b64", "mcusoak.gz.b64", "fbwc.gz.b64",
+          "smtstress.gz.b64")
 # Pinned data files embedded compressed (dropbear refuses a command longer than
 # MAX_CMD_LEN = 9000 bytes, so a whole profile must stay under SCRIPT_LIMIT).
 DATA_FILES = ("klipper-dict-board.json",)
@@ -1017,7 +1018,8 @@ EXERCISE_ONLY = ("camera-resume", "camera-states", "memexercise", "sof-filter-ab
                  "cpu-load", "camera-viewer", "wifi-load", "usb-storage-io", "ktimers-ab", "ttyflip-ab",
                  "memexercise-sw100", "watchdog-arm", "watchdog-fire", "camera-resolution-trial", "nebula-camera-sweep", "nebula-camera-sweep2", "nebula-camera-sweep3", "nebula-camera-set-defaults", "nebula-camera-hue-sweep",
                  "ddr-churn-30m", "ddr-churn-cam-30m", "print-load-soak",
-                 "fb-wc-stress", "fb-wc-stress-cca1")
+                 "fb-wc-stress", "fb-wc-stress-cca1",
+                 "fb-wc-stress-cca0", "smt-load", "smt-cacheflush", "smt-tlb", "smt-spawn", "smt-pingpong", "smt-dma", "smt-all", "fz-defaults", "fz-one-thread", "fz-prefetch-off", "fz-idle-poll", "fz-cpu-750", "fz-fb-stock", "fz-blackbox-off", "fz-l2-pre-iob-off")
 
 
 class CaptureError(Exception):
@@ -1672,12 +1674,67 @@ _FBWC_RUN = (
     "taskset -c 0 python3 $T/fbwc.py $D :cpu0 & A=$!; taskset -c 1 python3 $T/fbwc.py $D :cpu1; wait $A; "
     "pkill -f nebulaos-fbwc-mark; ")
 _FBWC_END = "/etc/init.d/S58nebulascreen restart >/dev/null 2>&1; echo FBWC_DONE"
-_FBWC_UNDO = ("pkill -f fbwc.py; pkill -f nebulaos-fbwc-mark; " + _FBWC_P +
-              "[ -w $P ] && echo 0 > $P; /etc/init.d/S58nebulascreen restart >/dev/null 2>&1; true")
+# Test build 5 keeps fb_cca in /usr/data/nebulaos/system/freeze-switches: put
+# that back (S06 apply); test build 4 had default 0.
+_FZ_S06 = "/etc/init.d/S06nebulaos-freeze-switches"
+_FBWC_RESTORE = ("if [ -x " + _FZ_S06 + " ]; then " + _FZ_S06 + " apply >/dev/null 2>&1; "
+                 "else [ -w $P ] && echo 0 > $P; fi; ")
+_FBWC_UNDO = ("pkill -f fbwc.py; pkill -f nebulaos-fbwc-mark; " + _FBWC_P + _FBWC_RESTORE +
+              "/etc/init.d/S58nebulascreen restart >/dev/null 2>&1; true")
 EXERCISE_PROFILES["fb-wc-stress"] = (_FBWC_PREP + _FBWC_RUN + _FBWC_END, _FBWC_UNDO, 7200 + 600)
 EXERCISE_PROFILES["fb-wc-stress-cca1"] = (
     _FBWC_PREP + "[ -w $P ] || { echo NO_FB_CCA_PARAM; exit 3; }; echo 1 > $P; " + _FBWC_RUN +
-    "echo 0 > $P; " + _FBWC_END, _FBWC_UNDO, 7200 + 600)
+    _FBWC_RESTORE + _FBWC_END, _FBWC_UNDO, 7200 + 600)
+# Test build 5: the same with the stock 4.4 mapping (CCA 0) for the A/B.
+EXERCISE_PROFILES["fb-wc-stress-cca0"] = (
+    _FBWC_PREP + "[ -w $P ] || { echo NO_FB_CCA_PARAM; exit 3; }; echo 0 > $P; " + _FBWC_RUN +
+    _FBWC_RESTORE + _FBWC_END, _FBWC_UNDO, 7200 + 600)
+
+# #27 trigger search (test build 5 plan, 2026-11-23): tools/hwcap/smtstress.py
+# hammers ONE hardware operation on CPU0 while CPU1 runs a klippy-like Python
+# load - both threads busy, as while printing - for SMT_SECONDS (30 min):
+# cacheflush (L1 writeback/invalidate, hit and index), tlb (map/touch/drop/
+# unmap), spawn (program starts, like the heartbeat scripts), pingpong
+# (cross-thread wakeups = IPIs), dma (direct eMMC/USB-stick reads, read only:
+# cache invalidates per read), load (CPU1 load alone, the baseline). smt-all
+# runs them one after another. No motion, no heater. A freeze shows as the
+# 10 s lines stopping and a lost connection; evidence in logs/crash after the
+# reset. The flight recorder gets a minute mark, as in fb-wc-stress.
+_SMT_PREP = (_IDLE_GUARD +
+    "python3 -c \"import base64,gzip; open('$T/smtstress.py','wb').write(gzip.decompress(base64.b64decode("
+    "open('$T/smtstress.gz.b64').read())))\" || exit 4; "
+    "D=${SMT_SECONDS:-1800}; echo \"smt: kernel=$(uname -v) boot_id=$(cat /proc/sys/kernel/random/boot_id) "
+    "switches: $(tr '\\n' ' ' < /run/nebulaos/freeze-switches 2>/dev/null || echo none)\"; "
+    "sh -c ': nebulaos-smt-mark; m=0; while :; do sleep 60; m=$((m + 1)); echo $m > /proc/nebulaos_flightrec; done' 2>/dev/null & ")
+_SMT_UNDO = "pkill -f smtstress.py; pkill -f nebulaos-smt-mark; true"
+_SMT_MODES = ("load", "cacheflush", "tlb", "spawn", "pingpong", "dma")
+for _m in _SMT_MODES:
+    EXERCISE_PROFILES["smt-" + _m] = (
+        _SMT_PREP + "python3 $T/smtstress.py " + _m + " $D; pkill -f nebulaos-smt-mark; echo SMT_DONE",
+        _SMT_UNDO, 1800 + 300)
+EXERCISE_PROFILES["smt-all"] = (
+    _SMT_PREP + "for m in " + " ".join(_SMT_MODES) + "; do python3 $T/smtstress.py $m $D; done; "
+    "pkill -f nebulaos-smt-mark; echo SMT_DONE",
+    _SMT_UNDO, 6 * 1800 + 600)
+
+# Test build 5: freeze switches (S06nebulaos-freeze-switches). Each fz-*
+# writes ONE switch into /usr/data/nebulaos/system/freeze-switches (persistent:
+# survives the reset after a freeze), applies it now and shows the state;
+# fz-defaults removes the file. Idle printer only; no undo (the setting is the
+# point). The screen restarts when the framebuffer mapping changes.
+_FZ_F = "/usr/data/nebulaos/system/freeze-switches"
+_FZ_PRE = (_IDLE_GUARD + "[ -x " + _FZ_S06 + " ] || { echo NO_FREEZE_SWITCHES; exit 3; }; ")
+_FZ_POST = (_FZ_S06 + " apply; /etc/init.d/S58nebulascreen restart >/dev/null 2>&1; "
+            "cat /run/nebulaos/freeze-switches; grep . /sys/devices/system/cpu/online; "
+            "dmesg | grep -E 'nebulaos-freeze|user mapping CCA' | tail -8; echo FZ_DONE")
+EXERCISE_PROFILES["fz-defaults"] = (_FZ_PRE + "rm -f " + _FZ_F + "; " + _FZ_POST, "true", 300)
+for _n, _kv in (("one-thread", "threads=1"), ("prefetch-off", "l2_prefetch=0"),
+                ("idle-poll", "idle_poll=1"), ("cpu-750", "cpu_mhz=750"),
+                ("fb-stock", "fb_cca=0"), ("blackbox-off", "blackbox=0"),
+                ("l2-pre-iob-off", "l2_pre_iob=0")):
+    EXERCISE_PROFILES["fz-" + _n] = (
+        _FZ_PRE + "mkdir -p /usr/data/nebulaos/system; echo '" + _kv + "' > " + _FZ_F + "; sync; " + _FZ_POST,
+        "true", 300)
 
 EXERCISE_PROFILES["ddr-churn-cam-30m"] = (
     _IDLE_GUARD + _CHURN +
@@ -2220,6 +2277,8 @@ EXERCISE_PROFILES["klippy-batch-soak"] = (
 EXERCISE_PROBES = {"ktimers-ab": ("timerlat.py",), "ttyflip-ab": ("ptyrtt.py",),
                    "uart-fe-probe": ("qualmcu.py",), "mcu-link-bench": ("qualmcu.py",), "print-load-soak": ("mcusoak.gz.b64",),
                    "fb-wc-stress": ("fbwc.gz.b64",), "fb-wc-stress-cca1": ("fbwc.gz.b64",),
+                   "fb-wc-stress-cca0": ("fbwc.gz.b64",),
+                   **{"smt-" + _m: ("smtstress.gz.b64",) for _m in ("load", "cacheflush", "tlb", "spawn", "pingpong", "dma", "all")},
                    "mcu-identify-repeat": ("qualmcu.py",), "live-m1-identify": ("lv_m1.py",),
                    "live-s1-s03": ("lv_s1.sh",), "live-s2-s97": ("lv_s2.sh",), "live-g5-debugfs": ("lv_g5.sh",),
                    "live-s3-s4-camera": ("lv_cam.sh",), "live-g6-dhcp": ("lv_g6.sh",), "live-g7-klippy": ("lv_g7.sh",),
