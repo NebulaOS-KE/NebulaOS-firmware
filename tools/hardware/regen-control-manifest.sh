@@ -46,6 +46,7 @@ HOST=(
   tools/hwcap/mcusoak.gz.b64
   tools/hwcap/fbwc.gz.b64
   tools/hwcap/smtstress.gz.b64
+  tools/hwcap/camstress.gz.b64
   tools/hwcap/klipper-dict-board.json
   tools/hwcap/fb_cam10.sh
   tools/hwcap/fb_ng3.sh

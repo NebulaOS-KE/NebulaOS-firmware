@@ -31,7 +31,7 @@ PROBES = ("schedsnap.py", "timerlat.py", "ptyrtt.py", "kduty.py", "adxl_overflow
           "lv_m1.py", "lv_s1.sh", "lv_s2.sh", "lv_g5.sh", "lv_cam.sh", "lv_g6.sh", "lv_g7.sh", "lv_g8.sh", "lv_g9.sh", "lv_g10.sh", "lv_ng1.py", "pf_cam.sh", "fb_ng3.sh", "fb_cam10.sh",
           "gs_services.sh", "gs_display.sh", "gs_sleep.sh", "gs_bootmode.sh", "gs_wifi.sh",
           "provoke.sh", "qstatus.py", "ddrchurn.gz.b64", "mcusoak.gz.b64", "fbwc.gz.b64",
-          "smtstress.gz.b64")
+          "smtstress.gz.b64", "camstress.gz.b64")
 # Pinned data files embedded compressed (dropbear refuses a command longer than
 # MAX_CMD_LEN = 9000 bytes, so a whole profile must stay under SCRIPT_LIMIT).
 DATA_FILES = ("klipper-dict-board.json",)
@@ -969,6 +969,12 @@ CAPTURE_PROFILES = {
                False, None, 60),
     "adxl": ("python3 $T/adxl_overflows.py --seconds 120 --out $T/out.json; cat $T/out.json", False, "adxl_overflows.py", 200),
     "uartoe": ("cat '/proc/tty/driver/INGENIC serial' 2>/dev/null || cat /proc/tty/driver/* 2>/dev/null", False, None, 60),
+    "fz-state": ("dmesg | grep -E 'nebulaos-freeze|nebulaos-ddr|fb_cca|UVC|\\[sda\\]|speed USB device|dwc2'; "
+                 "echo; cat /run/nebulaos/freeze-switches 2>/dev/null || echo no_switch_state; "
+                 "echo; cat /usr/data/nebulaos/system/freeze-switches 2>/dev/null || echo no_settings_file; "
+                 "echo; cat /var/run/nebulaos-camera-idle-state 2>/dev/null; echo; "
+                 "for d in /sys/bus/usb/devices/*/power/runtime_status; do echo \"$d $(cat $d)\"; done",
+                 False, None, 60),
     "dmesg": ("dmesg | grep -E 'RT throttling activated|BUG: scheduling while atomic|workqueue lockup|hung_task|WARNING:'; "
               "echo dmesg_scan_done", False, None, 60),
     "load": ("cat /proc/loadavg; head -1 /proc/stat; sleep 10; cat /proc/loadavg; head -1 /proc/stat; "
@@ -1019,7 +1025,7 @@ EXERCISE_ONLY = ("camera-resume", "camera-states", "memexercise", "sof-filter-ab
                  "memexercise-sw100", "watchdog-arm", "watchdog-fire", "camera-resolution-trial", "nebula-camera-sweep", "nebula-camera-sweep2", "nebula-camera-sweep3", "nebula-camera-set-defaults", "nebula-camera-hue-sweep",
                  "ddr-churn-30m", "ddr-churn-cam-30m", "print-load-soak",
                  "fb-wc-stress", "fb-wc-stress-cca1",
-                 "fb-wc-stress-cca0", "smt-load", "smt-cacheflush", "smt-tlb", "smt-spawn", "smt-pingpong", "smt-dma", "smt-all", "fz-defaults", "fz-one-thread", "fz-prefetch-off", "fz-idle-poll", "fz-cpu-750", "fz-fb-stock", "fz-blackbox-off", "fz-l2-pre-iob-off")
+                 "fb-wc-stress-cca0", "smt-load", "smt-cacheflush", "smt-tlb", "smt-spawn", "smt-pingpong", "smt-dma", "smt-all", "fz-defaults", "fz-one-thread", "fz-prefetch-off", "fz-idle-poll", "fz-cpu-750", "fz-fb-stock", "fz-blackbox-off", "fz-l2-pre-iob-off", "cam-steady", "cam-cycle")
 
 
 class CaptureError(Exception):
@@ -1717,6 +1723,28 @@ EXERCISE_PROFILES["smt-all"] = (
     "pkill -f nebulaos-smt-mark; echo SMT_DONE",
     _SMT_UNDO, 6 * 1800 + 600)
 
+# #27 USB/camera trigger search (2026-11-23): every recorded freeze had a USB
+# camera attached, and a print that froze twice ran clean with USB unplugged.
+# tools/hwcap/camstress.py keeps a viewer on the ustreamer MJPEG stream
+# (cam-steady), or 180 s on / 90 s off so the idle controller pauses and
+# resumes the camera and USB runtime-suspends and resumes (cam-cycle), while
+# CPU1 runs a klippy-like load and a USB stick, if present, is read (direct
+# I/O, read only). CAM_SECONDS, default 4 h. No motion, no heater. A freeze
+# shows as the 10 s lines stopping and a lost connection.
+_CAM_PREP = (_IDLE_GUARD +
+    "python3 -c \"import base64,gzip; open('$T/camstress.py','wb').write(gzip.decompress(base64.b64decode("
+    "open('$T/camstress.gz.b64').read())))\" || exit 4; "
+    "ls /dev/video* >/dev/null 2>&1 || { echo NO_CAMERA; exit 3; }; "
+    "D=${CAM_SECONDS:-14400}; echo \"cam: kernel=$(uname -v) boot_id=$(cat /proc/sys/kernel/random/boot_id) "
+    "idle=$(cat /var/run/nebulaos-camera-idle-state 2>/dev/null) "
+    "switches: $(tr '\\n' ' ' < /run/nebulaos/freeze-switches 2>/dev/null || echo none)\"; "
+    "sh -c ': nebulaos-cam-mark; m=0; while :; do sleep 60; m=$((m + 1)); echo $m > /proc/nebulaos_flightrec; done' 2>/dev/null & ")
+_CAM_UNDO = "pkill -f camstress.py; pkill -f nebulaos-cam-mark; true"
+for _m in ("steady", "cycle"):
+    EXERCISE_PROFILES["cam-" + _m] = (
+        _CAM_PREP + "python3 $T/camstress.py " + _m + " $D; pkill -f nebulaos-cam-mark; echo CAM_DONE",
+        _CAM_UNDO, 14400 + 600)
+
 # Test build 5: freeze switches (S06nebulaos-freeze-switches). Each fz-*
 # writes ONE switch into /usr/data/nebulaos/system/freeze-switches (persistent:
 # survives the reset after a freeze), applies it now and shows the state;
@@ -2278,6 +2306,7 @@ EXERCISE_PROBES = {"ktimers-ab": ("timerlat.py",), "ttyflip-ab": ("ptyrtt.py",),
                    "uart-fe-probe": ("qualmcu.py",), "mcu-link-bench": ("qualmcu.py",), "print-load-soak": ("mcusoak.gz.b64",),
                    "fb-wc-stress": ("fbwc.gz.b64",), "fb-wc-stress-cca1": ("fbwc.gz.b64",),
                    "fb-wc-stress-cca0": ("fbwc.gz.b64",),
+                   "cam-steady": ("camstress.gz.b64",), "cam-cycle": ("camstress.gz.b64",),
                    **{"smt-" + _m: ("smtstress.gz.b64",) for _m in ("load", "cacheflush", "tlb", "spawn", "pingpong", "dma", "all")},
                    "mcu-identify-repeat": ("qualmcu.py",), "live-m1-identify": ("lv_m1.py",),
                    "live-s1-s03": ("lv_s1.sh",), "live-s2-s97": ("lv_s2.sh",), "live-g5-debugfs": ("lv_g5.sh",),
