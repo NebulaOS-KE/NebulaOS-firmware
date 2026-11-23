@@ -18,6 +18,10 @@
 #
 # Applied state: /run/nebulaos/freeze-switches (key=value as read back from
 # the kernel) and one line in the kernel log.
+#
+# `apply` writes every key, defaults included: the launcher's freeze-switch
+# exercises use it to change a setting while the printer runs (fb_cca then
+# needs a screen restart; the exercise does that).
 
 SETTINGS="${FZ_SETTINGS:-/usr/data/nebulaos/system/freeze-switches}"
 STATE="${FZ_STATE:-/run/nebulaos/freeze-switches}"
@@ -88,14 +92,14 @@ readback() { # key -> value now in effect
 	esac
 }
 
-start() {
+start() { # $1 = 1: write every key, defaults included
 	mkdir -p "$(dirname "$STATE")" 2>/dev/null
 	: > "$STATE.tmp" 2>/dev/null
 	line=""
 	for k in $KEYS; do
 		want=$(requested "$k")
 		res="default"
-		if [ "$want" != "$(default_of "$k")" ]; then
+		if [ "${1:-0}" = 1 ] || [ "$want" != "$(default_of "$k")" ]; then
 			res=$(apply_one "$k" "$want")
 		fi
 		now=$(readback "$k")
@@ -109,8 +113,9 @@ start() {
 }
 
 case "$1" in
-	start) start ;;
+	start) start 0 ;;
+	apply) start 1 ;;
 	stop|restart|reload) ;;
-	*) echo "Usage: $0 start" >&2; exit 2 ;;
+	*) echo "Usage: $0 start|apply" >&2; exit 2 ;;
 esac
 exit 0

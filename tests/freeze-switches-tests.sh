@@ -86,6 +86,16 @@ run "cpu_mhz=750"
 expect "kernel without the switches: error, boot goes on" "$(res cpu_mhz)" error
 grep -q 'cpu_mhz=?(error)' "$WORK/kmsg" && pass "error shown in the kernel log" || fail "no error in the kernel log: $(cat "$WORK/kmsg")"
 
+fake_sys
+echo 0 > "$WORK/sys/devices/system/cpu/cpu1/online"
+echo 750 > "$WORK/sys/module/nebulaos_freeze/parameters/cpu_mhz"
+printf 'threads=2\ncpu_mhz=1200\n' > "$WORK/settings"
+FZ_SETTINGS="$WORK/settings" FZ_STATE="$WORK/run/state" FZ_SYS="$WORK/sys" \
+	FZ_KMSG="$WORK/kmsg" sh "$S06" apply > /dev/null
+expect "apply brings CPU1 back" "$(cat "$WORK/sys/devices/system/cpu/cpu1/online")" 1
+expect "apply writes defaults too (cpu back to 1200)" "$(cat "$WORK/sys/module/nebulaos_freeze/parameters/cpu_mhz")" 1200
+expect "apply result ok" "$(res cpu_mhz)" ok
+
 echo
 echo "freeze-switches: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
