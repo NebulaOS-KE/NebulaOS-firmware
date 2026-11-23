@@ -30,7 +30,7 @@ HWCAP_DIR = os.path.join(FW_ROOT, "tools", "hwcap")
 PROBES = ("schedsnap.py", "timerlat.py", "ptyrtt.py", "kduty.py", "adxl_overflows.py", "qualmcu.py",
           "lv_m1.py", "lv_s1.sh", "lv_s2.sh", "lv_g5.sh", "lv_cam.sh", "lv_g6.sh", "lv_g7.sh", "lv_g8.sh", "lv_g9.sh", "lv_g10.sh", "lv_ng1.py", "pf_cam.sh", "fb_ng3.sh", "fb_cam10.sh",
           "gs_services.sh", "gs_display.sh", "gs_sleep.sh", "gs_bootmode.sh", "gs_wifi.sh",
-          "provoke.sh", "qstatus.py", "ddrchurn.gz.b64", "mcusoak.gz.b64")
+          "provoke.sh", "qstatus.py", "ddrchurn.gz.b64", "mcusoak.gz.b64", "fbwc.gz.b64")
 # Pinned data files embedded compressed (dropbear refuses a command longer than
 # MAX_CMD_LEN = 9000 bytes, so a whole profile must stay under SCRIPT_LIMIT).
 DATA_FILES = ("klipper-dict-board.json",)
@@ -1016,7 +1016,8 @@ CAPTURE_PROFILES = {
 EXERCISE_ONLY = ("camera-resume", "camera-states", "memexercise", "sof-filter-ab", "storage-autosuspend",
                  "cpu-load", "camera-viewer", "wifi-load", "usb-storage-io", "ktimers-ab", "ttyflip-ab",
                  "memexercise-sw100", "watchdog-arm", "watchdog-fire", "camera-resolution-trial", "nebula-camera-sweep", "nebula-camera-sweep2", "nebula-camera-sweep3", "nebula-camera-set-defaults", "nebula-camera-hue-sweep",
-                 "ddr-churn-30m", "ddr-churn-cam-30m", "print-load-soak")
+                 "ddr-churn-30m", "ddr-churn-cam-30m", "print-load-soak",
+                 "fb-wc-stress", "fb-wc-stress-cca1")
 
 
 class CaptureError(Exception):
@@ -1652,6 +1653,32 @@ EXERCISE_PROFILES["print-load-soak"] = (
     + _KLIPPY_RESTORE.replace(_QM + " snap klippy-restarted; ", ""),
     14400 + 900)
 
+# #27 (2026-11-23): the framebuffer write-combining hypothesis. Stock 4.4
+# maps /dev/fb0 to user space CCA 0 (write-through); Ingenic's 6.x driver maps
+# it CCA 1 (XBurst2 write-combining). fbwc.py writes the off-screen third of
+# the triple buffer from both hardware threads for FBWC_SECONDS (2 h); the
+# screen service restarts afterwards (its back buffer was overwritten).
+# fb-wc-stress uses the kernel's mapping as it is (test build 3: CCA 1;
+# test build 4: ingenic_fb_stage.fb_cca, default 0); fb-wc-stress-cca1 sets
+# fb_cca=1 first (test build 4 only) for an A/B on one build.
+_FBWC_P = "P=/sys/module/ingenic_fb_stage/parameters/fb_cca; "
+_FBWC_PREP = (_IDLE_GUARD + _FBWC_P +
+    "python3 -c \"import base64,gzip; open('$T/fbwc.py','wb').write(gzip.decompress(base64.b64decode("
+    "open('$T/fbwc.gz.b64').read())))\" || exit 4; ")
+_FBWC_RUN = (
+    "D=${FBWC_SECONDS:-7200}; echo \"fbwc: seconds=$D fb_cca=$(cat $P 2>/dev/null || echo none) "
+    "kernel=$(uname -v) boot_id=$(cat /proc/sys/kernel/random/boot_id) $(dmesg | grep -m1 'user mapping CCA')\"; "
+    "sh -c ': nebulaos-fbwc-mark; m=0; while :; do sleep 60; m=$((m + 1)); echo $m > /proc/nebulaos_flightrec; done' 2>/dev/null & "
+    "taskset -c 0 python3 $T/fbwc.py $D :cpu0 & A=$!; taskset -c 1 python3 $T/fbwc.py $D :cpu1; wait $A; "
+    "pkill -f nebulaos-fbwc-mark; ")
+_FBWC_END = "/etc/init.d/S58nebulascreen restart >/dev/null 2>&1; echo FBWC_DONE"
+_FBWC_UNDO = ("pkill -f fbwc.py; pkill -f nebulaos-fbwc-mark; " + _FBWC_P +
+              "[ -w $P ] && echo 0 > $P; /etc/init.d/S58nebulascreen restart >/dev/null 2>&1; true")
+EXERCISE_PROFILES["fb-wc-stress"] = (_FBWC_PREP + _FBWC_RUN + _FBWC_END, _FBWC_UNDO, 7200 + 600)
+EXERCISE_PROFILES["fb-wc-stress-cca1"] = (
+    _FBWC_PREP + "[ -w $P ] || { echo NO_FB_CCA_PARAM; exit 3; }; echo 1 > $P; " + _FBWC_RUN +
+    "echo 0 > $P; " + _FBWC_END, _FBWC_UNDO, 7200 + 600)
+
 EXERCISE_PROFILES["ddr-churn-cam-30m"] = (
     _IDLE_GUARD + _CHURN +
     "pidof ustreamer >/dev/null || { echo NO_CAMERA_STREAM; exit 3; }; "
@@ -2192,6 +2219,7 @@ EXERCISE_PROFILES["klippy-batch-soak"] = (
 
 EXERCISE_PROBES = {"ktimers-ab": ("timerlat.py",), "ttyflip-ab": ("ptyrtt.py",),
                    "uart-fe-probe": ("qualmcu.py",), "mcu-link-bench": ("qualmcu.py",), "print-load-soak": ("mcusoak.gz.b64",),
+                   "fb-wc-stress": ("fbwc.gz.b64",), "fb-wc-stress-cca1": ("fbwc.gz.b64",),
                    "mcu-identify-repeat": ("qualmcu.py",), "live-m1-identify": ("lv_m1.py",),
                    "live-s1-s03": ("lv_s1.sh",), "live-s2-s97": ("lv_s2.sh",), "live-g5-debugfs": ("lv_g5.sh",),
                    "live-s3-s4-camera": ("lv_cam.sh",), "live-g6-dhcp": ("lv_g6.sh",), "live-g7-klippy": ("lv_g7.sh",),
