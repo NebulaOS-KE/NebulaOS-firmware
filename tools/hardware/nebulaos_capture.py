@@ -1025,7 +1025,7 @@ EXERCISE_ONLY = ("camera-resume", "camera-states", "memexercise", "sof-filter-ab
                  "memexercise-sw100", "watchdog-arm", "watchdog-fire", "camera-resolution-trial", "nebula-camera-sweep", "nebula-camera-sweep2", "nebula-camera-sweep3", "nebula-camera-set-defaults", "nebula-camera-hue-sweep",
                  "ddr-churn-30m", "ddr-churn-cam-30m", "print-load-soak",
                  "fb-wc-stress", "fb-wc-stress-cca1",
-                 "fb-wc-stress-cca0", "smt-load", "smt-cacheflush", "smt-tlb", "smt-spawn", "smt-pingpong", "smt-dma", "smt-all", "fz-defaults", "fz-one-thread", "fz-prefetch-off", "fz-idle-poll", "fz-cpu-750", "fz-fb-stock", "fz-blackbox-off", "fz-l2-pre-iob-off", "cam-steady", "cam-cycle")
+                 "fb-wc-stress-cca0", "smt-load", "smt-cacheflush", "smt-tlb", "smt-spawn", "smt-pingpong", "smt-dma", "smt-all", "fz-defaults", "fz-one-thread", "fz-prefetch-off", "fz-idle-poll", "fz-cpu-750", "fz-fb-stock", "fz-blackbox-off", "fz-l2-pre-iob-off", "cam-steady", "cam-cycle", "cam-stop")
 
 
 class CaptureError(Exception):
@@ -1740,6 +1740,8 @@ _CAM_PREP = (_IDLE_GUARD +
     "switches: $(tr '\\n' ' ' < /run/nebulaos/freeze-switches 2>/dev/null || echo none)\"; "
     "sh -c ': nebulaos-cam-mark; m=0; while :; do sleep 60; m=$((m + 1)); echo $m > /proc/nebulaos_flightrec; done' 2>/dev/null & ")
 _CAM_UNDO = "pkill -f camstress.py; pkill -f nebulaos-cam-mark; true"
+# cam-stop: ends a camera stress run whose launcher was stopped early.
+EXERCISE_PROFILES["cam-stop"] = (_CAM_UNDO + "; sleep 1; pgrep -f camstress.py || echo CAM_STOPPED", "true", 60)
 for _m in ("steady", "cycle"):
     EXERCISE_PROFILES["cam-" + _m] = (
         _CAM_PREP + "python3 $T/camstress.py " + _m + " $D; pkill -f nebulaos-cam-mark; echo CAM_DONE",

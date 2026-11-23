@@ -20,6 +20,13 @@ def say(msg):
     print("CAM %s t=%.0f %s" % (MODE, time.monotonic() - END + SECS, msg), flush=True)
 
 
+PARENT = os.getpid()
+
+
+def alive():  # helpers stop when the time is up or the main process is gone
+    return time.monotonic() < END and os.getppid() == PARENT
+
+
 def child(fn):
     pid = os.fork()
     if pid == 0:
@@ -33,7 +40,7 @@ def child(fn):
 def load():  # klippy-like: floats, dicts, lists on CPU1
     os.sched_setaffinity(0, {1})
     d = {}
-    while time.monotonic() < END:
+    while alive():
         x = 0.0
         for i in range(2000):
             x += (i * 1.000123) / (i + 1.5)
@@ -47,7 +54,7 @@ def stick():  # direct reads from the USB stick, read only
     fd = os.open("/dev/sda", os.O_RDONLY | os.O_DIRECT)
     size = os.lseek(fd, 0, os.SEEK_END)
     buf = mmap.mmap(-1, 1 << 20)
-    while time.monotonic() < END:
+    while alive():
         n = random.choice((4096, 65536, 1 << 20))
         os.preadv(fd, [memoryview(buf)[:n]], random.randrange(0, max(size - n, 1)) & ~4095)
         time.sleep(0.02)

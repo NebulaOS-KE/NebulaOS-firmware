@@ -13,7 +13,7 @@ c6708273c02c0c5794ebaa72e845059ddc287489d3b227e2ec33f75b3ddb25bc  on-device  scr
 9690c4b144d80abb028a8f4e45db8fbf6527590c23a54a23aee714d8a81a13e5  host  tools/attest/nebulaos-attest.py
 90d32f860de4c3fe3b08c2aaa7c5a633340f041cf236b0b28625bd19d0aee461  host  tools/emmc/nebulaos_layout.py
 c86ad71f1e541e7db93a1b8565a0f55be1bac921fba79eafe5b1ce4611176663  host  tools/hardware/nebulaos_agent.py
-e17b9fadd4d09c678c291d15921aed43402a66fed92502b7c17d7fcc42c65b13  host  tools/hardware/nebulaos_capture.py
+137997e55741ad06ad7e7168ae5e0917382d9024258f41d4d85b6fc45f2253c1  host  tools/hardware/nebulaos_capture.py
 6c22308c8d8e04d1b4cafdfb4a35085be137eff980f92a4f34aa72f820d22dcc  host  tools/hardware/nebulaos_control.py
 2bca0ff5f6bf60992d5bb8eb867a4d15374d9b4ac088b3a7e8812b47d646c749  host  tools/hardware/nebulaos_device.py
 aef1b5fc8cf52522b29a583c6453a75b15d54e5381e2e402c9cc9e4ccee9e273  host  tools/hardware/nebulaos_evidence.py
@@ -30,7 +30,7 @@ c0131b14e0917f4740ebb2827c971828cbe7b9ad9b3d1f4e17de27f766511dc8  host  tools/hw
 426210c1c55d9bb6de80e7997ffc077ad6b372b26a8d345271869639dbd0cf13  host  tools/hwcap/mcusoak.gz.b64
 0fa036910b9d42cacc4526b89e1f1cf5bd20773d8ffd8df1e5d1ba59b48ba71b  host  tools/hwcap/fbwc.gz.b64
 0bcb3457cbed207a25529bdcf3e1781a6a9968361ff44232ebdfccd67c0863e6  host  tools/hwcap/smtstress.gz.b64
-93cd773ef9b213a5e4b3550c935adaa83a3154dd422ad4ded4d140c937706c1e  host  tools/hwcap/camstress.gz.b64
+5103c097669f73feec63abbc738ef902543da8345a09877cd3fb513f27e08ebe  host  tools/hwcap/camstress.gz.b64
 808a598b41e8768ea5997ddf5e671dbe088055b3e2971c0939216ba891b7b406  host  tools/hwcap/klipper-dict-board.json
 19f336c5f89f6086b72ec66ccdecc6a2876a8c3245c30c92276e3639b65aac82  host  tools/hwcap/fb_cam10.sh
 27d09732bd0699d3d2ced39c3d080548abe5d062a1e10453ad9a8c1983fa4131  host  tools/hwcap/fb_ng3.sh
