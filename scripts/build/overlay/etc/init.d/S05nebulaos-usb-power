@@ -1,0 +1,56 @@
+#!/bin/sh
+#
+# NebulaOS #27 (test build 7): drive both USB 5V power-enable pins, as stock
+# does at every boot (stock /etc/init.d/S13board_init ->
+# /usr/bin/usb_host_5v_enable.sh: PC09 and PC10 set as outputs high).
+#
+# PC09 (USB_P_EN1) is already driven high by the USB PHY driver (device tree
+# drvvbus-gpio). PC10 (USB_P_EN2) is named nowhere in the NebulaOS device
+# tree, so it stays a GPIO input held high only by the weak internal pull-up,
+# where electrical noise (a heater switching on) can disturb it. This makes it
+# an output driven high. The pin already reads high, so nothing switches.
+#
+# GPIO port C registers (base 0x10010200). Output high = INT 0, MSK 1,
+# PAT1 0, PAT0 1. PAT0 is set before PAT1 is cleared, so the pin goes from
+# "input pulled high" straight to "output high" without a low glitch.
+#
+# Result: one kernel log line and /run/nebulaos/usb-power.
+
+DEVMEM="${UP_DEVMEM:-devmem}"
+KMSG="${UP_KMSG:-/dev/kmsg}"
+STATE="${UP_STATE:-/run/nebulaos/usb-power}"
+B=0x10010200
+BIT=0x00000400	# pin 10
+
+reg() { "$DEVMEM" "$1" 32 2>/dev/null; }
+
+start() {
+	res=ok
+	"$DEVMEM" $((B + 0x18)) 32 $BIT 2>/dev/null || res=error	# INTC
+	"$DEVMEM" $((B + 0x24)) 32 $BIT 2>/dev/null || res=error	# MSKS
+	"$DEVMEM" $((B + 0x44)) 32 $BIT 2>/dev/null || res=error	# PAT0S
+	"$DEVMEM" $((B + 0x38)) 32 $BIT 2>/dev/null || res=error	# PAT1C
+	state="?"
+	int=$(reg $((B + 0x10))); msk=$(reg $((B + 0x20)))
+	pat1=$(reg $((B + 0x30))); pat0=$(reg $((B + 0x40)))
+	if [ -n "$int" ] && [ -n "$msk" ] && [ -n "$pat1" ] && [ -n "$pat0" ]; then
+		if [ $(( (int >> 10) & 1 )) = 0 ] && [ $(( (msk >> 10) & 1 )) = 1 ] &&
+		   [ $(( (pat1 >> 10) & 1 )) = 0 ] && [ $(( (pat0 >> 10) & 1 )) = 1 ]; then
+			state=output-high
+		else
+			state=not-output-high
+		fi
+	fi
+	[ "$state" = output-high ] || res=error
+	mkdir -p "$(dirname "$STATE")" 2>/dev/null
+	echo "usb_p_en2=$state $res" > "$STATE" 2>/dev/null
+	echo "nebulaos-usb-power: usb_p_en2(PC10)=$state $res" > "$KMSG" 2>/dev/null
+	echo "nebulaos-usb-power: usb_p_en2(PC10)=$state $res"
+}
+
+case "$1" in
+	start) start ;;
+	stop|restart|reload) ;;
+	*) echo "Usage: $0 start" >&2; exit 2 ;;
+esac
+exit 0
