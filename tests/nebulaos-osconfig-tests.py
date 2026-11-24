@@ -2298,6 +2298,9 @@ class LogsTests(unittest.TestCase):
         t = self.e.tmp
         self.l.LEVEL_FILE = os.path.join(t, "log-level")
         self.l.DEBUG_SINCE_FILE = self.l.LEVEL_FILE + ".debug-since"
+        # 1.0.5: the image's default level and the kernel recorder switch
+        self.l.DEFAULT_FILE = os.path.join(t, "log-level-default")
+        self.l.FLIGHTREC_CTL = os.path.join(t, "no-flightrec")
         self.calls = os.path.join(t, "calls")
         self.l.SYSLOGD_INIT = os.path.join(self.e.bin, "S01syslogd")
         write_exe(self.l.SYSLOGD_INIT, 'echo "syslogd $1" >> "%s"\n' % self.calls)
@@ -2332,7 +2335,78 @@ class LogsTests(unittest.TestCase):
         self.assertIn("syslogd restart", open(self.calls).read())
         with self.assertRaises(self.e.common.OsConfigError):
             self.l.set_level("trace")
-        self.assertEqual(self.l.status()["levels"], ["info", "warning", "debug"])
+        self.assertEqual(self.l.status()["levels"], ["info", "warning", "debug", "verbose"])
+
+    # -- 1.0.5: Verbose, the image default, the black box detail -------------
+
+    def _recorder(self):
+        self.l.FLIGHTREC_CTL = os.path.join(self.e.tmp, "nebulaos_flightrec")
+        open(self.l.FLIGHTREC_CTL, "w").close()
+
+    def _recorder_said(self):
+        return open(self.l.FLIGHTREC_CTL).read()
+
+    def test_black_box_detail_follows_the_level(self):
+        self._recorder()
+        self.assertEqual(self.l.set_level("debug")["black_box_detail"], "on")
+        self.assertEqual(self._recorder_said(), "detail=1\n")
+        self.assertEqual(self.l.set_level("verbose")["black_box_detail"], "on")
+        self.assertEqual(self.l.set_level("warning")["black_box_detail"], "off")
+        self.assertEqual(self._recorder_said(), "detail=0\n")
+        self.assertEqual(self.l.set_level("info")["black_box_detail"], "off")
+        os.unlink(self.l.FLIGHTREC_CTL)                    # no recorder: still applied
+        out = self.l.set_level("debug")
+        self.assertEqual((out["result"], out["black_box_detail"]), ("APPLIED", "unavailable"))
+
+    def test_moonraker_verbose_only_at_verbose(self):
+        self.assertEqual(self.l.set_level("debug")["moonraker"], "normal log from its next start")
+        self.assertEqual(self.l.set_level("verbose")["moonraker"], "verbose log from its next start")
+        st = self.l.status()
+        self.assertIn("Moonraker (verbose only, at its next start)", st["applies_to"])
+        self.assertIn("black box detail (debug and verbose)", st["applies_to"])
+
+    def test_verbose_expires_like_debug(self):
+        now = 1792100000
+        open(self.l.LEVEL_FILE, "w").write("verbose\n")
+        open(self.l.DEBUG_SINCE_FILE, "w").write("%d\n" % now)
+        self.assertEqual(self.l.status()["debug_until"], now + 86400)
+        self.assertEqual(self.l.expire_debug(now=now + 86399)["level"], "verbose")
+        self._recorder()
+        out = self.l.expire_debug(now=now + 86400)
+        self.assertEqual((out["result"], self.l.get_level()), ("EXPIRED", "info"))
+        self.assertEqual(self._recorder_said(), "detail=0\n")
+
+    def test_image_default_level(self):
+        """No level chosen: the image's default (info when the file is
+        missing or broken). A test build ships debug as its default."""
+        self.assertEqual((self.l.get_level(), self.l.status()["default"]), ("info", "info"))
+        open(self.l.DEFAULT_FILE, "w").write("loud\n")
+        self.assertEqual(self.l.get_level(), "info")
+        open(self.l.DEFAULT_FILE, "w").write("debug\n")
+        self.assertEqual((self.l.get_level(), self.l.status()["default"]), ("debug", "debug"))
+        open(self.l.LEVEL_FILE, "w").write("nonsense\n")       # broken file: the default
+        self.assertEqual(self.l.get_level(), "debug")
+        open(self.l.LEVEL_FILE, "w").write("warning\n")        # a chosen level wins
+        self.assertEqual(self.l.get_level(), "warning")
+
+    def test_test_build_default_never_expires(self):
+        """Debug as the image default (test build) stays on; Verbose on a
+        test build goes back to Debug, not to Info."""
+        now = 1792100000
+        open(self.l.DEFAULT_FILE, "w").write("debug\n")
+        self.assertEqual(self.l.expire_debug(now=now)["result"], "UNCHANGED")
+        self.assertNotIn("debug_until", self.l.status())
+        self.assertEqual(self.l.expire_debug(now=now + 10 ** 7)["level"], "debug")
+        open(self.l.LEVEL_FILE, "w").write("verbose\n")
+        open(self.l.DEBUG_SINCE_FILE, "w").write("%d\n" % now)
+        out = self.l.expire_debug(now=now + 86400)
+        self.assertEqual((out["result"], self.l.get_level()), ("EXPIRED", "debug"))
+
+    def test_screen_level_for_verbose(self):
+        self._screen("info")
+        open(self.l.LEVEL_FILE, "w").write("verbose\n")
+        self.l.sync_screen_level()
+        self.assertEqual(self._screen_level(), "debug")
 
     def test_last_restart_in_state(self):
         """Run 24 black box: why the previous boot ended, and the history,

@@ -7,13 +7,20 @@
 # /opt/printer_data is the persistent bind by now, and it stops before it at
 # shutdown, so the file is closed before /usr/data is unmounted.
 NEBULAOS_SYSLOG=/opt/printer_data/logs/system.log
-# G60 (2026-10-16): the general log level (Settings > System), one of
-# info | warning | debug, stored by nebulaos-osconfig. BusyBox -l N keeps
-# messages more urgent than N: warning -> 5, info -> 7, debug -> 8.
+# G60 (2026-10-16): the general log level (Settings > System > Report a
+# problem), one of info | warning | debug | verbose, stored by
+# nebulaos-osconfig; none stored = the image's default (1.0.5:
+# /etc/nebulaos/log-level-default). BusyBox -l N keeps messages more urgent
+# than N: warning -> 5, info -> 7, debug and verbose -> 8.
 NEBULAOS_LOG_LEVEL_FILE="${NEBULAOS_LOG_LEVEL_FILE:-/usr/data/nebulaos/system/log-level}"
-case "$(cat "$NEBULAOS_LOG_LEVEL_FILE" 2>/dev/null)" in
+NEBULAOS_LOG_LEVEL=$(cat "$NEBULAOS_LOG_LEVEL_FILE" 2>/dev/null)
+case "$NEBULAOS_LOG_LEVEL" in
+	info|warning|debug|verbose) ;;
+	*) NEBULAOS_LOG_LEVEL=$(cat /etc/nebulaos/log-level-default 2>/dev/null) ;;
+esac
+case "$NEBULAOS_LOG_LEVEL" in
 	warning) NEBULAOS_SYSLOG_L=5 ;;
-	debug) NEBULAOS_SYSLOG_L=8 ;;
+	debug|verbose) NEBULAOS_SYSLOG_L=8 ;;
 	*) NEBULAOS_SYSLOG_L=7 ;;
 esac
 SYSLOGD_ARGS="-O $NEBULAOS_SYSLOG -s 512 -b 2 -l $NEBULAOS_SYSLOG_L"

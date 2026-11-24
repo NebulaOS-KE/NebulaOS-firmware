@@ -1,9 +1,13 @@
 # nebulaos_osconfig.logs - the general log level, the status file and "Save
 # logs to USB" (G60, 2026-10-16).
 #
-#   log level   info | warning | debug, one setting for the system log
-#               (syslogd -l), the screen and Moonraker (-v at debug). Klipper
-#               has no log levels.
+#   log level   info | warning | debug | verbose, one setting for the system
+#               log (syslogd -l), the screen, the kernel black box's detail
+#               level (debug and verbose) and Moonraker (-v at verbose only:
+#               its debug log is huge). Klipper has no log levels. Debug and
+#               verbose go back to the image's default after 24 hours. The
+#               default is /etc/nebulaos/log-level-default: info in a
+#               release, debug in a test build (1.0.5).
 #   state file  printer_data/logs/nebulaos-state.txt: versions, slots, MCU,
 #               boot, storage, memory - written at boot, every 30 minutes and
 #               before a log zip. In the logs folder so Mainsail's own
@@ -20,12 +24,20 @@ import zipfile
 
 from . import common, image, mcu, network, system, wifi
 
-LEVELS = ("info", "warning", "debug")
+LEVELS = ("info", "warning", "debug", "verbose")
+# 1.0.5: the levels with the black box detail on, which end after DEBUG_HOURS.
+DETAILED = ("debug", "verbose")
 LEVEL_FILE = os.environ.get("NEBULAOS_LOG_LEVEL_FILE",
                             os.path.join(common.NEBULAOS_ROOT, "system", "log-level"))
-# When Debug was switched on (epoch). Separate file: log-level itself stays one
-# word, read by S01syslogd's defaults and S56moonraker.
+# The level when none was chosen (or the file is broken), and the level Debug
+# and Verbose go back to. Image-owned: info in a release, debug in a test build.
+DEFAULT_FILE = os.environ.get("NEBULAOS_LOG_LEVEL_DEFAULT_FILE", "/etc/nebulaos/log-level-default")
+# When Debug or Verbose was switched on (epoch). Separate file: log-level
+# itself stays one word, read by S01syslogd's defaults, S03nebulaos-blackbox
+# and S56moonraker.
 DEBUG_SINCE_FILE = os.environ.get("NEBULAOS_LOG_DEBUG_SINCE_FILE", LEVEL_FILE + ".debug-since")
+# The kernel flight recorder's control file: "detail=0|1" (kernel 1.0.5).
+FLIGHTREC_CTL = os.environ.get("NEBULAOS_FLIGHTREC_CTL", "/proc/nebulaos_flightrec")
 SYSLOGD_INIT = os.environ.get("NEBULAOS_SYSLOGD_INIT", "/etc/init.d/S01syslogd")
 LOGS_DIR = os.environ.get("NEBULAOS_LOGS_DIR", "/opt/printer_data/logs")
 STATE_FILE = os.path.join(LOGS_DIR, "nebulaos-state.txt")
@@ -41,6 +53,8 @@ EXTRA_FILES = [os.path.join(common.NEBULAOS_ROOT, "maintenance", "retention.log"
 RUN_FILES = ("/run/nebulaos-boot-scripts.log", "/var/run/nebulaos-boot-timing.log",
              "/run/nebulaos/data-fs.state", "/run/nebulaos/data-fs.e2fsck.log",
              "/run/nebulaos-mcu-guard.state", "/run/nebulaos/last-reset",
+             # #27 (1.0.5): what the boot steps for stock's hardware settings found
+             "/run/nebulaos/ddr-qos", "/run/nebulaos/usb-power",
              "/proc/meminfo", "/proc/cmdline")
 CHUNK = 65536
 DEBUG_HOURS = 24
@@ -52,7 +66,7 @@ SCREEN_CONFIG = os.environ.get("NEBULAOS_SCREEN_CONFIG",
                                os.path.join(CONFIG_DIR, "nebulascreen", "nebulascreen.json"))
 SCREEN_INIT = os.environ.get("NEBULAOS_SCREEN_INIT", "/etc/init.d/S58nebulascreen")
 PRINT_ACTIVE = os.environ.get("NEBULAOS_PRINT_ACTIVE_MARKER", "/run/nebulaos/print-active")
-SCREEN_LEVELS = {"info": "info", "warning": "warn", "debug": "debug"}
+SCREEN_LEVELS = {"info": "info", "warning": "warn", "debug": "debug", "verbose": "debug"}
 # "Save logs to USB" limits (#27): Moonraker kills the helper at 300 s, so the
 # helper stops adding files itself before that and still closes a valid zip.
 SAVE_DEADLINE = float(os.environ.get("NEBULAOS_LOGS_SAVE_DEADLINE", "240"))
@@ -70,16 +84,26 @@ def redact(line):
     return _SECRET.sub(lambda m: m.group(1) + "[redacted]", line)
 
 
+def default_level():
+    """The image's default level: info unless the image says otherwise."""
+    try:
+        with open(DEFAULT_FILE) as handle:
+            level = handle.read().strip()
+    except OSError:
+        level = ""
+    return level if level in LEVELS else "info"
+
+
 def _read_level():
-    """(level, epoch Debug was switched on or None)."""
+    """(level, epoch Debug/Verbose was switched on or None)."""
     try:
         with open(LEVEL_FILE) as handle:
             level = handle.read().strip()
     except OSError:
         level = ""
-    level = level if level in LEVELS else "info"
+    level = level if level in LEVELS else default_level()
     set_at = None
-    if level == "debug":
+    if level in DETAILED:
         try:
             with open(DEBUG_SINCE_FILE) as handle:
                 raw = handle.read().strip()
@@ -96,28 +120,48 @@ def get_level():
 
 def status():
     level, set_at = _read_level()
-    out = {"level": level, "levels": list(LEVELS),
-           "applies_to": ["system log", "screen", "Moonraker (debug only, at its next start)"],
+    default = default_level()
+    out = {"level": level, "levels": list(LEVELS), "default": default,
+           "applies_to": ["system log", "screen", "black box detail (debug and verbose)",
+                          "Moonraker (verbose only, at its next start)"],
            "not_applicable": ["Klipper (no log levels)"]}
-    if level == "debug" and set_at:
+    # "debug_until": when Debug or Verbose ends (the screen shows it).
+    if level in DETAILED and level != default and set_at:
         out["debug_until"] = set_at + DEBUG_HOURS * 3600
     return out
 
 
 def expire_debug(now=None):
-    """G69: detailed logging switches itself back to info after DEBUG_HOURS,
-    so a forgotten Debug never fills the disk. A level set before the clock
-    was valid gets its start time now."""
+    """G69: detailed logging (Debug, and Verbose since 1.0.5) goes back to the
+    image's default level after DEBUG_HOURS, so a forgotten level never fills
+    the disk. A level set before the clock was valid gets its start time now.
+    A level equal to the default (Debug in a test build) never expires."""
     now = int(time.time()) if now is None else now
     level, set_at = _read_level()
-    if level != "debug" or now < _CLOCK_VALID:
+    default = default_level()
+    if level not in DETAILED or level == default or now < _CLOCK_VALID:
         return dict({"result": "UNCHANGED", "level": level}, **_screen_follow())
     if set_at is None:
         common.atomic_write(DEBUG_SINCE_FILE, "%d\n" % now)
         return {"result": "UNCHANGED", "level": level}
     if now - set_at < DEBUG_HOURS * 3600:
         return {"result": "UNCHANGED", "level": level}
-    return dict(set_level("info"), result="EXPIRED", **_screen_follow())
+    return dict(set_level(default), result="EXPIRED", **_screen_follow())
+
+
+def apply_black_box(level):
+    """The kernel black box's detail level follows the log level: on at Debug
+    and Verbose. Returns on|off, or unavailable (no recorder, or an older
+    kernel without the detail switch)."""
+    want = 1 if level in DETAILED else 0
+    if not os.path.exists(FLIGHTREC_CTL):
+        return "unavailable"
+    try:
+        with open(FLIGHTREC_CTL, "w") as handle:
+            handle.write("detail=%d\n" % want)
+    except OSError:
+        return "unavailable"
+    return "on" if want else "off"
 
 
 def sync_screen_level():
@@ -159,9 +203,9 @@ def set_level(level):
     os.makedirs(os.path.dirname(LEVEL_FILE), exist_ok=True)
     common.atomic_write(LEVEL_FILE, level + "\n")
     now = int(time.time())
-    if level == "debug" and now >= _CLOCK_VALID:
+    if level in DETAILED and now >= _CLOCK_VALID:
         common.atomic_write(DEBUG_SINCE_FILE, "%d\n" % now)
-    elif level != "debug":
+    elif level not in DETAILED:
         try:
             os.unlink(DEBUG_SINCE_FILE)
         except OSError:
@@ -169,7 +213,9 @@ def set_level(level):
     rc, _, err = common.run([SYSLOGD_INIT, "restart"], 30)
     out = {"result": "APPLIED", "level": level, "system_log": "applied" if rc == 0 else
            "not restarted: %s" % err.strip()[:120]}
-    out["moonraker"] = "at its next start"
+    out["black_box_detail"] = apply_black_box(level)
+    out["moonraker"] = ("verbose log from its next start" if level == "verbose"
+                        else "normal log from its next start")
     return out
 
 

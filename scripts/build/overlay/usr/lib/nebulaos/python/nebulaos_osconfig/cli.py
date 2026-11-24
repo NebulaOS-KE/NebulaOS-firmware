@@ -23,8 +23,8 @@
 #   nebulaos-osconfig network set-ipv4 --json '{"mode":"static",...}'
 #   nebulaos-osconfig boot-display status|reset-image
 #   nebulaos-osconfig boot-display set-mode --mode logo
-#   nebulaos-osconfig logs status | set-level --level info|warning|debug | write-state | save
-#   nebulaos-osconfig logs expire-debug        (housekeeping: Debug ends after 24 h)
+#   nebulaos-osconfig logs status | set-level --level info|warning|debug|verbose | write-state | save
+#   nebulaos-osconfig logs expire-debug        (housekeeping: Debug/Verbose end after 24 h)
 #   nebulaos-osconfig logs sync-screen         (S58: the screen's config follows the level)
 #   nebulaos-osconfig settings status
 #   nebulaos-osconfig settings snapshot --reason new-system|changed|manual

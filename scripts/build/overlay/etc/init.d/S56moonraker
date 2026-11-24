@@ -138,9 +138,11 @@ start_daemon() {
 	# MEM-T08: Moonraker's git (update_manager) resolves through PATH; the
 	# NebulaOS wrapper sets its OOM priority and keeps network git out of a
 	# running print and out of memory pressure.
-	# G60 (2026-10-16): general log level debug -> Moonraker's verbose log.
+	# G60 (2026-10-16): Moonraker's verbose log. 1.0.5: only at the general
+	# log level Verbose - at Debug it was so large it pushed the other logs
+	# out. Never the image's default (that is at most debug).
 	MOONRAKER_VERBOSE=
-	[ "$(cat /usr/data/nebulaos/system/log-level 2>/dev/null)" = debug ] && MOONRAKER_VERBOSE=-v
+	[ "$(cat /usr/data/nebulaos/system/log-level 2>/dev/null)" = verbose ] && MOONRAKER_VERBOSE=-v
 	export PATH="/usr/libexec/nebulaos/bin:$PATH"
 	echo "Starting moonraker (using $PYTHON3)"
 	# OOM priority at birth (MEM-T07): Moonraker coordinates updates and
