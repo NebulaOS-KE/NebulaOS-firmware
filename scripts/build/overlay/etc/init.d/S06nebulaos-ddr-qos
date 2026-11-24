@@ -1,0 +1,57 @@
+#!/bin/sh
+#
+# NebulaOS #27: the DDR port settings stock applies at every boot (stock
+# /etc/init.d/S05cpu_reg). Before Klipper (S55) and the screen (S58) start.
+#
+#   CPU port      (DDRC CCHC6, 0x13012038) = 0x884040c0: read/write
+#                 bandwidth limits on
+#   DPU/LCD port  (DDRC CCHC3, 0x1301202c) = 0x88404001: priority high
+#                 (screen and camera interface)
+#
+# The hardware starts at the bootloader values (0x88404000 on both), so this
+# is written at every boot. Test builds 6 and 7 (1.0.5-test4) had it as a
+# switch (S06nebulaos-freeze-switches, ddr_qos=stock); 1.0.5 keeps the
+# setting and drops the switch. The switch settings file those test builds
+# left behind is removed here.
+#
+# Result: /run/nebulaos/ddr-qos and one kernel log line.
+
+DEVMEM="${DQ_DEVMEM:-devmem}"
+KMSG="${DQ_KMSG:-/dev/kmsg}"
+STATE="${DQ_STATE:-/run/nebulaos/ddr-qos}"
+OLD_SETTINGS="${DQ_OLD_SETTINGS:-/usr/data/nebulaos/system/freeze-switches}"
+DDR_CPU=0x13012038	# DDRC CCHC6: CPU port
+DDR_DPU=0x1301202c	# DDRC CCHC3: DPU/LCD and camera-interface port
+CPU_VAL=0x884040c0
+DPU_VAL=0x88404001
+
+lower() { tr 'A-F' 'a-f'; }
+
+start() {
+	res=ok
+	"$DEVMEM" $DDR_CPU 32 $CPU_VAL 2>/dev/null || res=error
+	"$DEVMEM" $DDR_DPU 32 $DPU_VAL 2>/dev/null || res=error
+	cpu=$("$DEVMEM" $DDR_CPU 32 2>/dev/null | lower)
+	dpu=$("$DEVMEM" $DDR_DPU 32 2>/dev/null | lower)
+	if [ "$cpu" = $CPU_VAL ] && [ "$dpu" = $DPU_VAL ]; then
+		state=stock
+	else
+		state="?"
+		res=error
+	fi
+	old=""
+	if [ -e "$OLD_SETTINGS" ]; then
+		rm -f "$OLD_SETTINGS" 2>/dev/null && old=" (test-build switch settings removed)"
+	fi
+	mkdir -p "$(dirname "$STATE")" 2>/dev/null
+	echo "ddr_qos=$state cpu=${cpu:-?} dpu=${dpu:-?} $res" > "$STATE" 2>/dev/null
+	echo "nebulaos-ddr-qos: ddr_qos=$state $res$old" > "$KMSG" 2>/dev/null
+	echo "nebulaos-ddr-qos: ddr_qos=$state $res$old"
+}
+
+case "$1" in
+	start) start ;;
+	stop|restart|reload) ;;
+	*) echo "Usage: $0 start" >&2; exit 2 ;;
+esac
+exit 0
