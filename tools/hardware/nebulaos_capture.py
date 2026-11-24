@@ -935,6 +935,15 @@ CAPTURE_PROFILES = {
     "usb-pm": ("for d in usb1 1-1 1-1.1 1-1.2; do p=/sys/bus/usb/devices/$d/power; echo \"$d $(cat $p/control $p/runtime_status "
                "$p/autosuspend_delay_ms $p/runtime_active_time $p/runtime_suspended_time 2>/dev/null | tr '\\n' ' ')\"; done; "
                "grep -i drvvbus /sys/kernel/debug/gpio; dmesg | grep -iE 'usb 1-|dwc2|disconnect' | tail -50", False, None, 60),
+    # 2026-11-24 #27: the USB 5V power-enable pins. Stock's S13board_init drives
+    # both PC09 (USB_P_EN1) and PC10 (USB_P_EN2) as outputs high; NebulaOS's DT
+    # only names PC09 (drvvbus). GPIO port C registers (base 0x10010200): PIN
+    # level, INT, MSK, PAT1, PAT0, pull-up, pull-down; output = INT0 MSK1 PAT1=0,
+    # PAT0 = level; input = INT0 MSK1 PAT1=1. Read-only.
+    "usb-power-pins": ("B=0x10010200; for r in 00:PIN 10:INT 20:MSK 30:PAT1 40:PAT0 80:PU 90:PD; do "
+                       "v=$(devmem $((B + 0x${r%%:*})) 32); echo \"GPC ${r#*:}=$v\"; "
+                       "for p in 9 10; do echo \"  PC$p ${r#*:}=$(( (v >> p) & 1 ))\"; done; done",
+                       False, None, 60),
     "cam": ("for d in /sys/class/video4linux/*; do echo \"$d $(cat $d/name) index=$(cat $d/index)\"; done; dmesg | grep -i uvcvideo",
             False, None, 60),
     "wifi": ("iw dev; iw dev wlan0 link; iw dev wlan0 station dump 2>/dev/null | head -40; dmesg | grep -iE 'brcmf|cfg80211'",
