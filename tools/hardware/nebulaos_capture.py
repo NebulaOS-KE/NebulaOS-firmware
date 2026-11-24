@@ -973,7 +973,8 @@ CAPTURE_PROFILES = {
                  "echo; cat /run/nebulaos/freeze-switches 2>/dev/null || echo no_switch_state; "
                  "echo; cat /usr/data/nebulaos/system/freeze-switches 2>/dev/null || echo no_settings_file; "
                  "echo; cat /var/run/nebulaos-camera-idle-state 2>/dev/null; echo; "
-                 "for d in /sys/bus/usb/devices/*/power/runtime_status; do echo \"$d $(cat $d)\"; done",
+                 "for d in /sys/bus/usb/devices/*/power/runtime_status; do echo \"$d $(cat $d)\"; done; "
+                 "echo; for o in 0x2c 0x34 0x38; do echo \"DDR port CCHC+$o=$(devmem $((0x13012000 + o)) 32 2>&1)\"; done",
                  False, None, 60),
     "dmesg": ("dmesg | grep -E 'RT throttling activated|BUG: scheduling while atomic|workqueue lockup|hung_task|WARNING:'; "
               "echo dmesg_scan_done", False, None, 60),
@@ -1025,7 +1026,7 @@ EXERCISE_ONLY = ("camera-resume", "camera-states", "memexercise", "sof-filter-ab
                  "memexercise-sw100", "watchdog-arm", "watchdog-fire", "camera-resolution-trial", "nebula-camera-sweep", "nebula-camera-sweep2", "nebula-camera-sweep3", "nebula-camera-set-defaults", "nebula-camera-hue-sweep",
                  "ddr-churn-30m", "ddr-churn-cam-30m", "print-load-soak",
                  "fb-wc-stress", "fb-wc-stress-cca1",
-                 "fb-wc-stress-cca0", "smt-load", "smt-cacheflush", "smt-tlb", "smt-spawn", "smt-pingpong", "smt-dma", "smt-all", "fz-defaults", "fz-one-thread", "fz-prefetch-off", "fz-idle-poll", "fz-cpu-750", "fz-fb-stock", "fz-blackbox-off", "fz-l2-pre-iob-off", "cam-steady", "cam-cycle", "cam-stop")
+                 "fb-wc-stress-cca0", "smt-load", "smt-cacheflush", "smt-tlb", "smt-spawn", "smt-pingpong", "smt-dma", "smt-all", "fz-defaults", "fz-one-thread", "fz-prefetch-off", "fz-idle-poll", "fz-cpu-750", "fz-fb-stock", "fz-blackbox-off", "fz-l2-pre-iob-off", "cam-steady", "cam-cycle", "cam-stop", "ddr-qos-stock", "ddr-qos-default")
 
 
 class CaptureError(Exception):
@@ -1746,6 +1747,26 @@ for _m in ("steady", "cycle"):
     EXERCISE_PROFILES["cam-" + _m] = (
         _CAM_PREP + "python3 $T/camstress.py " + _m + " $D; pkill -f nebulaos-cam-mark; echo CAM_DONE",
         _CAM_UNDO, 14400 + 600)
+
+# #27 (2026-11-24): stock's DDR port settings. Stock 1.1.0.17
+# /etc/init.d/S05cpu_reg writes, at every boot: CCHC6 (CPU port) =
+# 0x884040c0 ("lower the CPU's priority": read and write bandwidth limits on)
+# and CCHC3 (DPU/LCD and camera-interface port) = 0x88404001 ("raise the
+# DPU/LCD priority": port priority high). NebulaOS leaves both at the
+# bootloader value 0x88404000. ddr-qos-stock writes stock's values,
+# ddr-qos-default the bootloader's; both read back CCHC3/5/6 and log a
+# kernel line. Not persistent: every reboot (and the reset after a freeze)
+# returns to the bootloader values. Idle printer only.
+def _ddr_qos(cpu, dpu, tag):
+    return (_IDLE_GUARD +
+        "for o in 0x2c 0x34 0x38; do echo \"before CCHC+$o=$(devmem $((0x13012000 + o)) 32)\"; done; "
+        "devmem 0x13012038 32 " + cpu + " && devmem 0x1301202c 32 " + dpu + " || { echo DDR_QOS_WRITE_FAILED; exit 4; }; "
+        "for o in 0x2c 0x34 0x38; do echo \"after CCHC+$o=$(devmem $((0x13012000 + o)) 32)\"; done; "
+        "echo \"nebulaos-ddr-qos: " + tag + " CCHC3=$(devmem 0x1301202c 32) CCHC6=$(devmem 0x13012038 32)\" > /dev/kmsg; "
+        "[ \"$(devmem 0x13012038 32)\" = " + cpu.upper().replace('0X', '0x') + " ] && [ \"$(devmem 0x1301202c 32)\" = "
+        + dpu.upper().replace('0X', '0x') + " ] && echo DDR_QOS_" + tag.upper() + "_APPLIED || { echo DDR_QOS_READBACK_MISMATCH; exit 4; }")
+EXERCISE_PROFILES["ddr-qos-stock"] = (_ddr_qos("0x884040c0", "0x88404001", "stock"), "true", 60)
+EXERCISE_PROFILES["ddr-qos-default"] = (_ddr_qos("0x88404000", "0x88404000", "default"), "true", 60)
 
 # Test build 5: freeze switches (S06nebulaos-freeze-switches). Each fz-*
 # writes ONE switch into /usr/data/nebulaos/system/freeze-switches (persistent:
