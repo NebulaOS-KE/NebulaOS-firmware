@@ -1026,7 +1026,7 @@ EXERCISE_ONLY = ("camera-resume", "camera-states", "memexercise", "sof-filter-ab
                  "memexercise-sw100", "watchdog-arm", "watchdog-fire", "camera-resolution-trial", "nebula-camera-sweep", "nebula-camera-sweep2", "nebula-camera-sweep3", "nebula-camera-set-defaults", "nebula-camera-hue-sweep",
                  "ddr-churn-30m", "ddr-churn-cam-30m", "print-load-soak",
                  "fb-wc-stress", "fb-wc-stress-cca1",
-                 "fb-wc-stress-cca0", "smt-load", "smt-cacheflush", "smt-tlb", "smt-spawn", "smt-pingpong", "smt-dma", "smt-all", "fz-defaults", "fz-one-thread", "fz-prefetch-off", "fz-idle-poll", "fz-cpu-750", "fz-fb-stock", "fz-blackbox-off", "fz-l2-pre-iob-off", "cam-steady", "cam-cycle", "cam-stop", "ddr-qos-stock", "ddr-qos-default")
+                 "fb-wc-stress-cca0", "smt-load", "smt-cacheflush", "smt-tlb", "smt-spawn", "smt-pingpong", "smt-dma", "smt-all", "fz-defaults", "fz-one-thread", "fz-prefetch-off", "fz-idle-poll", "fz-cpu-750", "fz-fb-stock", "fz-blackbox-off", "fz-l2-pre-iob-off", "fz-ddr-qos-default", "cam-steady", "cam-cycle", "cam-stop", "ddr-qos-stock", "ddr-qos-default")
 
 
 class CaptureError(Exception):
@@ -1777,12 +1777,13 @@ _FZ_F = "/usr/data/nebulaos/system/freeze-switches"
 _FZ_PRE = (_IDLE_GUARD + "[ -x " + _FZ_S06 + " ] || { echo NO_FREEZE_SWITCHES; exit 3; }; ")
 _FZ_POST = (_FZ_S06 + " apply; /etc/init.d/S58nebulascreen restart >/dev/null 2>&1; "
             "cat /run/nebulaos/freeze-switches; grep . /sys/devices/system/cpu/online; "
-            "dmesg | grep -E 'nebulaos-freeze|user mapping CCA' | tail -8; echo FZ_DONE")
+            "dmesg | grep -E 'nebulaos-freeze|user mapping CCA' | tail -8; "
+            "for o in 0x2c 0x38; do echo \"DDR port CCHC+$o=$(devmem $((0x13012000 + o)) 32 2>&1)\"; done; echo FZ_DONE")
 EXERCISE_PROFILES["fz-defaults"] = (_FZ_PRE + "rm -f " + _FZ_F + "; " + _FZ_POST, "true", 300)
 for _n, _kv in (("one-thread", "threads=1"), ("prefetch-off", "l2_prefetch=0"),
                 ("idle-poll", "idle_poll=1"), ("cpu-750", "cpu_mhz=750"),
                 ("fb-stock", "fb_cca=0"), ("blackbox-off", "blackbox=0"),
-                ("l2-pre-iob-off", "l2_pre_iob=0")):
+                ("l2-pre-iob-off", "l2_pre_iob=0"), ("ddr-qos-default", "ddr_qos=default")):
     EXERCISE_PROFILES["fz-" + _n] = (
         _FZ_PRE + "mkdir -p /usr/data/nebulaos/system; echo '" + _kv + "' > " + _FZ_F + "; sync; " + _FZ_POST,
         "true", 300)
