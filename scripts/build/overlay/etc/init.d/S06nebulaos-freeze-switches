@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# NebulaOS #27 (test build 5): apply the mid-print freeze test switches at
+# NebulaOS #27 (test builds 5 and 6): apply the mid-print freeze test switches at
 # boot, before Klipper (S55) and the screen (S58) start, so each candidate
 # can be tested on its own on one printer without a rebuild.
 #
@@ -15,6 +15,11 @@
 #   cpu_mhz=1200     750 = CPU at 750 MHz (L2 at half)
 #   fb_cca=1         0 = screen memory mapped as stock 4.4 (write-through)
 #   blackbox=1       0 = flight recorder paused
+#   ddr_qos=stock    default = DDR port settings left at the bootloader values
+#                    (test build 6). stock = what stock's /etc/init.d/S05cpu_reg
+#                    writes at every boot: CPU port (CCHC6) read/write bandwidth
+#                    limits on, DPU/LCD port (CCHC3) priority high. Written at
+#                    every boot, as the hardware starts at the bootloader values.
 #
 # Applied state: /run/nebulaos/freeze-switches (key=value as read back from
 # the kernel) and one line in the kernel log.
@@ -27,11 +32,14 @@ SETTINGS="${FZ_SETTINGS:-/usr/data/nebulaos/system/freeze-switches}"
 STATE="${FZ_STATE:-/run/nebulaos/freeze-switches}"
 SYS="${FZ_SYS:-/sys}"
 KMSG="${FZ_KMSG:-/dev/kmsg}"
+DEVMEM="${FZ_DEVMEM:-devmem}"
+DDR_CPU=0x13012038	# DDRC CCHC6: CPU port
+DDR_DPU=0x1301202c	# DDRC CCHC3: DPU/LCD and camera-interface port
 PARAM="$SYS/module/nebulaos_freeze/parameters"
 FB_PARAM="$SYS/module/ingenic_fb_stage/parameters/fb_cca"
 CPU1="$SYS/devices/system/cpu/cpu1/online"
 
-KEYS="threads l2_pre_iob l2_prefetch idle_poll cpu_mhz fb_cca blackbox"
+KEYS="threads l2_pre_iob l2_prefetch idle_poll cpu_mhz fb_cca blackbox ddr_qos"
 
 default_of() {
 	case "$1" in
@@ -39,6 +47,7 @@ default_of() {
 	l2_pre_iob|l2_prefetch|fb_cca|blackbox) echo 1 ;;
 	idle_poll) echo 0 ;;
 	cpu_mhz) echo 1200 ;;
+	ddr_qos) echo stock ;;
 	esac
 }
 
@@ -47,6 +56,7 @@ valid() { # key value
 	threads=1|threads=2) return 0 ;;
 	l2_pre_iob=[01]|l2_prefetch=[01]|idle_poll=[01]|fb_cca=[01]|blackbox=[01]) return 0 ;;
 	cpu_mhz=1200|cpu_mhz=750) return 0 ;;
+	ddr_qos=stock|ddr_qos=default) return 0 ;;
 	esac
 	return 1
 }
@@ -71,7 +81,17 @@ target_of() { # key -> sysfs file
 	esac
 }
 
+ddr_values() { # stock|default -> "cpu dpu"
+	if [ "$1" = stock ]; then echo "0x884040c0 0x88404001"; else echo "0x88404000 0x88404000"; fi
+}
+
 apply_one() { # key value
+	if [ "$1" = ddr_qos ]; then
+		set -- $(ddr_values "$2")
+		if "$DEVMEM" $DDR_CPU 32 "$1" 2>/dev/null && "$DEVMEM" $DDR_DPU 32 "$2" 2>/dev/null; then
+			echo "ok"; else echo "error"; fi
+		return
+	fi
 	_t=$(target_of "$1")
 	if [ "$1" = threads ]; then
 		_w=$([ "$2" = 1 ] && echo 0 || echo 1)
@@ -83,6 +103,15 @@ apply_one() { # key value
 }
 
 readback() { # key -> value now in effect
+	if [ "$1" = ddr_qos ]; then
+		_c=$("$DEVMEM" $DDR_CPU 32 2>/dev/null | tr 'A-F' 'a-f')
+		_d=$("$DEVMEM" $DDR_DPU 32 2>/dev/null | tr 'A-F' 'a-f')
+		for _m in stock default; do
+			[ "$_c $_d" = "$(ddr_values $_m)" ] && { echo $_m; return; }
+		done
+		echo "?"
+		return
+	fi
 	_t=$(target_of "$1")
 	_r=$(cut -d' ' -f1 "$_t" 2>/dev/null | head -n 1)
 	case "$1" in
@@ -99,7 +128,9 @@ start() { # $1 = 1: write every key, defaults included
 	for k in $KEYS; do
 		want=$(requested "$k")
 		res="default"
-		if [ "${1:-0}" = 1 ] || [ "$want" != "$(default_of "$k")" ]; then
+		# ddr_qos is written every boot: the hardware starts at the
+		# bootloader values, not at the switch default.
+		if [ "${1:-0}" = 1 ] || [ "$want" != "$(default_of "$k")" ] || [ "$k" = ddr_qos ]; then
 			res=$(apply_one "$k" "$want")
 		fi
 		now=$(readback "$k")
