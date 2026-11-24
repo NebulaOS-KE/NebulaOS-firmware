@@ -30,7 +30,8 @@ HWCAP_DIR = os.path.join(FW_ROOT, "tools", "hwcap")
 PROBES = ("schedsnap.py", "timerlat.py", "ptyrtt.py", "kduty.py", "adxl_overflows.py", "qualmcu.py",
           "lv_m1.py", "lv_s1.sh", "lv_s2.sh", "lv_g5.sh", "lv_cam.sh", "lv_g6.sh", "lv_g7.sh", "lv_g8.sh", "lv_g9.sh", "lv_g10.sh", "lv_ng1.py", "pf_cam.sh", "fb_ng3.sh", "fb_cam10.sh",
           "gs_services.sh", "gs_display.sh", "gs_sleep.sh", "gs_bootmode.sh", "gs_wifi.sh",
-          "provoke.sh", "qstatus.py")
+          "provoke.sh", "qstatus.py", "ddrchurn.gz.b64", "mcusoak.gz.b64", "fbwc.gz.b64",
+          "smtstress.gz.b64", "camstress.gz.b64")
 # Pinned data files embedded compressed (dropbear refuses a command longer than
 # MAX_CMD_LEN = 9000 bytes, so a whole profile must stay under SCRIPT_LIMIT).
 DATA_FILES = ("klipper-dict-board.json",)
@@ -612,6 +613,34 @@ CAPTURE_PROFILES = {
         "echo '== link'; iw dev wlan0 link 2>&1 | head -n 12; iw dev wlan0 get power_save 2>&1; "
         "echo '== dmesg wifi'; dmesg | grep -iE 'brcm|wlan|mmc1' | tail -n 30 | cut -c1-200",
         False, None, 90),
+    # 2026-11-22 (#27): DDR controller + CPM power/clock state at runtime -
+    # is automatic DDR power-down / self-refresh / dynamic clock gating on?
+    # Read-only devmem of configuration registers only (DDRC 0x134f0000:
+    # STATUS CFG CTRL LMR DLP AUTOSR_EN REFCNT TIMING1-6 MMAP0/1; DDRC APB
+    # 0x13012000: DWCFG DWSTATUS CCHC0/1/3/5/6 CGUC0/1; CPM 0x10000000:
+    # CPCCR LCR CLKGR OPCR CLKGR1 DDRCDR), twice 2 s apart, plus clk_summary.
+    "ddr-state": ("echo '== now'; date; uptime; uname -v; cat /proc/cmdline; "
+        "for P in 1 2; do echo \"== pass $P\"; "
+        "for o in 0x00 0x08 0x10 0x18 0x20 0x28 0x38 0x40 0x48 0x50 0x58 0x60 0x68 0x78 0x80; do "
+        "echo \"DDRC+$o=$(devmem $((0x134f0000 + o)) 32 2>&1)\"; done; "
+        "for o in 0x00 0x04 0x20 0x24 0x2c 0x34 0x38 0x64 0x68; do "
+        "echo \"DDRAPB+$o=$(devmem $((0x13012000 + o)) 32 2>&1)\"; done; "
+        "for o in 0x00 0x04 0x20 0x24 0x28 0x2c; do "
+        "echo \"CPM+$o=$(devmem $((0x10000000 + o)) 32 2>&1)\"; done; sleep 2; done; "
+        "echo '== clk'; grep -iE 'ddr|cpu|apll|mpll|epll|l2|ahb|apb|h0|h2|pclk' /sys/kernel/debug/clk/clk_summary 2>&1 | head -n 40",
+        False, None, 60),
+    # 2026-11-22: the END of every section of the newest FREEZE/CRASH flight
+    # recording (blackbox-full is cut at ~1 MB, before the ends), plus the
+    # newest heartbeat lines. Read-only.
+    "freeze-tails": ("N=/usr/data/nebulaos/logs/crash; F=$(ls -t $N/*-flightrec.txt 2>/dev/null | head -n 1); "
+        "echo \"== $F\"; head -n 4 \"$F\"; "
+        "grep -n '^== ' \"$F\" | while IFS=: read n rest; do echo \"$n\"; done > /tmp/nfr-sec.$$; "
+        "echo $(($(wc -l < \"$F\") + 1)) >> /tmp/nfr-sec.$$; "
+        "p=; while read n; do if [ -n \"$p\" ]; then sed -n \"${p}p\" \"$F\"; "
+        "s=$((n - 120)); [ $s -le $p ] && s=$((p + 1)); sed -n \"${s},$((n - 1))p\" \"$F\"; fi; p=$n; done < /tmp/nfr-sec.$$; "
+        "rm -f /tmp/nfr-sec.$$; P=$(ls -t $N/*-pmsg-ramoops-0.txt 2>/dev/null | head -n 1); "
+        "echo \"== $P (last 15)\"; tail -n 15 \"$P\" | cut -c1-400",
+        False, None, 120),
     # 2026-11-21 (#29, colours off): the camera's current controls, the saved
     # NebulaOS camera settings and one snapshot from the running stream
     # (base64, decoded on the host). Read-only: v4l2-ctl only lists.
@@ -906,6 +935,15 @@ CAPTURE_PROFILES = {
     "usb-pm": ("for d in usb1 1-1 1-1.1 1-1.2; do p=/sys/bus/usb/devices/$d/power; echo \"$d $(cat $p/control $p/runtime_status "
                "$p/autosuspend_delay_ms $p/runtime_active_time $p/runtime_suspended_time 2>/dev/null | tr '\\n' ' ')\"; done; "
                "grep -i drvvbus /sys/kernel/debug/gpio; dmesg | grep -iE 'usb 1-|dwc2|disconnect' | tail -50", False, None, 60),
+    # 2026-11-24 #27: the USB 5V power-enable pins. Stock's S13board_init drives
+    # both PC09 (USB_P_EN1) and PC10 (USB_P_EN2) as outputs high; NebulaOS's DT
+    # only names PC09 (drvvbus). GPIO port C registers (base 0x10010200): PIN
+    # level, INT, MSK, PAT1, PAT0, pull-up, pull-down; output = INT0 MSK1 PAT1=0,
+    # PAT0 = level; input = INT0 MSK1 PAT1=1. Read-only.
+    "usb-power-pins": ("B=0x10010200; for r in 00:PIN 10:INT 20:MSK 30:PAT1 40:PAT0 80:PU 90:PD; do "
+                       "v=$(devmem $((B + 0x${r%%:*})) 32); echo \"GPC ${r#*:}=$v\"; "
+                       "for p in 9 10; do echo \"  PC$p ${r#*:}=$(( (v >> p) & 1 ))\"; done; done",
+                       False, None, 60),
     "cam": ("for d in /sys/class/video4linux/*; do echo \"$d $(cat $d/name) index=$(cat $d/index)\"; done; dmesg | grep -i uvcvideo",
             False, None, 60),
     "wifi": ("iw dev; iw dev wlan0 link; iw dev wlan0 station dump 2>/dev/null | head -40; dmesg | grep -iE 'brcmf|cfg80211'",
@@ -940,6 +978,13 @@ CAPTURE_PROFILES = {
                False, None, 60),
     "adxl": ("python3 $T/adxl_overflows.py --seconds 120 --out $T/out.json; cat $T/out.json", False, "adxl_overflows.py", 200),
     "uartoe": ("cat '/proc/tty/driver/INGENIC serial' 2>/dev/null || cat /proc/tty/driver/* 2>/dev/null", False, None, 60),
+    "fz-state": ("dmesg | grep -E 'nebulaos-freeze|nebulaos-ddr|fb_cca|UVC|\\[sda\\]|speed USB device|dwc2'; "
+                 "echo; cat /run/nebulaos/freeze-switches 2>/dev/null || echo no_switch_state; "
+                 "echo; cat /usr/data/nebulaos/system/freeze-switches 2>/dev/null || echo no_settings_file; "
+                 "echo; cat /var/run/nebulaos-camera-idle-state 2>/dev/null; echo; "
+                 "for d in /sys/bus/usb/devices/*/power/runtime_status; do echo \"$d $(cat $d)\"; done; "
+                 "echo; for o in 0x2c 0x34 0x38; do echo \"DDR port CCHC+$o=$(devmem $((0x13012000 + o)) 32 2>&1)\"; done",
+                 False, None, 60),
     "dmesg": ("dmesg | grep -E 'RT throttling activated|BUG: scheduling while atomic|workqueue lockup|hung_task|WARNING:'; "
               "echo dmesg_scan_done", False, None, 60),
     "load": ("cat /proc/loadavg; head -1 /proc/stat; sleep 10; cat /proc/loadavg; head -1 /proc/stat; "
@@ -987,7 +1032,10 @@ CAPTURE_PROFILES = {
 # Defined by the plan as reversible state changes: TOOL-02 `exercise`, never `capture`.
 EXERCISE_ONLY = ("camera-resume", "camera-states", "memexercise", "sof-filter-ab", "storage-autosuspend",
                  "cpu-load", "camera-viewer", "wifi-load", "usb-storage-io", "ktimers-ab", "ttyflip-ab",
-                 "memexercise-sw100", "watchdog-arm", "watchdog-fire", "camera-resolution-trial", "nebula-camera-sweep", "nebula-camera-sweep2", "nebula-camera-sweep3", "nebula-camera-set-defaults", "nebula-camera-hue-sweep", "usb-dma-check")
+                 "memexercise-sw100", "watchdog-arm", "watchdog-fire", "camera-resolution-trial", "nebula-camera-sweep", "nebula-camera-sweep2", "nebula-camera-sweep3", "nebula-camera-set-defaults", "nebula-camera-hue-sweep",
+                 "ddr-churn-30m", "ddr-churn-cam-30m", "print-load-soak",
+                 "fb-wc-stress", "fb-wc-stress-cca1",
+                 "fb-wc-stress-cca0", "smt-load", "smt-cacheflush", "smt-tlb", "smt-spawn", "smt-pingpong", "smt-dma", "smt-all", "fz-defaults", "fz-one-thread", "fz-prefetch-off", "fz-idle-poll", "fz-cpu-750", "fz-fb-stock", "fz-blackbox-off", "fz-l2-pre-iob-off", "fz-ddr-qos-default", "cam-steady", "cam-cycle", "cam-stop", "ddr-qos-stock", "ddr-qos-default", "usb-dma-check")
 
 
 class CaptureError(Exception):
@@ -1625,6 +1673,176 @@ EXERCISE_PROFILES["flightrec-mmio-on"] = (
 
 EXERCISE_PROFILES["freeze-provoke"] = (
     _IDLE_GUARD + "T=$T sh $T/provoke.sh 36000 all", _PROVOKE_UNDO, 36000 + 300)
+# 2026-11-22 (#27): DDR power-down churn on an idle printer. tools/hwcap/
+# ddrchurn.c (built with the 2c017c5 Buildroot toolchain: mipsel-linux-gcc -Os
+# -s -pthread, stripped, gzip -9 -n, base64 = ddrchurn.gz.b64): random
+# read-modify-writes over 32 MB with 0..400-turn pauses on both hardware
+# threads, nice 10, so the RAM enters and leaves automatic power-down as often
+# as possible. No device access, no motion, no heater. -cam adds a local
+# reader of the camera stream (USB DMA + cache invalidates, as at ke-dev's
+# 11-22 13:14 freeze). A freeze shows as the 10 s lines stopping and a lost
+# connection; evidence then in logs/crash after the reset. Prints DDRC_CTRL
+# and DLP first (power-down on/off).
+_CHURN = ("python3 -c \"import base64,gzip,sys; sys.stdout.buffer.write(gzip.decompress(base64.b64decode(open('$T/ddrchurn.gz.b64').read())))\" "
+          "> $T/ddrchurn && chmod +x $T/ddrchurn || exit 4; "
+          "echo \"DDRC_CTRL=$(devmem 0x134f0010 32) DDRC_DLP=$(devmem 0x134f0020 32) kernel=$(uname -v)\"; ")
+_CHURN_UNDO = "pkill -f $T/ddrchurn 2>/dev/null; pkill -f 'nebulaos-churn-cam' 2>/dev/null; true"
+EXERCISE_PROFILES["ddr-churn-30m"] = (
+    _IDLE_GUARD + _CHURN + "nice -n 10 $T/ddrchurn 1800 400", _CHURN_UNDO, 1800 + 300)
+# #27 (2026-11-23): a print's load without printing. The K1 developer
+# (Ingenic-community/linux#1, 2026-01-11) saw Ingenic 5.x/6.x kernels freeze
+# the X2000 "when the UART is used a lot"; ours freezes only while printing.
+# Klippy stopped; from CPU1 (klippy's thread) the MCU link near saturation
+# (qualmcu.py soak: debug_nop bursts + debug_ping, nothing that moves or
+# heats), a floating-point load on CPU1, the camera stream; PLS_SECONDS (4 h).
+_HELD = "ls -l /proc/[0-9]*/fd 2>/dev/null | grep -q ttyS1"
+EXERCISE_PROFILES["print-load-soak"] = (
+    _IDLE_GUARD + "KS=1; /etc/init.d/S55klipper stop; i=0; while " + _HELD + " && [ $i -lt 30 ]; do sleep 1; "
+    "i=$((i + 1)); done; " + _HELD + " && { echo PORT_STILL_HELD; exit 4; }; "
+    "python3 -c \"import base64,gzip; open('$T/mcusoak.py','wb').write(gzip.decompress(base64.b64decode("
+    "open('$T/mcusoak.gz.b64').read())))\" || exit 4; "
+    "D=${PLS_SECONDS:-14400}; echo \"soak: seconds=$D boot_id=$(cat /proc/sys/kernel/random/boot_id) "
+    "kernel=$(uname -v) sof_filter=$(cat /sys/module/dwc2/parameters/sof_filter)\"; "
+    "taskset -c 1 nice -n 10 python3 -c '# nebulaos-soak-spin\nx=1.0\nwhile 1:\n x=x*1.0000001+0.5\n if x>1e9: x=1.0' & "
+    "sh -c ': nebulaos-soak-cam; while :; do curl -s --max-time 600 -o /dev/null http://127.0.0.1:8080/stream; sleep 1; done' & "
+    "sh -c ': nebulaos-soak-mark; m=0; while :; do sleep 60; m=$((m + 1)); echo $m > /proc/nebulaos_flightrec; done' 2>/dev/null & "
+    "taskset -c 1 python3 $T/mcusoak.py $D; rc=$?; "
+    "pkill -f nebulaos-soak-spin; pkill -f nebulaos-soak-cam; pkill -f nebulaos-soak-mark; echo \"soak_rc=$rc\"",
+    "pkill -f mcusoak.py; pkill -f nebulaos-soak-spin; pkill -f nebulaos-soak-cam; pkill -f nebulaos-soak-mark; "
+    + _KLIPPY_RESTORE.replace(_QM + " snap klippy-restarted; ", ""),
+    14400 + 900)
+
+# #27 (2026-11-23): the framebuffer write-combining hypothesis. Stock 4.4
+# maps /dev/fb0 to user space CCA 0 (write-through); Ingenic's 6.x driver maps
+# it CCA 1 (XBurst2 write-combining). fbwc.py writes the off-screen third of
+# the triple buffer from both hardware threads for FBWC_SECONDS (2 h); the
+# screen service restarts afterwards (its back buffer was overwritten).
+# fb-wc-stress uses the kernel's mapping as it is (test build 3: CCA 1;
+# test build 4: ingenic_fb_stage.fb_cca, default 0); fb-wc-stress-cca1 sets
+# fb_cca=1 first (test build 4 only) for an A/B on one build.
+_FBWC_P = "P=/sys/module/ingenic_fb_stage/parameters/fb_cca; "
+_FBWC_PREP = (_IDLE_GUARD + _FBWC_P +
+    "python3 -c \"import base64,gzip; open('$T/fbwc.py','wb').write(gzip.decompress(base64.b64decode("
+    "open('$T/fbwc.gz.b64').read())))\" || exit 4; ")
+_FBWC_RUN = (
+    "D=${FBWC_SECONDS:-7200}; echo \"fbwc: seconds=$D fb_cca=$(cat $P 2>/dev/null || echo none) "
+    "kernel=$(uname -v) boot_id=$(cat /proc/sys/kernel/random/boot_id) $(dmesg | grep -m1 'user mapping CCA')\"; "
+    "sh -c ': nebulaos-fbwc-mark; m=0; while :; do sleep 60; m=$((m + 1)); echo $m > /proc/nebulaos_flightrec; done' 2>/dev/null & "
+    "taskset -c 0 python3 $T/fbwc.py $D :cpu0 & A=$!; taskset -c 1 python3 $T/fbwc.py $D :cpu1; wait $A; "
+    "pkill -f nebulaos-fbwc-mark; ")
+_FBWC_END = "/etc/init.d/S58nebulascreen restart >/dev/null 2>&1; echo FBWC_DONE"
+# Test build 5 keeps fb_cca in /usr/data/nebulaos/system/freeze-switches: put
+# that back (S06 apply); test build 4 had default 0.
+_FZ_S06 = "/etc/init.d/S06nebulaos-freeze-switches"
+_FBWC_RESTORE = ("if [ -x " + _FZ_S06 + " ]; then " + _FZ_S06 + " apply >/dev/null 2>&1; "
+                 "else [ -w $P ] && echo 0 > $P; fi; ")
+_FBWC_UNDO = ("pkill -f fbwc.py; pkill -f nebulaos-fbwc-mark; " + _FBWC_P + _FBWC_RESTORE +
+              "/etc/init.d/S58nebulascreen restart >/dev/null 2>&1; true")
+EXERCISE_PROFILES["fb-wc-stress"] = (_FBWC_PREP + _FBWC_RUN + _FBWC_END, _FBWC_UNDO, 7200 + 600)
+EXERCISE_PROFILES["fb-wc-stress-cca1"] = (
+    _FBWC_PREP + "[ -w $P ] || { echo NO_FB_CCA_PARAM; exit 3; }; echo 1 > $P; " + _FBWC_RUN +
+    _FBWC_RESTORE + _FBWC_END, _FBWC_UNDO, 7200 + 600)
+# Test build 5: the same with the stock 4.4 mapping (CCA 0) for the A/B.
+EXERCISE_PROFILES["fb-wc-stress-cca0"] = (
+    _FBWC_PREP + "[ -w $P ] || { echo NO_FB_CCA_PARAM; exit 3; }; echo 0 > $P; " + _FBWC_RUN +
+    _FBWC_RESTORE + _FBWC_END, _FBWC_UNDO, 7200 + 600)
+
+# #27 trigger search (test build 5 plan, 2026-11-23): tools/hwcap/smtstress.py
+# hammers ONE hardware operation on CPU0 while CPU1 runs a klippy-like Python
+# load - both threads busy, as while printing - for SMT_SECONDS (30 min):
+# cacheflush (L1 writeback/invalidate, hit and index), tlb (map/touch/drop/
+# unmap), spawn (program starts, like the heartbeat scripts), pingpong
+# (cross-thread wakeups = IPIs), dma (direct eMMC/USB-stick reads, read only:
+# cache invalidates per read), load (CPU1 load alone, the baseline). smt-all
+# runs them one after another. No motion, no heater. A freeze shows as the
+# 10 s lines stopping and a lost connection; evidence in logs/crash after the
+# reset. The flight recorder gets a minute mark, as in fb-wc-stress.
+_SMT_PREP = (_IDLE_GUARD +
+    "python3 -c \"import base64,gzip; open('$T/smtstress.py','wb').write(gzip.decompress(base64.b64decode("
+    "open('$T/smtstress.gz.b64').read())))\" || exit 4; "
+    "D=${SMT_SECONDS:-1800}; echo \"smt: kernel=$(uname -v) boot_id=$(cat /proc/sys/kernel/random/boot_id) "
+    "switches: $(tr '\\n' ' ' < /run/nebulaos/freeze-switches 2>/dev/null || echo none)\"; "
+    "sh -c ': nebulaos-smt-mark; m=0; while :; do sleep 60; m=$((m + 1)); echo $m > /proc/nebulaos_flightrec; done' 2>/dev/null & ")
+_SMT_UNDO = "pkill -f smtstress.py; pkill -f nebulaos-smt-mark; true"
+_SMT_MODES = ("load", "cacheflush", "tlb", "spawn", "pingpong", "dma")
+for _m in _SMT_MODES:
+    EXERCISE_PROFILES["smt-" + _m] = (
+        _SMT_PREP + "python3 $T/smtstress.py " + _m + " $D; pkill -f nebulaos-smt-mark; echo SMT_DONE",
+        _SMT_UNDO, 1800 + 300)
+EXERCISE_PROFILES["smt-all"] = (
+    _SMT_PREP + "for m in " + " ".join(_SMT_MODES) + "; do python3 $T/smtstress.py $m $D; done; "
+    "pkill -f nebulaos-smt-mark; echo SMT_DONE",
+    _SMT_UNDO, 6 * 1800 + 600)
+
+# #27 USB/camera trigger search (2026-11-23): every recorded freeze had a USB
+# camera attached, and a print that froze twice ran clean with USB unplugged.
+# tools/hwcap/camstress.py keeps a viewer on the ustreamer MJPEG stream
+# (cam-steady), or 180 s on / 90 s off so the idle controller pauses and
+# resumes the camera and USB runtime-suspends and resumes (cam-cycle), while
+# CPU1 runs a klippy-like load and a USB stick, if present, is read (direct
+# I/O, read only). CAM_SECONDS, default 4 h. No motion, no heater. A freeze
+# shows as the 10 s lines stopping and a lost connection.
+_CAM_PREP = (_IDLE_GUARD +
+    "python3 -c \"import base64,gzip; open('$T/camstress.py','wb').write(gzip.decompress(base64.b64decode("
+    "open('$T/camstress.gz.b64').read())))\" || exit 4; "
+    "ls /dev/video* >/dev/null 2>&1 || { echo NO_CAMERA; exit 3; }; "
+    "D=${CAM_SECONDS:-14400}; echo \"cam: kernel=$(uname -v) boot_id=$(cat /proc/sys/kernel/random/boot_id) "
+    "idle=$(cat /var/run/nebulaos-camera-idle-state 2>/dev/null) "
+    "switches: $(tr '\\n' ' ' < /run/nebulaos/freeze-switches 2>/dev/null || echo none)\"; "
+    "sh -c ': nebulaos-cam-mark; m=0; while :; do sleep 60; m=$((m + 1)); echo $m > /proc/nebulaos_flightrec; done' 2>/dev/null & ")
+_CAM_UNDO = "pkill -f camstress.py; pkill -f nebulaos-cam-mark; true"
+# cam-stop: ends a camera stress run whose launcher was stopped early.
+EXERCISE_PROFILES["cam-stop"] = (_CAM_UNDO + "; sleep 1; pgrep -f camstress.py || echo CAM_STOPPED", "true", 60)
+for _m in ("steady", "cycle"):
+    EXERCISE_PROFILES["cam-" + _m] = (
+        _CAM_PREP + "python3 $T/camstress.py " + _m + " $D; pkill -f nebulaos-cam-mark; echo CAM_DONE",
+        _CAM_UNDO, 14400 + 600)
+
+# #27 (2026-11-24): stock's DDR port settings. Stock 1.1.0.17
+# /etc/init.d/S05cpu_reg writes, at every boot: CCHC6 (CPU port) =
+# 0x884040c0 ("lower the CPU's priority": read and write bandwidth limits on)
+# and CCHC3 (DPU/LCD and camera-interface port) = 0x88404001 ("raise the
+# DPU/LCD priority": port priority high). NebulaOS leaves both at the
+# bootloader value 0x88404000. ddr-qos-stock writes stock's values,
+# ddr-qos-default the bootloader's; both read back CCHC3/5/6 and log a
+# kernel line. Not persistent: every reboot (and the reset after a freeze)
+# returns to the bootloader values. Idle printer only.
+def _ddr_qos(cpu, dpu, tag):
+    return (_IDLE_GUARD +
+        "for o in 0x2c 0x34 0x38; do echo \"before CCHC+$o=$(devmem $((0x13012000 + o)) 32)\"; done; "
+        "devmem 0x13012038 32 " + cpu + " && devmem 0x1301202c 32 " + dpu + " || { echo DDR_QOS_WRITE_FAILED; exit 4; }; "
+        "for o in 0x2c 0x34 0x38; do echo \"after CCHC+$o=$(devmem $((0x13012000 + o)) 32)\"; done; "
+        "echo \"nebulaos-ddr-qos: " + tag + " CCHC3=$(devmem 0x1301202c 32) CCHC6=$(devmem 0x13012038 32)\" > /dev/kmsg; "
+        "[ \"$(devmem 0x13012038 32)\" = " + cpu.upper().replace('0X', '0x') + " ] && [ \"$(devmem 0x1301202c 32)\" = "
+        + dpu.upper().replace('0X', '0x') + " ] && echo DDR_QOS_" + tag.upper() + "_APPLIED || { echo DDR_QOS_READBACK_MISMATCH; exit 4; }")
+EXERCISE_PROFILES["ddr-qos-stock"] = (_ddr_qos("0x884040c0", "0x88404001", "stock"), "true", 60)
+EXERCISE_PROFILES["ddr-qos-default"] = (_ddr_qos("0x88404000", "0x88404000", "default"), "true", 60)
+
+# Test build 5: freeze switches (S06nebulaos-freeze-switches). Each fz-*
+# writes ONE switch into /usr/data/nebulaos/system/freeze-switches (persistent:
+# survives the reset after a freeze), applies it now and shows the state;
+# fz-defaults removes the file. Idle printer only; no undo (the setting is the
+# point). The screen restarts when the framebuffer mapping changes.
+_FZ_F = "/usr/data/nebulaos/system/freeze-switches"
+_FZ_PRE = (_IDLE_GUARD + "[ -x " + _FZ_S06 + " ] || { echo NO_FREEZE_SWITCHES; exit 3; }; ")
+_FZ_POST = (_FZ_S06 + " apply; /etc/init.d/S58nebulascreen restart >/dev/null 2>&1; "
+            "cat /run/nebulaos/freeze-switches; grep . /sys/devices/system/cpu/online; "
+            "dmesg | grep -E 'nebulaos-freeze|user mapping CCA' | tail -8; "
+            "for o in 0x2c 0x38; do echo \"DDR port CCHC+$o=$(devmem $((0x13012000 + o)) 32 2>&1)\"; done; echo FZ_DONE")
+EXERCISE_PROFILES["fz-defaults"] = (_FZ_PRE + "rm -f " + _FZ_F + "; " + _FZ_POST, "true", 300)
+for _n, _kv in (("one-thread", "threads=1"), ("prefetch-off", "l2_prefetch=0"),
+                ("idle-poll", "idle_poll=1"), ("cpu-750", "cpu_mhz=750"),
+                ("fb-stock", "fb_cca=0"), ("blackbox-off", "blackbox=0"),
+                ("l2-pre-iob-off", "l2_pre_iob=0"), ("ddr-qos-default", "ddr_qos=default")):
+    EXERCISE_PROFILES["fz-" + _n] = (
+        _FZ_PRE + "mkdir -p /usr/data/nebulaos/system; echo '" + _kv + "' > " + _FZ_F + "; sync; " + _FZ_POST,
+        "true", 300)
+
+EXERCISE_PROFILES["ddr-churn-cam-30m"] = (
+    _IDLE_GUARD + _CHURN +
+    "pidof ustreamer >/dev/null || { echo NO_CAMERA_STREAM; exit 3; }; "
+    "sh -c ': nebulaos-churn-cam; while :; do curl -s --max-time 600 -o /dev/null http://127.0.0.1:8080/stream; sleep 1; done' & "
+    "nice -n 10 $T/ddrchurn 1800 400", _CHURN_UNDO, 1800 + 300)
 EXERCISE_PROFILES["freeze-provoke-short"] = (
     _IDLE_GUARD + "T=$T sh $T/provoke.sh 180 all", _PROVOKE_UNDO, 180 + 300)
 
@@ -1695,6 +1913,14 @@ EXERCISE_PROFILES.update({
         "tail -5 $T/batch.log",
         ":",
         1500),
+    # #27 (2026-11-23): freeze soak with Klipper's own print computation and
+    # no printing. klippy-batch's preparation, then the same 300k-line batch
+    # pass in a loop on each hardware thread (nice 10) for KBS_SECONDS (8 h):
+    # the kinematics/step code of a print at ~27x print speed, no MCU port,
+    # no motion, no heater. A freeze here = the trigger is the computation;
+    # none in 8 h = it needs the physical print (heaters/motors).
+    # Minute marks in /proc/nebulaos_flightrec, one line per pass.
+    "klippy-batch-soak": None,
     # Boot forensics: the cost of the checks S04/S05 repeat on every normal
     # boot, cold (page cache dropped, as at boot) and warm; plus the evidence
     # behind the per-boot migrate findings. The checks only import modules and
@@ -2125,8 +2351,37 @@ EXERCISE_PROFILES["gs-boot-mode-logo-direct"] = (
     ":", 60)
 
 # Exercises that embed a tracked hwcap probe, the same way captures do.
+def _klippy_batch_soak():
+    base = EXERCISE_PROFILES["klippy-batch"][0]
+    base = base.replace("mkfifo $T/in.gcode; ", "").replace(
+        "head -n 300000 \"$G\" > $T/in.gcode & ", "")
+    prep = base[:base.index('echo "before:')]
+    loop = (
+        "D=${KBS_SECONDS:-28800}; end=$(($(cut -d. -f1 /proc/uptime) + D)); "
+        "echo \"soak: seconds=$D boot_id=$(cat /proc/sys/kernel/random/boot_id)\"; "
+        "for c in 0 1; do ( n=0; while [ $(cut -d. -f1 /proc/uptime) -lt $end ]; do n=$((n + 1)); "
+        "head -n 300000 \"$G\" | taskset -c $c nice -n 10 $PY /opt/klipper/klippy/klippy.py $T/batch.cfg "
+        "-i /dev/stdin -o /dev/null -d $T/board.json -d rpi=$T/host.json -l $T/b$c.log >/dev/null 2>&1; "
+        "echo \"cpu$c pass=$n rc=$? up=$(cut -d' ' -f1 /proc/uptime)\"; done ) & done; "
+        "m=0; while [ $(cut -d. -f1 /proc/uptime) -lt $end ]; do sleep 60; m=$((m + 1)); "
+        "{ echo $m > /proc/nebulaos_flightrec; } 2>/dev/null; "
+        "echo \"== m=$m up=$(cut -d' ' -f1 /proc/uptime) load=$(cut -d' ' -f1-3 /proc/loadavg)\"; done; wait; "
+        "echo \"errors=$(cat $T/b0.log $T/b1.log 2>/dev/null | grep -c '^!!')\"; tail -3 $T/b1.log")
+    return _IDLE_GUARD + prep + loop
+
+
+EXERCISE_PROFILES["klippy-batch-soak"] = (
+    _klippy_batch_soak(),
+    "pkill -f 'batch.cfg -i /dev/stdin' 2>/dev/null; :",
+    28800 + 900)
+
+
 EXERCISE_PROBES = {"ktimers-ab": ("timerlat.py",), "ttyflip-ab": ("ptyrtt.py",),
-                   "uart-fe-probe": ("qualmcu.py",), "mcu-link-bench": ("qualmcu.py",),
+                   "uart-fe-probe": ("qualmcu.py",), "mcu-link-bench": ("qualmcu.py",), "print-load-soak": ("mcusoak.gz.b64",),
+                   "fb-wc-stress": ("fbwc.gz.b64",), "fb-wc-stress-cca1": ("fbwc.gz.b64",),
+                   "fb-wc-stress-cca0": ("fbwc.gz.b64",),
+                   "cam-steady": ("camstress.gz.b64",), "cam-cycle": ("camstress.gz.b64",),
+                   **{"smt-" + _m: ("smtstress.gz.b64",) for _m in ("load", "cacheflush", "tlb", "spawn", "pingpong", "dma", "all")},
                    "mcu-identify-repeat": ("qualmcu.py",), "live-m1-identify": ("lv_m1.py",),
                    "live-s1-s03": ("lv_s1.sh",), "live-s2-s97": ("lv_s2.sh",), "live-g5-debugfs": ("lv_g5.sh",),
                    "live-s3-s4-camera": ("lv_cam.sh",), "live-g6-dhcp": ("lv_g6.sh",), "live-g7-klippy": ("lv_g7.sh",),
@@ -2136,7 +2391,8 @@ EXERCISE_PROBES = {"ktimers-ab": ("timerlat.py",), "ttyflip-ab": ("ptyrtt.py",),
                    "gs-boot-mode-blank": ("gs_bootmode.sh",),
                    "gs-boot-mode-console": ("gs_bootmode.sh",),
                    "gs-boot-mode-logo": ("gs_bootmode.sh",),
-                   "freeze-provoke": ("provoke.sh",), "freeze-provoke-short": ("provoke.sh",)}
+                   "freeze-provoke": ("provoke.sh",), "freeze-provoke-short": ("provoke.sh",),
+                   "ddr-churn-30m": ("ddrchurn.gz.b64",), "ddr-churn-cam-30m": ("ddrchurn.gz.b64",)}
 
 
 def exercise_script(name):
